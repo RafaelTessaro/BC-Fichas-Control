@@ -236,11 +236,23 @@ export function criarModuloGoogle(ctx: Contexto, opcoes: OpcoesModuloGoogle = {}
   const corpo = (body: unknown) =>
     body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : {}
 
+  /**
+   * Alterações da configuração e da chave, uma de cada vez: o PUT da configuração aguarda o
+   * Google (teste da agenda) entre ler e gravar a configuração, e outra alteração feita nesse
+   * intervalo (ex.: desativar em outro computador) seria desfeita ao gravar.
+   */
+  let filaAlteracoes: Promise<unknown> = Promise.resolve()
+  const emSequencia = <T>(fn: () => Promise<T>): Promise<T> => {
+    const resultado = filaAlteracoes.then(fn)
+    filaAlteracoes = resultado.catch(() => {})
+    return resultado
+  }
+
   async function rotas(app: FastifyInstance) {
     app.get('/api/google/status', async () => status())
 
-    app.put('/api/google/config', async (req) => {
-      const b = corpo(req.body)
+    const salvarConfig = async (body: unknown) => {
+      const b = corpo(body)
       const anterior = estado.lerConfig()
       const nova: ConfigGoogle = { ...anterior }
       if ('ativo' in b) {
@@ -287,36 +299,41 @@ export function criarModuloGoogle(ctx: Contexto, opcoes: OpcoesModuloGoogle = {}
         republicarTodos()
       }
       return status()
-    })
+    }
+    app.put('/api/google/config', (req) => emSequencia(() => salvarConfig(req.body)))
 
-    app.post('/api/google/credenciais', async (req) => {
-      const b = corpo(req.body)
-      if (b.json === undefined || b.json === null || b.json === '') {
-        throw new ErroApi(400, 'Envie o arquivo JSON da chave da conta de serviço.')
-      }
-      let cred: CredenciaisGoogle
-      try {
-        cred = validarCredenciais(b.json)
-      } catch (e) {
-        throw new ErroApi(400, (e as Error).message)
-      }
-      const anterior = credenciais?.client_email
-      gravarCredenciais(cred)
-      if (integracaoAtiva() && anterior !== cred.client_email) {
-        reconciliar(false)
-        sinc.agendar(300)
-      }
-      return status()
-    })
+    app.post('/api/google/credenciais', (req) =>
+      emSequencia(async () => {
+        const b = corpo(req.body)
+        if (b.json === undefined || b.json === null || b.json === '') {
+          throw new ErroApi(400, 'Envie o arquivo JSON da chave da conta de serviço.')
+        }
+        let cred: CredenciaisGoogle
+        try {
+          cred = validarCredenciais(b.json)
+        } catch (e) {
+          throw new ErroApi(400, (e as Error).message)
+        }
+        const anterior = credenciais?.client_email
+        gravarCredenciais(cred)
+        if (integracaoAtiva() && anterior !== cred.client_email) {
+          reconciliar(false)
+          sinc.agendar(300)
+        }
+        return status()
+      }),
+    )
 
-    app.delete('/api/google/credenciais', async () => {
-      const estavaAtivo = integracaoAtiva()
-      estado.gravarConfig({ ...estado.lerConfig(), ativo: false })
-      rmSync(arquivoCredenciais, { force: true })
-      definirCredenciais(null)
-      if (estavaAtivo) republicarTodos()
-      return status()
-    })
+    app.delete('/api/google/credenciais', () =>
+      emSequencia(async () => {
+        const estavaAtivo = integracaoAtiva()
+        estado.gravarConfig({ ...estado.lerConfig(), ativo: false })
+        rmSync(arquivoCredenciais, { force: true })
+        definirCredenciais(null)
+        if (estavaAtivo) republicarTodos()
+        return status()
+      }),
+    )
 
     app.post('/api/google/testar', async (req) => {
       const b = corpo(req.body)

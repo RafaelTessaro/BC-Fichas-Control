@@ -496,14 +496,14 @@ export function GoogleAgendaConfig() {
                   titulo="Ativar envio automático"
                   descricao="Cria, atualiza e apaga os eventos na agenda sempre que algo muda no sistema."
                   ligado={status.ativo}
-                  ocupado={ocupado === 'ativo'}
+                  ocupado={ocupado !== null}
                   aoMudar={(v) => void alternarAtivo(v)}
                 />
                 <Opcao
                   titulo="Incluir valores (R$) na descrição"
                   descricao="Mostra o total do evento para quem tem acesso à agenda."
                   ligado={status.incluirValores}
-                  ocupado={ocupado === 'valores'}
+                  ocupado={ocupado !== null}
                   aoMudar={(v) => void alternarValores(v)}
                 />
               </div>

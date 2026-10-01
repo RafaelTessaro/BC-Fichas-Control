@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import type { Cliente, Evento } from '#shared/tipos.ts'
-import { AVISO_FINAL, blocosDeDatas, diaSeguinte, hashConteudo, idGoogle, montarEventosGoogle } from './mapeamento.ts'
+import {
+  AVISO_FINAL,
+  blocosDeDatas,
+  diaSeguinte,
+  hashConteudo,
+  hashEventoGoogle,
+  idGoogle,
+  montarEventosGoogle,
+} from './mapeamento.ts'
 
 const ID_VALIDO = /^[a-v0-9]{5,1024}$/
 
@@ -143,5 +151,30 @@ describe('conteúdo enviado ao Google', () => {
     expect(hashConteudo('a', g)).not.toBe(
       hashConteudo('a', montarEventosGoogle(evento({ nome: 'Outro' }), undefined, { incluirValores: false })),
     )
+  })
+})
+
+describe('impressão digital de cada evento do Google (bcHash)', () => {
+  const montar = (extra: Partial<Evento> = {}, incluirValores = false) =>
+    montarEventosGoogle(evento(extra), cliente, { incluirValores })
+
+  it('vai em cada evento, é estável e corresponde ao conteúdo dele', () => {
+    const [b1, b2] = montar()
+    expect(b1.extendedProperties.private.bcHash).toMatch(/^[0-9a-f]{32}$/)
+    expect(b1.extendedProperties.private.bcHash).toBe(hashEventoGoogle(b1))
+    expect(b1.extendedProperties.private.bcHash).not.toBe(b2.extendedProperties.private.bcHash)
+    expect(montar()[0].extendedProperties.private.bcHash).toBe(b1.extendedProperties.private.bcHash)
+  })
+
+  it('muda com nome, datas, status, cliente ou valores', () => {
+    const base = montar()[0].extendedProperties.private.bcHash
+    const variantes = [
+      montar({ nome: 'Outro' }),
+      montar({ dias: [{ id: 'd1', data: '2026-08-10', maquinas: 2 }] }),
+      montar({ status: 'FINALIZADO' }),
+      montarEventosGoogle(evento(), { ...cliente, nome: 'Padaria Nova' }, { incluirValores: false }),
+      montar({}, true),
+    ]
+    for (const v of variantes) expect(v[0].extendedProperties.private.bcHash).not.toBe(base)
   })
 })

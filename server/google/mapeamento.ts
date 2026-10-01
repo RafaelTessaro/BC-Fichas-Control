@@ -36,7 +36,14 @@ export interface EventoGoogle {
   colorId: string
   status: 'confirmed'
   transparency: 'opaque'
-  extendedProperties: { private: { bcFichasId: string; codigo: string } }
+  extendedProperties: {
+    private: {
+      bcFichasId: string
+      codigo: string
+      /** Impressão digital do conteúdo deste evento (ver `hashEventoGoogle`). */
+      bcHash: string
+    }
+  }
 }
 
 const DIA_MS = 86_400_000
@@ -137,18 +144,33 @@ export function montarEventosGoogle(evento: Evento, cliente: Cliente | undefined
   const description = descricaoEvento(evento, cliente, opcoes)
   const location = [evento.local, evento.cidade].filter(Boolean).join(', ')
   const nomeCliente = cliente?.nome || 'Cliente removido'
-  return blocosDeDatas(evento.dias).map((bloco, i) => ({
-    id: idGoogle(evento.id, i),
-    summary: `${evento.nome || 'Evento'} — ${nomeCliente} (${textoMaquinas(bloco.dias)})`,
-    location,
-    description,
-    start: { date: bloco.inicio },
-    end: { date: diaSeguinte(bloco.fim) },
-    colorId: COR_POR_STATUS[evento.status] ?? '9',
-    status: 'confirmed',
-    transparency: 'opaque',
-    extendedProperties: { private: { bcFichasId: evento.id, codigo: codigo(evento.codigo) } },
-  }))
+  return blocosDeDatas(evento.dias).map((bloco, i) => {
+    const g: EventoGoogle = {
+      id: idGoogle(evento.id, i),
+      summary: `${evento.nome || 'Evento'} — ${nomeCliente} (${textoMaquinas(bloco.dias)})`,
+      location,
+      description,
+      start: { date: bloco.inicio },
+      end: { date: diaSeguinte(bloco.fim) },
+      colorId: COR_POR_STATUS[evento.status] ?? '9',
+      status: 'confirmed',
+      transparency: 'opaque',
+      extendedProperties: { private: { bcFichasId: evento.id, codigo: codigo(evento.codigo), bcHash: '' } },
+    }
+    g.extendedProperties.private.bcHash = hashEventoGoogle(g)
+    return g
+  })
+}
+
+/**
+ * Impressão digital do conteúdo de UM evento do Google (sem o próprio `bcHash`). Vai junto
+ * no envio (`extendedProperties.private.bcHash`) e volta na listagem da agenda: assim a
+ * conferência descobre cópias com conteúdo diferente do banco — por exemplo, eventos
+ * editados depois de uma cópia antiga do .db que foi restaurada.
+ */
+export function hashEventoGoogle(g: EventoGoogle): string {
+  const semHash = { ...g, extendedProperties: { private: { ...g.extendedProperties.private, bcHash: '' } } }
+  return createHash('sha256').update(JSON.stringify(semHash)).digest('hex').slice(0, 32)
 }
 
 /** Impressão digital do conteúdo enviado (evita reenviar o que não mudou). */

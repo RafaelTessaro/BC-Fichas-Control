@@ -140,6 +140,13 @@ interface RespostaGoogle {
   json: Record<string, unknown>
 }
 
+/** Evento da agenda criado por este sistema (resultado de `listarEventosDoSistema`). */
+export interface EventoDoSistema {
+  id: string
+  bcFichasId: string
+  bcHash?: string
+}
+
 export class ClienteGoogle {
   readonly cred: CredenciaisGoogle
   private fetch: FuncaoFetch
@@ -263,16 +270,17 @@ export class ClienteGoogle {
 
   /**
    * Eventos da agenda criados por este sistema (com `extendedProperties.private.bcFichasId`),
-   * sem os apagados. Percorre todas as páginas.
+   * sem os apagados. Percorre todas as páginas. `bcHash` é a impressão digital do conteúdo
+   * gravada no último envio (ausente em cópias enviadas por versões antigas do sistema).
    */
-  async listarEventosDoSistema(calendarId: string): Promise<Array<{ id: string; bcFichasId: string }>> {
-    const encontrados: Array<{ id: string; bcFichasId: string }> = []
+  async listarEventosDoSistema(calendarId: string): Promise<EventoDoSistema[]> {
+    const encontrados: EventoDoSistema[] = []
     let pagina = ''
     for (let i = 0; i < 1_000; i++) {
       const params = new URLSearchParams({
         maxResults: '2500',
         showDeleted: 'false',
-        fields: 'items(id,extendedProperties/private/bcFichasId),nextPageToken',
+        fields: 'items(id,extendedProperties/private/bcFichasId,extendedProperties/private/bcHash),nextPageToken',
       })
       if (pagina) params.set('pageToken', pagina)
       const r = await this.chamar('GET', `/calendars/${encodeURIComponent(calendarId)}/events?${params}`)
@@ -280,8 +288,9 @@ export class ClienteGoogle {
       for (const item of itens) {
         const privadas = (item?.extendedProperties as { private?: Record<string, unknown> } | undefined)?.private
         const bcFichasId = privadas?.bcFichasId
-        if (typeof item?.id === 'string' && typeof bcFichasId === 'string' && bcFichasId)
-          encontrados.push({ id: item.id, bcFichasId })
+        if (typeof item?.id !== 'string' || typeof bcFichasId !== 'string' || !bcFichasId) continue
+        const bcHash = privadas?.bcHash
+        encontrados.push(typeof bcHash === 'string' && bcHash ? { id: item.id, bcFichasId, bcHash } : { id: item.id, bcFichasId })
       }
       pagina = typeof r.json.nextPageToken === 'string' ? r.json.nextPageToken : ''
       if (!pagina) break

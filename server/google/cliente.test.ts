@@ -94,12 +94,13 @@ describe('chamadas à agenda', () => {
     const { sim, cliente } = preparar()
     sim.criarAgenda('ag')
     sim.tamanhoPagina = 2
-    for (const n of [1, 2, 3]) sim.inserir('ag', { id: `bcf${n}`, extendedProperties: { private: { bcFichasId: `e${n}` } } })
+    sim.inserir('ag', { id: 'bcf1', extendedProperties: { private: { bcFichasId: 'e1', bcHash: 'abc123' } } })
+    for (const n of [2, 3]) sim.inserir('ag', { id: `bcf${n}`, extendedProperties: { private: { bcFichasId: `e${n}` } } })
     sim.inserir('ag', { id: 'manual1', summary: 'Criado à mão' })
     sim.inserir('ag', { id: 'bcf4', extendedProperties: { private: { bcFichasId: 'e4' } } })
     sim.apagar('ag', 'bcf4')
-    expect(await cliente.listarEventosDoSistema('ag')).toEqual([
-      { id: 'bcf1', bcFichasId: 'e1' },
+    expect(await cliente.listarEventosDoSistema('ag')).toStrictEqual([
+      { id: 'bcf1', bcFichasId: 'e1', bcHash: 'abc123' },
       { id: 'bcf2', bcFichasId: 'e2' },
       { id: 'bcf3', bcFichasId: 'e3' },
     ])

@@ -12,7 +12,7 @@ import { abrirBanco } from '../db.ts'
 import { ErroApi } from '../erros.ts'
 import { Repositorio } from '../repositorio.ts'
 import { TempoReal } from '../tempoReal.ts'
-import { MSG_SEM_INTERNET } from './cliente.ts'
+import { MSG_SEM_INTERNET, type FuncaoFetch } from './cliente.ts'
 import { idGoogle } from './mapeamento.ts'
 import { criarModuloGoogle, type ModuloGoogle } from './modulo.ts'
 import { criarSimuladorGoogle, EMAIL_TESTE, erroGoogle, gerarContaServico } from './simuladorGoogle.ts'
@@ -41,7 +41,13 @@ async function montar() {
   const sim = criarSimuladorGoogle(conta.chavePublica)
   sim.criarAgenda(AGENDA)
   let relogio = Date.parse('2026-10-01T12:00:00Z')
-  const modulo: ModuloGoogle = criarModuloGoogle(ctx, { fetch: sim.fetch, agora: () => relogio })
+  /** Permite segurar uma chamada ao Google até o teste liberar (simula a demora da rede). */
+  let portao: ((url: string) => Promise<void>) | null = null
+  const fetch: FuncaoFetch = async (url, init) => {
+    if (portao) await portao(url)
+    return sim.fetch(url, init)
+  }
+  const modulo: ModuloGoogle = criarModuloGoogle(ctx, { fetch, agora: () => relogio })
   repo.registrarExtensao(modulo.extensao)
 
   const app = Fastify()
@@ -96,6 +102,7 @@ async function montar() {
     req,
     ativar,
     avancar: (ms: number) => (relogio += ms),
+    definirPortao: (f: typeof portao) => (portao = f),
     agora: () => relogio,
     async fechar() {
       modulo.parar()
@@ -123,6 +130,53 @@ const chamadasApi = () =>
     .filter((c) => c.caminho !== 'token' && c.metodo !== 'GET')
     .map((c) => `${c.metodo} ${c.caminho.replace(/\/calendars\/[^/]+/, '')}`)
 const syncDe = (e: Evento) => t.repo.obterEvento(e.id)?.google
+
+const TABELAS_COPIA = ['eventos', 'meta', 'google_sync', 'google_estado']
+/** Cópia das tabelas do banco (como uma cópia de segurança do .db). */
+const copiarBanco = () => Object.fromEntries(TABELAS_COPIA.map((n) => [n, t.ctx.db.prepare(`SELECT * FROM ${n}`).all()]))
+/** Volta a cópia por cima do banco atual (como copiar o .db antigo de volta para a pasta). */
+function restaurarBanco(copia: ReturnType<typeof copiarBanco>) {
+  const db = t.ctx.db
+  for (const n of TABELAS_COPIA) {
+    db.exec(`DELETE FROM ${n}`)
+    for (const l of copia[n] as Array<Record<string, any>>) {
+      const cols = Object.keys(l)
+      db.prepare(`INSERT INTO ${n} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).run(...cols.map((c) => l[c]))
+    }
+  }
+}
+/** Novo módulo sobre o mesmo banco (servidor reiniciado): inicia, processa a fila e para. */
+async function reiniciarServidor() {
+  const reiniciado = criarModuloGoogle(t.ctx, { fetch: t.sim.fetch, agora: t.agora })
+  try {
+    reiniciado.iniciar()
+    await reiniciado.sincronizarAgora()
+  } finally {
+    reiniciado.parar()
+  }
+}
+
+/** Segura a próxima chamada ao Google cujo endereço satisfaz `filtro`; `chegou` resolve quando ela acontece. */
+function segurarChamada(filtro: (url: string) => boolean) {
+  let liberar = () => {}
+  let avisar = () => {}
+  const chegou = new Promise<void>((r) => (avisar = r))
+  t.definirPortao((url) =>
+    filtro(url)
+      ? new Promise<void>((r) => {
+          liberar = r
+          avisar()
+        })
+      : Promise.resolve(),
+  )
+  return {
+    chegou,
+    liberar() {
+      t.definirPortao(null)
+      liberar()
+    },
+  }
+}
 
 describe('sincronização com o Google Agenda', () => {
   it('não faz nada nem decora os eventos enquanto a integração está desativada', async () => {
@@ -640,13 +694,12 @@ describe('robustez (revisão)', () => {
   })
 
   it('ao iniciar, confere a agenda: corrige o Google depois de voltar uma cópia antiga do banco (.db)', async () => {
-    const tabelas = ['eventos', 'meta', 'google_sync', 'google_estado']
     const db = t.ctx.db
     const y = t.criarEvento({ nome: 'Y' })
     await t.ativar()
     await t.modulo.sincronizarAgora()
     // Dia 1: cópia de segurança
-    const copia = Object.fromEntries(tabelas.map((n) => [n, db.prepare(`SELECT * FROM ${n}`).all()]))
+    const copia = copiarBanco()
 
     // Dia 2: cria X (vai para o Google) e exclui Y (sai do Google)
     const x = t.criarEvento({ nome: 'X' })
@@ -657,25 +710,126 @@ describe('robustez (revisão)', () => {
 
     // Dia 3: o .db do dia 1 é copiado por cima e o servidor é iniciado de novo
     t.modulo.parar()
-    for (const n of tabelas) {
-      db.exec(`DELETE FROM ${n}`)
-      for (const l of copia[n] as Array<Record<string, any>>) {
-        const cols = Object.keys(l)
-        db.prepare(`INSERT INTO ${n} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).run(
-          ...cols.map((c) => l[c]),
-        )
-      }
-    }
+    restaurarBanco(copia)
     expect(syncDe(y)?.status).toBe('ok') // o registro antigo diz que está no Google (não está)
-    const reiniciado = criarModuloGoogle(t.ctx, { fetch: t.sim.fetch, agora: t.agora })
-    try {
-      reiniciado.iniciar()
-      await reiniciado.sincronizarAgora()
-    } finally {
-      reiniciado.parar()
-    }
+    await reiniciarServidor()
     expect(donos(AGENDA)).toEqual([y.id, y.id])
     expect(db.prepare('SELECT status FROM google_sync WHERE evento_id = ?').get(y.id)).toEqual({ status: 'ok' })
+  })
+
+  it('ao iniciar, reenvia os eventos editados depois da cópia antiga do banco (.db) que voltou', async () => {
+    const v = t.criarEvento({ nome: 'V', dias: [{ id: 'a', data: '2026-08-01', maquinas: 2 }] })
+    const w = t.criarEvento({ nome: 'W', dias: [{ id: 'a', data: '2026-08-03', maquinas: 1 }] })
+    await t.ativar()
+    await t.modulo.sincronizarAgora()
+    // Dia 1: cópia de segurança
+    const copia = copiarBanco()
+
+    // Dia 2: V é adiado, ganha outro bloco de datas e é finalizado (o Google recebe tudo)
+    t.repo.atualizarEvento(v.id, {
+      ...t.repo.obterEventoBruto(v.id)!,
+      nome: 'V adiado',
+      status: 'FINALIZADO',
+      dias: [
+        { id: 'a', data: '2026-09-10', maquinas: 2 },
+        { id: 'b', data: '2026-09-11', maquinas: 2 },
+        { id: 'c', data: '2026-09-20', maquinas: 1 },
+      ],
+    })
+    await t.modulo.sincronizarAgora()
+    expect(t.sim.eventos(AGENDA).filter((g) => String(g.summary).startsWith('V adiado'))).toHaveLength(2)
+
+    // Dia 3: o .db do dia 1 volta e o servidor é iniciado de novo
+    t.modulo.parar()
+    restaurarBanco(copia)
+    expect(syncDe(v)?.status).toBe('ok') // o registro antigo confere com o conteúdo antigo do banco
+    t.sim.limparChamadas()
+    await reiniciarServidor()
+
+    // O Google volta a mostrar o que está no sistema; W (que não mudou) não é reenviado
+    expect(t.sim.eventos(AGENDA).map((g) => [g.summary, (g.start as { date: string }).date, g.colorId])).toEqual([
+      ['V — Padaria Ideal (2 máquinas)', '2026-08-01', '9'],
+      ['W — Padaria Ideal (1 máquina)', '2026-08-03', '9'],
+    ])
+    expect(chamadasApi().some((c) => c.includes(idGoogle(w.id, 0)))).toBe(false)
+    expect([syncDe(v)?.status, syncDe(w)?.status]).toEqual(['ok', 'ok'])
+  })
+
+  it('cópias com conteúdo diferente ou sem impressão digital (versão antiga) são reenviadas na conferência diária', async () => {
+    const e = t.criarEvento()
+    await t.ativar()
+    await t.modulo.sincronizarAgora()
+    const [g0, g1] = t.sim.eventos(AGENDA)
+    // g0 como enviado por uma versão antiga do sistema (sem bcHash); g1 com conteúdo trocado
+    const { bcFichasId, codigo } = (g0.extendedProperties as { private: Record<string, string> }).private
+    t.sim.inserir(AGENDA, { ...g0, summary: 'Antigo', extendedProperties: { private: { bcFichasId, codigo } } })
+    t.sim.inserir(AGENDA, {
+      ...g1,
+      summary: 'Antigo',
+      extendedProperties: { private: { bcFichasId, codigo, bcHash: 'conteudo-de-outra-epoca' } },
+    })
+    // Na rodada normal nada muda (o registro diz que está tudo enviado)…
+    await t.modulo.sincronizarAgora()
+    expect(t.sim.eventos(AGENDA).map((g) => g.summary)).toEqual(['Antigo', 'Antigo'])
+
+    // …e a conferência diária corrige
+    t.avancar(24 * 60 * 60_000)
+    await t.modulo.sincronizarAgora()
+    expect(t.sim.eventos(AGENDA).map((g) => g.summary)).toEqual([
+      'Baile da Cidade — Padaria Ideal (2–3 máquinas)',
+      'Baile da Cidade — Padaria Ideal (1 máquina)',
+    ])
+    expect(syncDe(e)?.status).toBe('ok')
+    // Depois de corrigido, a conferência seguinte não reenvia nada
+    t.sim.limparChamadas()
+    t.avancar(24 * 60 * 60_000)
+    await t.modulo.sincronizarAgora()
+    expect(t.sim.chamadas.some((c) => c.caminho.endsWith('/events') && c.metodo === 'GET')).toBe(true)
+    expect(chamadasApi()).toEqual([])
+  })
+
+  it('PUT /api/google/config: alteração feita enquanto a agenda nova é testada não é desfeita', async () => {
+    t.criarEvento()
+    await t.ativar()
+    await t.modulo.sincronizarAgora()
+    t.sim.criarAgenda(NOVA)
+
+    // Segura o teste da agenda nova até as outras alterações chegarem
+    const teste = segurarChamada((url) => url.endsWith(`/calendars/${encodeURIComponent(NOVA)}`))
+    const troca = t.req('PUT', '/api/google/config', { calendarId: NOVA })
+    await teste.chegou
+    // Outro computador desativa e liga "Incluir valores" enquanto isso
+    const desativar = t.req('PUT', '/api/google/config', { ativo: false })
+    const valores = t.req('PUT', '/api/google/config', { incluirValores: true })
+    await new Promise((r) => setTimeout(r, 20))
+    teste.liberar()
+
+    const [r1, r2, r3] = await Promise.all([troca, desativar, valores])
+    expect([r1.statusCode, r2.statusCode, r3.statusCode]).toEqual([200, 200, 200])
+    expect(r1.json()).toMatchObject({ ativo: true, calendarId: NOVA })
+    expect(r2.json()).toMatchObject({ ativo: false, calendarId: NOVA })
+    expect((await t.req('GET', '/api/google/status')).json()).toMatchObject({
+      ativo: false,
+      calendarId: NOVA,
+      incluirValores: true,
+    })
+  })
+
+  it('remover a chave enquanto a agenda é testada não é desfeito pela ativação', async () => {
+    expect((await t.req('POST', '/api/google/credenciais', { json: JSON.stringify(conta.json) })).statusCode).toBe(200)
+    const teste = segurarChamada((url) => url.includes('/calendars/'))
+    const ativar = t.req('PUT', '/api/google/config', { ativo: true, calendarId: AGENDA })
+    await teste.chegou
+    const remover = t.req('DELETE', '/api/google/credenciais')
+    await new Promise((r) => setTimeout(r, 20))
+    teste.liberar()
+
+    const [r1, r2] = await Promise.all([ativar, remover])
+    expect([r1.statusCode, r2.statusCode]).toEqual([200, 200])
+    expect((await t.req('GET', '/api/google/status')).json()).toMatchObject({ configurado: false, ativo: false })
+    // Ao enviar a chave de novo, a integração não volta ligada sozinha
+    const r3 = await t.req('POST', '/api/google/credenciais', { json: JSON.stringify(conta.json) })
+    expect(r3.json().ativo).toBe(false)
   })
 
   it('"Sincronizar tudo" apaga as cópias órfãs do sistema e não toca nos eventos criados à mão', async () => {

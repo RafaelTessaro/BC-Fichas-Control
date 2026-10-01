@@ -282,6 +282,11 @@ export class SincronizadorGoogle {
    *    Eventos criados à mão no Google (sem `bcFichasId`) nunca são tocados.
    *  - Eventos marcados como enviados cujas cópias sumiram do Google, ou cujo conteúdo
    *    não confere com o último envio, voltam para a fila.
+   *  - Eventos cujas cópias no Google têm conteúdo diferente do banco são reenviados
+   *    por inteiro. A comparação usa a impressão digital gravada em cada cópia
+   *    (`extendedProperties.private.bcHash`), e não o registro de sincronização, que volta
+   *    junto com a cópia antiga do .db (eventos editados depois da cópia ficariam no Google
+   *    com o conteúdo novo e o selo 'ok'). Cópias sem `bcHash` também são reenviadas.
    *  - Eventos sem registro, ou registros de eventos que não existem mais, entram na fila.
    * Atenção: a agenda deve ser usada por uma só instalação do sistema (um servidor de
    * teste apontando para a mesma agenda teria os eventos do outro apagados).
@@ -292,7 +297,7 @@ export class SincronizadorGoogle {
     const noGoogle = await cliente.listarEventosDoSistema(agenda)
     if (this.encerrado) return
     // O banco é lido depois da listagem (o Google só muda pelas mãos deste sincronizador)
-    const presentes = new Set(noGoogle.map((g) => g.id))
+    const presentes = new Map(noGoogle.map((g) => [g.id, g.bcHash ?? '']))
     const linhas = estado.todas()
     const porEvento = new Map(linhas.map((l) => [l.evento_id, l]))
     const conhecidos = new Set<string>()
@@ -309,9 +314,15 @@ export class SincronizadorGoogle {
       for (const g of desejados) conhecidos.add(g.id)
       const l = porEvento.get(evento.id)
       let forcar: boolean | null = null
+      // Cópia na agenda atual com conteúdo diferente do desejado (não importa o que diz o registro)
+      const divergente = desejados.some((g) => presentes.has(g.id) && presentes.get(g.id) !== g.extendedProperties.private.bcHash)
       if (!l) {
         if (desejados.length) forcar = false
-      } else if (l.status === 'ok' && !l.excluido) {
+      } else if (l.excluido) {
+        // Exclusão pendente: o sincronizador já cuida dela
+      } else if (divergente && l.calendar_id === agenda) {
+        forcar = true
+      } else if (l.status === 'ok') {
         const faltando = l.calendar_id === agenda && idsDaLinha(l).some((gid) => !presentes.has(gid))
         if (faltando) forcar = true
         else if (l.calendar_id !== agenda || l.hash !== hashConteudo(agenda, desejados)) forcar = false
