@@ -142,13 +142,19 @@ sistema reconecta sozinho; quando o servidor é atualizado, as telas abertas rec
 O acesso não pede senha: qualquer computador da rede da empresa consegue abrir o sistema.
 Não exponha a porta do servidor para a internet.
 
-## Consulta de CNPJ e CEP
+## Cadastro de clientes: empresa, pessoa física ou avulso
 
-Ao cadastrar uma empresa, basta digitar o CNPJ: o servidor consulta a Receita Federal (via
-BrasilAPI, com CNPJ.ws e Minha Receita como alternativas) e preenche razão social, nome
-fantasia, endereço, telefone, e-mail e situação cadastral. O CEP também preenche o endereço
-automaticamente. As consultas precisam de internet no servidor; sem internet, os campos
-podem ser preenchidos à mão normalmente.
+- **Empresa (CNPJ):** basta digitar o CNPJ — o servidor consulta a Receita Federal (via
+  BrasilAPI, com CNPJ.ws e Minha Receita como alternativas) e preenche razão social, nome
+  fantasia, endereço, telefone, e-mail e situação cadastral (com alerta se estiver baixada ou
+  inapta). O CNPJ **alfanumérico** (com letras, emitido a partir de julho de 2026) também é
+  aceito; enquanto os serviços de consulta não o suportarem, preencha os dados à mão.
+- **Pessoa física (CPF):** CPF validado e endereço preenchido pelo CEP.
+- **Avulso:** cliente eventual, sem documento — só um nome (ou nem isso). Também dá para criar
+  na hora, no lançamento do evento, com **"Usar como cliente avulso"**.
+
+O sistema não permite dois clientes com o mesmo CNPJ/CPF. As consultas precisam de internet no
+servidor; sem internet, os campos podem ser preenchidos à mão normalmente.
 
 ## Google Agenda
 
@@ -175,6 +181,18 @@ Configuração (uma vez só, cerca de 10 minutos):
    da agenda, clique em **Testar conexão** e depois em **Ativar**.
 
 A chave fica guardada só no servidor (`dados/google/credenciais.json`) e nunca é enviada aos navegadores.
+
+Observações:
+
+- Ativar a integração ou trocar de agenda exige internet no servidor naquele momento (o sistema
+  confere se a agenda existe antes de mover os eventos). Na troca, os eventos são criados na
+  agenda nova antes de serem apagados da antiga.
+- Ao iniciar, uma vez por dia e no botão **Sincronizar tudo agora**, o servidor confere a agenda:
+  recria o que foi apagado direto no Google e remove cópias de eventos que não existem mais no
+  sistema (por exemplo, depois de voltar uma cópia antiga do banco). Eventos criados à mão na
+  agenda nunca são mexidos.
+- Use a agenda com **uma única instalação** do sistema: um servidor de teste apontando para a
+  mesma agenda apagaria os eventos da outra instalação.
 
 ---
 

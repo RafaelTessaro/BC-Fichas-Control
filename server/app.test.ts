@@ -116,6 +116,16 @@ describe('API de dados', () => {
       payload: { ...outro, documento: clienteBase.documento },
     })
     expect(troca.statusCode).toBe(409)
+    // CNPJ alfanumérico (a partir de julho de 2026) é aceito, formatado e também conta para duplicidade
+    const alfa = await criarCliente({ tipo: 'PJ', nome: 'Empresa Nova', documento: '12abc34501de35' })
+    expect(alfa.documento).toBe('12.ABC.345/01DE-35')
+    const alfaDup = await app.inject({
+      method: 'POST',
+      url: '/api/clientes',
+      headers: H,
+      payload: { tipo: 'PJ', nome: 'X', documento: '12.ABC.345/01DE-35' },
+    })
+    expect(alfaDup.statusCode).toBe(409)
     // avulsos sem documento não conflitam entre si
     await criarCliente({ tipo: 'AVULSO', nome: 'A' })
     await criarCliente({ tipo: 'AVULSO', nome: 'B' })
