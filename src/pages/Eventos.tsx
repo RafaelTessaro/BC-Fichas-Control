@@ -7,11 +7,11 @@ import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { Select } from '../components/ui/Form'
 import { EmptyState, PageHeader, SearchInput, Segmented } from '../components/ui/Misc'
-import { FORMAS_PAGAMENTO, STATUS_EVENTO } from '../lib/calc'
+import { FORMAS_PAGAMENTO, STATUS_EVENTO } from '#shared/calc.ts'
 import { exportarCSV } from '../lib/csv'
 import { codigoEvento, dataCurta, hojeISO, moeda, normalizar, numero } from '../lib/format'
 import { porDataDesc, useEventosCompletos } from '../lib/hooks'
-import type { StatusEvento } from '../lib/types'
+import type { StatusEvento } from '#shared/tipos.ts'
 
 type FiltroStatus = 'todos' | StatusEvento
 type FiltroPeriodo = 'todos' | 'proximos' | 'mes' | 'mes-passado' | 'ano'

@@ -7,6 +7,7 @@ import { Drawer } from '../ui/Modal'
 import { SeletorTema, Sidebar } from './Sidebar'
 import { CommandPalette, usePaleta } from './CommandPalette'
 import { TODAS_PAGINAS } from './nav'
+import { AvisoConexao } from './AvisoConexao'
 
 function tituloSecao(pathname: string) {
   const p = [...TODAS_PAGINAS]
@@ -36,6 +37,7 @@ export function Layout({ children }: { children: ReactNode }) {
       </Drawer>
 
       <div className="flex min-w-0 flex-1 flex-col">
+        <AvisoConexao />
         <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-3 border-b border-line bg-bg/80 px-4 backdrop-blur-xl sm:px-6">
           <button
             onClick={() => setMenuMobile(true)}

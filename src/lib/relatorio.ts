@@ -13,7 +13,7 @@ import {
 import { ptBR } from 'date-fns/locale'
 import { cap } from './format'
 import type { EventoCompleto } from './hooks'
-import type { FormaPagamento } from './types'
+import type { FormaPagamento } from '#shared/tipos.ts'
 
 export interface Totais {
   eventos: number

@@ -1,20 +1,29 @@
 {
   "name": "bc-fichas-control",
   "private": true,
-  "version": "1.0.0",
+  "version": "2.0.0",
+  "description": "Controle de locação de máquinas de fichas — clientes, eventos, agenda e faturamento",
   "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "imports": {
+    "#shared/*": "./shared/*"
+  },
   "scripts": {
-    "dev": "vite",
+    "dev": "concurrently -k -n servidor,web -c green,blue \"npm:dev:servidor\" \"npm:dev:web\"",
+    "dev:web": "vite",
+    "dev:servidor": "node --watch --disable-warning=ExperimentalWarning server/index.ts",
     "build": "tsc -b && vite build",
-    "build:single": "tsc -b && vite build --mode single",
-    "build:demo": "tsc -b && VITE_DEMO=1 vite build --mode single",
-    "preview": "vite preview",
+    "start": "node --disable-warning=ExperimentalWarning server/index.ts",
     "test": "vitest run",
     "lint": "oxlint",
-    "format": "prettier --write src"
+    "format": "prettier --write src server shared"
   },
   "dependencies": {
+    "@fastify/static": "^10.1.5",
     "date-fns": "^4.4.0",
+    "fastify": "^5.12.5",
     "jspdf": "^4.2.1",
     "lucide-react": "^1.49.0",
     "motion": "^13.5.0",
@@ -30,12 +39,12 @@
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.5",
     "oxlint": "^1.81.0",
     "prettier": "^3.9.9",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
     "vite": "^8.3.0",
-    "vite-plugin-singlefile": "^2.3.3",
     "vitest": "^5.0.3"
   }
 }

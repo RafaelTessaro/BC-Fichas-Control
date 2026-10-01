@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { calcularEvento, conferenciaBobinas, ocupacaoPorDia } from './calc'
-import type { Evento } from './types'
+import { calcularEvento, conferenciaBobinas, ocupacaoPorDia } from './calc.ts'
+import type { Evento } from './tipos.ts'
 
 const base = {
   dias: [{ id: 'd1', data: '2026-08-01', maquinas: 2 }],

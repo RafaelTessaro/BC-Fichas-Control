@@ -26,17 +26,18 @@ import { useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConferenciaBadge, PagamentoBadge } from '../components/Badges'
 import { useAcoesEvento } from '../components/EventosTabela'
+import { GoogleSyncBadge } from '../components/GoogleSyncBadge'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Field, Input, NumberInput } from '../components/ui/Form'
 import { Modal } from '../components/ui/Modal'
 import { Avatar, EmptyState, Menu, PageHeader, Segmented } from '../components/ui/Misc'
-import { calcularEvento, FORMAS_PAGAMENTO, STATUS_EVENTO } from '../lib/calc'
+import { calcularEvento, FORMAS_PAGAMENTO, STATUS_EVENTO } from '#shared/calc.ts'
 import { cn } from '../lib/cn'
-import { codigoEvento, dataCurta, dataExtensa, hojeISO, moeda, numero, periodo } from '../lib/format'
-import type { FormaPagamento, StatusEvento } from '../lib/types'
+import { codigoEvento, dataCurta, dataExtensa, enderecoCompleto, hojeISO, moeda, numero, periodo } from '../lib/format'
+import type { EventoPatch, FormaPagamento, StatusEvento } from '#shared/tipos.ts'
 import { useDados } from '../store/dados'
-import { toast } from '../store/ui'
+import { avisarErro, toast } from '../store/ui'
 
 const ICONES_PAGAMENTO: Record<Exclude<FormaPagamento, 'NAO_PAGO'>, ReactNode> = {
   PIX: <QrCode className="h-4 w-4" />,
@@ -51,7 +52,7 @@ export function EventoDetalhe() {
   const navegar = useNavigate()
   const evento = useDados((s) => s.eventos.find((e) => e.id === id))
   const cliente = useDados((s) => s.clientes.find((c) => c.id === evento?.clienteId))
-  const atualizarEvento = useDados((s) => s.atualizarEvento)
+  const alterarEvento = useDados((s) => s.alterarEvento)
   const acoes = useAcoesEvento()
   const [modalPagamento, setModalPagamento] = useState(false)
   const [modalDevolucao, setModalDevolucao] = useState(false)
@@ -70,6 +71,18 @@ export function EventoDetalhe() {
 
   const r = calcularEvento(evento)
   const completo = { evento, resumo: r, cliente }
+
+  /** Alteração rápida no servidor; devolve `true` se deu certo (para fechar o modal). */
+  const alterar = async (patch: EventoPatch, titulo: string, descricao: string) => {
+    try {
+      await alterarEvento(evento.id, patch)
+      toast.sucesso(titulo, descricao)
+      return true
+    } catch (e) {
+      avisarErro('Não foi possível salvar', e)
+      return false
+    }
+  }
 
   const gerarPDF = async () => {
     setGerando(true)
@@ -95,6 +108,7 @@ export function EventoDetalhe() {
             <span className="tnum rounded-lg bg-surface-3 px-2 py-0.5 text-sm font-medium text-muted">
               {codigoEvento(evento.codigo)}
             </span>
+            <GoogleSyncBadge evento={evento} />
           </span>
         }
         descricao={
@@ -152,10 +166,7 @@ export function EventoDetalhe() {
           <Segmented
             tamanho="sm"
             valor={evento.status}
-            aoMudar={(s: StatusEvento) => {
-              atualizarEvento(evento.id, { status: s })
-              toast.sucesso('Status atualizado', STATUS_EVENTO[s].label)
-            }}
+            aoMudar={(s: StatusEvento) => void alterar({ status: s }, 'Status atualizado', STATUS_EVENTO[s].label)}
             opcoes={(Object.keys(STATUS_EVENTO) as StatusEvento[]).map((s) => ({ valor: s, label: STATUS_EVENTO[s].label }))}
           />
         </div>
@@ -260,11 +271,7 @@ export function EventoDetalhe() {
                   {cliente.responsavel && <Info icone={<User className="h-4 w-4" />}>{cliente.responsavel}</Info>}
                   {cliente.telefone && <Info icone={<Phone className="h-4 w-4" />}>{cliente.telefone}</Info>}
                   {cliente.email && <Info icone={<Mail className="h-4 w-4" />}>{cliente.email}</Info>}
-                  {(cliente.cidade || cliente.endereco) && (
-                    <Info icone={<MapPin className="h-4 w-4" />}>
-                      {[cliente.endereco, cliente.cidade && `${cliente.cidade}/${cliente.uf}`].filter(Boolean).join(' — ')}
-                    </Info>
-                  )}
+                  {enderecoCompleto(cliente) && <Info icone={<MapPin className="h-4 w-4" />}>{enderecoCompleto(cliente)}</Info>}
                 </div>
               </div>
             ) : (
@@ -335,24 +342,26 @@ export function EventoDetalhe() {
         aoFechar={() => setModalPagamento(false)}
         total={r.total}
         sugerirFinalizar={r.conferencia === 'CONFERIDO'}
-        aoConfirmar={(forma, data, finalizar) => {
-          atualizarEvento(evento.id, {
-            formaPagamento: forma,
-            dataPagamento: data,
-            ...(finalizar ? { status: 'FINALIZADO' } : {}),
-          })
-          toast.sucesso('Pagamento registrado', `${FORMAS_PAGAMENTO[forma].label} • ${moeda(r.total)}`)
-        }}
+        aoConfirmar={(forma, data, finalizar) =>
+          alterar(
+            { formaPagamento: forma, dataPagamento: data, ...(finalizar ? { status: 'FINALIZADO' as const } : {}) },
+            'Pagamento registrado',
+            `${FORMAS_PAGAMENTO[forma].label} • ${moeda(r.total)}`,
+          )
+        }
       />
       <DevolucaoModal
         aberto={modalDevolucao}
         aoFechar={() => setModalDevolucao(false)}
         consignadas={evento.bobinasConsignadas}
         valorBobina={evento.valorBobina}
-        aoConfirmar={(devolvidas) => {
-          atualizarEvento(evento.id, { bobinasDevolvidas: devolvidas })
-          toast.sucesso('Devolução registrada', `${evento.bobinasConsignadas - devolvidas} bobinas utilizadas`)
-        }}
+        aoConfirmar={(devolvidas) =>
+          alterar(
+            { bobinasDevolvidas: devolvidas },
+            'Devolução registrada',
+            `${evento.bobinasConsignadas - devolvidas} bobinas utilizadas`,
+          )
+        }
       />
     </>
   )
@@ -396,8 +405,9 @@ function PagamentoModal({
   aoFechar: () => void
   total: number
   sugerirFinalizar: boolean
-  aoConfirmar: (forma: FormaPagamento, data: string, finalizar: boolean) => void
+  aoConfirmar: (forma: FormaPagamento, data: string, finalizar: boolean) => Promise<boolean>
 }) {
+  const [enviando, setEnviando] = useState(false)
   const [forma, setForma] = useState<Exclude<FormaPagamento, 'NAO_PAGO'>>('PIX')
   const [data, setData] = useState(hojeISO())
   const [finalizar, setFinalizar] = useState(true)
@@ -414,12 +424,15 @@ function PagamentoModal({
           <Button onClick={aoFechar}>Cancelar</Button>
           <Button
             variante="primary"
-            onClick={() => {
-              aoConfirmar(forma, data || hojeISO(), sugerirFinalizar && finalizar)
-              aoFechar()
+            disabled={enviando}
+            onClick={async () => {
+              setEnviando(true)
+              const ok = await aoConfirmar(forma, data || hojeISO(), sugerirFinalizar && finalizar)
+              setEnviando(false)
+              if (ok) aoFechar()
             }}
           >
-            Confirmar pagamento
+            {enviando ? 'Salvando…' : 'Confirmar pagamento'}
           </Button>
         </>
       }
@@ -474,8 +487,9 @@ function DevolucaoModal({
   aoFechar: () => void
   consignadas: number
   valorBobina: number
-  aoConfirmar: (devolvidas: number) => void
+  aoConfirmar: (devolvidas: number) => Promise<boolean>
 }) {
+  const [enviando, setEnviando] = useState(false)
   const [dev, setDev] = useState<number | null>(null)
   const usadas = dev === null ? null : consignadas - dev
   return (
@@ -491,14 +505,16 @@ function DevolucaoModal({
           <Button onClick={aoFechar}>Cancelar</Button>
           <Button
             variante="primary"
-            disabled={dev === null}
-            onClick={() => {
+            disabled={dev === null || enviando}
+            onClick={async () => {
               if (dev === null) return
-              aoConfirmar(dev)
-              aoFechar()
+              setEnviando(true)
+              const ok = await aoConfirmar(dev)
+              setEnviando(false)
+              if (ok) aoFechar()
             }}
           >
-            Confirmar devolução
+            {enviando ? 'Salvando…' : 'Confirmar devolução'}
           </Button>
         </>
       }

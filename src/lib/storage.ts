@@ -33,10 +33,7 @@ export const armazenamentoSeguro: StateStorage = {
   },
 }
 
-export const novoId = () =>
-  typeof crypto !== 'undefined' && 'randomUUID' in crypto
-    ? crypto.randomUUID()
-    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+export { novoId } from '#shared/id.ts'
 
 export function baixarArquivo(nome: string, conteudo: BlobPart, tipo: string) {
   const url = URL.createObjectURL(new Blob([conteudo], { type: tipo }))

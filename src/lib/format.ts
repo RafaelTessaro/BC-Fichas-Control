@@ -42,30 +42,7 @@ export function periodo(inicio: string | null, fim: string | null) {
 
 export const codigoEvento = (n: number) => `#${String(n).padStart(4, '0')}`
 
-const digitos = (s: string) => s.replace(/\D/g, '')
-
-export function mascaraDocumento(valor: string, tipo: 'PF' | 'PJ') {
-  const d = digitos(valor).slice(0, tipo === 'PF' ? 11 : 14)
-  if (tipo === 'PF') {
-    return d
-      .replace(/^(\d{3})(\d)/, '$1.$2')
-      .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
-      .replace(/\.(\d{3})(\d)/, '.$1-$2')
-  }
-  return d
-    .replace(/^(\d{2})(\d)/, '$1.$2')
-    .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
-    .replace(/\.(\d{3})(\d)/, '.$1/$2')
-    .replace(/(\d{4})(\d)/, '$1-$2')
-}
-
-export function mascaraTelefone(valor: string) {
-  const d = digitos(valor).slice(0, 11)
-  if (d.length <= 2) return d.length ? `(${d}` : ''
-  if (d.length <= 6) return `(${d.slice(0, 2)}) ${d.slice(2)}`
-  if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`
-  return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`
-}
+export { mascaraCep, mascaraDocumento, mascaraTelefone } from '#shared/documentos.ts'
 
 /** Remove acentos e caixa para buscas tolerantes ("joão" encontra "JOAO"). */
 export function normalizar(s: string) {
@@ -96,4 +73,19 @@ export function textoParaReais(texto: string): number | null {
       : limpo.replace(/\./g, '')
   const n = Number(normal)
   return Number.isFinite(n) && n >= 0 ? Math.min(Math.round(n * 100), MAX_CENTAVOS) / 100 : null
+}
+
+/** Endereço em uma linha: "Rua 13, 650 — Boa Morte — Rio Claro/SP". */
+export function enderecoCompleto(c: {
+  logradouro: string
+  numero: string
+  complemento: string
+  bairro: string
+  cidade: string
+  uf: string
+}) {
+  const rua = [c.logradouro, c.numero].filter(Boolean).join(', ')
+  const ruaComp = [rua, c.complemento].filter(Boolean).join(' - ')
+  const cidade = [c.cidade, c.uf].filter(Boolean).join('/')
+  return [ruaComp, c.bairro, cidade].filter(Boolean).join(' — ')
 }

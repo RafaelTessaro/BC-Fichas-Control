@@ -10,7 +10,6 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
-dist-single
 *.local
 
 # Editor directories and files
@@ -23,3 +22,8 @@ dist-single
 *.njsproj
 *.sln
 *.sw?
+
+# Dados do servidor (banco, backups, credenciais)
+dados/
+dados-dev/
+.env

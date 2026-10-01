@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import type { Tone } from '../../lib/calc'
+import type { Tone } from '#shared/calc.ts'
 import { cn } from '../../lib/cn'
 
 const tons: Record<Tone, { box: string; dot: string }> = {

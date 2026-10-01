@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { calcularEvento } from './calc'
+import { calcularEvento } from '#shared/calc.ts'
 import type { EventoCompleto } from './hooks'
 import { agruparPorPeriodo, filtrarPeriodo, periodoAnterior } from './relatorio'
-import type { Evento } from './types'
+import type { Evento } from '#shared/tipos.ts'
 
 function ev(id: string, datas: string[], extra: Partial<Evento> = {}): EventoCompleto {
   const evento = {

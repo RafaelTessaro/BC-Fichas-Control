@@ -62,3 +62,8 @@ export const toast = {
   erro: (titulo: string, descricao?: string) => useToasts.getState().mostrar({ titulo, descricao, tipo: 'erro' }),
   info: (titulo: string, descricao?: string) => useToasts.getState().mostrar({ titulo, descricao, tipo: 'info' }),
 }
+
+/** Mostra o erro de uma operação no servidor de forma amigável. */
+export function avisarErro(titulo: string, e: unknown) {
+  toast.erro(titulo, e instanceof Error ? e.message : 'Erro inesperado.')
+}

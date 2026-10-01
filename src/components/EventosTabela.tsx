@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { codigoEvento, moeda, numero, periodo } from '../lib/format'
 import type { EventoCompleto } from '../lib/hooks'
 import { useDados } from '../store/dados'
-import { toast } from '../store/ui'
+import { avisarErro, toast } from '../store/ui'
 import { PagamentoBadge, StatusBadge } from './Badges'
 import { Button } from './ui/Button'
 import { confirmar } from './ui/Feedback'
@@ -18,11 +18,13 @@ export function useAcoesEvento() {
 
   return {
     editar: (id: string) => navegar(`/eventos/${id}/editar`),
-    duplicar: (id: string) => {
-      const novo = duplicarEvento(id)
-      if (novo) {
+    duplicar: async (id: string) => {
+      try {
+        const novo = await duplicarEvento(id)
         toast.sucesso('Evento duplicado', `${codigoEvento(novo.codigo)} criado como “Em aberto”.`)
         navegar(`/eventos/${novo.id}/editar`)
+      } catch (e) {
+        avisarErro('Não foi possível duplicar', e)
       }
     },
     pdf: async ({ evento, cliente }: EventoCompleto) => {
@@ -43,9 +45,13 @@ export function useAcoesEvento() {
         perigo: true,
       })
       if (!ok) return
-      excluirEvento(evento.id)
-      toast.sucesso('Evento excluído')
-      depois?.()
+      try {
+        await excluirEvento(evento.id)
+        toast.sucesso('Evento excluído')
+        depois?.()
+      } catch (e) {
+        avisarErro('Não foi possível excluir', e)
+      }
     },
   }
 }

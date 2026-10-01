@@ -1,198 +1,207 @@
 import { create } from 'zustand'
-import { createJSONStorage, persist } from 'zustand/middleware'
-import { gerarDadosExemplo } from '../lib/seed'
-import { armazenamentoSeguro, novoId } from '../lib/storage'
-import type { Cliente, Configuracoes, Evento, ID } from '../lib/types'
+import { CONFIG_PADRAO } from '#shared/dominio.ts'
+import type {
+  Backup,
+  Cliente,
+  ClienteInput,
+  Configuracoes,
+  DadosCompletos,
+  Evento,
+  EventoInput,
+  EventoPatch,
+  MensagemTempoReal,
+} from '#shared/tipos.ts'
+import { api, conectarTempoReal } from '../lib/api'
 
-export type ClienteInput = Omit<Cliente, 'id' | 'criadoEm' | 'atualizadoEm'>
-export type EventoInput = Omit<Evento, 'id' | 'codigo' | 'criadoEm' | 'atualizadoEm'>
+export { CONFIG_PADRAO }
+export type { ClienteInput, EventoInput }
 
-export const CONFIG_PADRAO: Configuracoes = {
-  valorDiariaPadrao: 80,
-  valorBobinaPadrao: 6,
-  frotaMaquinas: 10,
-  rodapePadrao: 'AGRADECEMOS SUA PRESENÇA!',
-}
-
-export interface Backup {
-  app: 'bc-fichas-control'
+/** Registro que o usuário começou a editar (para detectar alterações de outra pessoa). */
+export interface Alvo {
+  id: string
   versao: number
-  exportadoEm: string
-  clientes: Cliente[]
-  eventos: Evento[]
-  config: Configuracoes
-  proximoCodigo: number
 }
 
 interface DadosState {
   clientes: Cliente[]
   eventos: Evento[]
   config: Configuracoes
-  proximoCodigo: number
+  /** Última revisão do servidor aplicada nesta tela. */
+  revisao: number
+  status: 'carregando' | 'pronto' | 'erro'
+  erro: string
+  /** Conexão de tempo real com o servidor ativa. */
+  conectado: boolean
 
-  salvarCliente: (dados: ClienteInput, id?: ID) => Cliente
-  excluirCliente: (id: ID) => { ok: boolean; motivo?: string }
-  salvarEvento: (dados: EventoInput, id?: ID) => Evento
-  atualizarEvento: (id: ID, patch: Partial<EventoInput>) => void
-  duplicarEvento: (id: ID) => Evento | undefined
-  excluirEvento: (id: ID) => void
-  salvarConfig: (patch: Partial<Configuracoes>) => void
-  exportar: () => Backup
-  importar: (dados: unknown) => void
-  carregarExemplo: () => void
-  limparTudo: () => void
+  /** Abre a conexão com o servidor e carrega os dados. Retorna a função de encerramento. */
+  iniciar: () => () => void
+  recarregar: () => Promise<void>
+
+  salvarCliente: (dados: ClienteInput, alvo?: Alvo) => Promise<Cliente>
+  excluirCliente: (id: string) => Promise<void>
+  salvarEvento: (dados: EventoInput, alvo?: Alvo) => Promise<Evento>
+  alterarEvento: (id: string, patch: EventoPatch) => Promise<Evento>
+  duplicarEvento: (id: string) => Promise<Evento>
+  excluirEvento: (id: string) => Promise<void>
+  salvarConfig: (config: Configuracoes) => Promise<Configuracoes>
+  exportar: () => Promise<Backup>
+  importar: (dados: unknown) => Promise<{ clientes: number; eventos: number }>
+  carregarExemplo: () => Promise<void>
+  limparTudo: () => Promise<void>
 }
 
-const agora = () => new Date().toISOString()
-
-function validarBackup(dados: unknown): Backup {
-  const b = dados as Partial<Backup>
-  if (!b || typeof b !== 'object' || b.app !== 'bc-fichas-control' || !Array.isArray(b.clientes) || !Array.isArray(b.eventos)) {
-    throw new Error('Arquivo de backup inválido ou de outro sistema.')
-  }
-  const maiorCodigo = b.eventos.reduce((m, e) => Math.max(m, Number(e.codigo) || 0), 0)
-  return {
-    app: 'bc-fichas-control',
-    versao: Number(b.versao) || 1,
-    exportadoEm: String(b.exportadoEm ?? ''),
-    clientes: b.clientes,
-    eventos: b.eventos,
-    config: { ...CONFIG_PADRAO, ...b.config },
-    proximoCodigo: Math.max(Number(b.proximoCodigo) || 1, maiorCodigo + 1),
-  }
+/** Insere ou substitui pelo id, sem voltar para uma versão mais antiga. */
+function mesclar<T extends { id: string; versao: number }>(lista: T[], item: T): T[] {
+  const i = lista.findIndex((x) => x.id === item.id)
+  if (i === -1) return [...lista, item]
+  if (lista[i].versao > item.versao) return lista
+  const copia = lista.slice()
+  copia[i] = item
+  return copia
 }
 
-export const useDados = create<DadosState>()(
-  persist(
-    (set, get) => ({
-      clientes: [],
-      eventos: [],
-      config: CONFIG_PADRAO,
-      proximoCodigo: 1,
+let fila: MensagemTempoReal[] = []
+let carregamento: Promise<void> | null = null
 
-      salvarCliente(dados, id) {
-        const ts = agora()
-        if (id) {
-          let salvo!: Cliente
-          set((s) => ({
-            clientes: s.clientes.map((c) => (c.id === id ? (salvo = { ...c, ...dados, atualizadoEm: ts }) : c)),
-          }))
-          return salvo
-        }
-        const novo: Cliente = { ...dados, id: novoId(), criadoEm: ts, atualizadoEm: ts }
-        set((s) => ({ clientes: [...s.clientes, novo] }))
-        return novo
-      },
+export const useDados = create<DadosState>()((set, get) => {
+  const aplicarCarga = (d: DadosCompletos) => {
+    set({ clientes: d.clientes, eventos: d.eventos, config: d.config, revisao: d.revisao, status: 'pronto', erro: '' })
+    const pendentes = fila.filter((m) => m.revisao > d.revisao).sort((a, b) => a.revisao - b.revisao)
+    fila = []
+    pendentes.forEach(aplicarMensagem)
+  }
 
-      excluirCliente(id) {
-        const qtd = get().eventos.filter((e) => e.clienteId === id).length
-        if (qtd > 0) {
-          return {
-            ok: false,
-            motivo: `Este cliente possui ${qtd} evento${qtd > 1 ? 's' : ''}. Exclua ou transfira os eventos antes.`,
-          }
-        }
-        set((s) => ({ clientes: s.clientes.filter((c) => c.id !== id) }))
-        return { ok: true }
-      },
-
-      salvarEvento(dados, id) {
-        const ts = agora()
-        const dias = [...dados.dias].sort((a, b) => a.data.localeCompare(b.data))
-        if (id) {
-          let salvo!: Evento
-          set((s) => ({
-            eventos: s.eventos.map((e) => (e.id === id ? (salvo = { ...e, ...dados, dias, atualizadoEm: ts }) : e)),
-          }))
-          return salvo
-        }
-        const novo: Evento = {
-          ...dados,
-          dias,
-          id: novoId(),
-          codigo: get().proximoCodigo,
-          criadoEm: ts,
-          atualizadoEm: ts,
-        }
-        set((s) => ({ eventos: [...s.eventos, novo], proximoCodigo: s.proximoCodigo + 1 }))
-        return novo
-      },
-
-      atualizarEvento(id, patch) {
-        set((s) => ({
-          eventos: s.eventos.map((e) => (e.id === id ? { ...e, ...patch, atualizadoEm: agora() } : e)),
-        }))
-      },
-
-      duplicarEvento(id) {
-        const origem = get().eventos.find((e) => e.id === id)
-        if (!origem) return undefined
-        const { id: _id, codigo: _c, criadoEm: _cr, atualizadoEm: _at, ...resto } = origem
-        return get().salvarEvento({
-          ...resto,
-          nome: `${origem.nome} (cópia)`,
-          dias: origem.dias.map((d) => ({ ...d, id: novoId() })),
-          bobinasDevolvidas: null,
-          formaPagamento: 'NAO_PAGO',
-          dataPagamento: '',
-          status: 'EM_ABERTO',
+  const aplicarMensagem = (msg: MensagemTempoReal) => {
+    const s = get()
+    if (s.status !== 'pronto' || carregamento) {
+      fila.push(msg)
+      return
+    }
+    if (msg.revisao < s.revisao) return
+    if (msg.revisao > s.revisao + 1) {
+      // Perdemos alguma alteração no caminho: recarrega tudo
+      void get().recarregar()
+      return
+    }
+    switch (msg.tipo) {
+      case 'cliente':
+        set({
+          clientes: msg.acao === 'salvo' ? mesclar(s.clientes, msg.dado) : s.clientes.filter((c) => c.id !== msg.id),
         })
-      },
-
-      excluirEvento(id) {
-        set((s) => ({ eventos: s.eventos.filter((e) => e.id !== id) }))
-      },
-
-      salvarConfig(patch) {
-        set((s) => ({ config: { ...s.config, ...patch } }))
-      },
-
-      exportar() {
-        const { clientes, eventos, config, proximoCodigo } = get()
-        return { app: 'bc-fichas-control', versao: 1, exportadoEm: agora(), clientes, eventos, config, proximoCodigo }
-      },
-
-      importar(dados) {
-        const b = validarBackup(dados)
-        set({ clientes: b.clientes, eventos: b.eventos, config: b.config, proximoCodigo: b.proximoCodigo })
-      },
-
-      carregarExemplo() {
-        const ex = gerarDadosExemplo(new Date())
-        set({ clientes: ex.clientes, eventos: ex.eventos, proximoCodigo: ex.proximoCodigo })
-      },
-
-      limparTudo() {
-        set({ clientes: [], eventos: [], proximoCodigo: 1 })
-      },
-    }),
-    {
-      name: 'bc-fichas:dados',
-      version: 1,
-      storage: createJSONStorage(() => armazenamentoSeguro),
-      partialize: ({ clientes, eventos, config, proximoCodigo }) => ({ clientes, eventos, config, proximoCodigo }),
-      merge: (persistido, atual) => {
-        const p = (persistido ?? {}) as Partial<DadosState>
-        return {
-          ...atual,
-          ...p,
-          config: { ...CONFIG_PADRAO, ...p.config },
-        }
-      },
-    },
-  ),
-)
-
-/** Na versão de demonstração (build:demo), carrega dados de exemplo no primeiro acesso. */
-export function iniciarDemoSeNecessario() {
-  if (import.meta.env.VITE_DEMO !== '1') return
-  const s = useDados.getState()
-  let jaIniciado = false
-  try {
-    jaIniciado = localStorage.getItem('bc-fichas:demo-iniciado') === '1'
-    localStorage.setItem('bc-fichas:demo-iniciado', '1')
-  } catch {
-    /* sem armazenamento: carrega o exemplo a cada abertura */
+        break
+      case 'evento':
+        set({ eventos: msg.acao === 'salvo' ? mesclar(s.eventos, msg.dado) : s.eventos.filter((e) => e.id !== msg.id) })
+        break
+      case 'config':
+        set({ config: msg.dado })
+        break
+      case 'tudo':
+        void get().recarregar()
+        return
+    }
+    set({ revisao: Math.max(get().revisao, msg.revisao) })
   }
-  if (!jaIniciado && s.clientes.length === 0 && s.eventos.length === 0) s.carregarExemplo()
-}
+
+  return {
+    clientes: [],
+    eventos: [],
+    config: CONFIG_PADRAO,
+    revisao: 0,
+    status: 'carregando',
+    erro: '',
+    conectado: false,
+
+    iniciar() {
+      let primeiraFalha = true
+      const fechar = conectarTempoReal({
+        aoConectar(revisaoServidor) {
+          set({ conectado: true })
+          const s = get()
+          if (s.status !== 'pronto' || revisaoServidor !== s.revisao) void get().recarregar()
+        },
+        aoReceber: aplicarMensagem,
+        aoDesconectar() {
+          set({ conectado: false })
+          // Sem tempo real logo na abertura: tenta a carga direta para mostrar o motivo
+          if (primeiraFalha && get().status === 'carregando') {
+            primeiraFalha = false
+            void get().recarregar()
+          }
+        },
+      })
+      return fechar
+    },
+
+    recarregar() {
+      carregamento ??= api
+        .dados()
+        .then((d) => {
+          carregamento = null
+          aplicarCarga(d)
+        })
+        .catch((e: Error) => {
+          carregamento = null
+          if (get().status !== 'pronto') set({ status: 'erro', erro: e.message })
+        })
+      return carregamento
+    },
+
+    async salvarCliente(dados, alvo) {
+      const salvo = alvo ? await api.atualizarCliente(alvo.id, dados, alvo.versao) : await api.criarCliente(dados)
+      set((s) => ({ clientes: mesclar(s.clientes, salvo) }))
+      return salvo
+    },
+
+    async excluirCliente(id) {
+      await api.excluirCliente(id)
+      set((s) => ({ clientes: s.clientes.filter((c) => c.id !== id) }))
+    },
+
+    async salvarEvento(dados, alvo) {
+      const salvo = alvo ? await api.atualizarEvento(alvo.id, dados, alvo.versao) : await api.criarEvento(dados)
+      set((s) => ({ eventos: mesclar(s.eventos, salvo) }))
+      return salvo
+    },
+
+    async alterarEvento(id, patch) {
+      const salvo = await api.alterarEvento(id, patch)
+      set((s) => ({ eventos: mesclar(s.eventos, salvo) }))
+      return salvo
+    },
+
+    async duplicarEvento(id) {
+      const novo = await api.duplicarEvento(id)
+      set((s) => ({ eventos: mesclar(s.eventos, novo) }))
+      return novo
+    },
+
+    async excluirEvento(id) {
+      await api.excluirEvento(id)
+      set((s) => ({ eventos: s.eventos.filter((e) => e.id !== id) }))
+    },
+
+    async salvarConfig(config) {
+      const salvo = await api.salvarConfig(config)
+      set({ config: salvo })
+      return salvo
+    },
+
+    exportar: () => api.backup(),
+
+    async importar(dados) {
+      const r = await api.restaurar(dados)
+      await get().recarregar()
+      return r
+    },
+
+    async carregarExemplo() {
+      await api.carregarExemplo()
+      await get().recarregar()
+    },
+
+    async limparTudo() {
+      await api.limparTudo()
+      await get().recarregar()
+    },
+  }
+})

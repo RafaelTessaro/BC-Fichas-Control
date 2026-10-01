@@ -1,9 +1,9 @@
 import { jsPDF } from 'jspdf'
 import timbradoUrl from '../assets/timbrado.jpg'
-import { calcularEvento, FORMAS_PAGAMENTO } from './calc'
+import { calcularEvento, FORMAS_PAGAMENTO } from '#shared/calc.ts'
 import { codigoEvento, dataCurta, dataExtensa, hojeISO, moeda, numero, periodo } from './format'
 import { nomeArquivoSeguro } from './storage'
-import type { Cliente, Configuracoes, Evento } from './types'
+import type { Cliente, Configuracoes, Evento } from '#shared/tipos.ts'
 
 const VERDE: [number, number, number] = [11, 158, 79]
 const TINTA: [number, number, number] = [50, 52, 56]

@@ -1,16 +1,23 @@
+/// <reference types="vitest/config" />
 import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
-import { viteSingleFile } from 'vite-plugin-singlefile'
 
-// `npm run build:single` gera um único arquivo HTML (dist-single/index.html)
-// que pode ser aberto direto no navegador, sem servidor.
-export default defineConfig(({ mode }) => ({
+// Em desenvolvimento (`npm run dev`) o Vite repassa /api para o servidor local na porta 3000.
+export default defineConfig({
   base: './',
-  plugins: [react(), tailwindcss(), ...(mode === 'single' ? [viteSingleFile()] : [])],
-  build: {
-    // recharts + motion formam o bloco principal; o jsPDF já é carregado sob demanda
-    chunkSizeWarningLimit: 1100,
-    ...(mode === 'single' ? { outDir: 'dist-single', assetsInlineLimit: Infinity } : {}),
+  plugins: [react(), tailwindcss()],
+  server: {
+    proxy: {
+      '/api': { target: `http://localhost:${process.env.PORTA ?? 3000}`, changeOrigin: false },
+    },
   },
-}))
+  build: {
+    // recharts + motion formam o bloco principal; o jsPDF é carregado sob demanda
+    chunkSizeWarningLimit: 1100,
+  },
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts', 'shared/**/*.test.ts', 'server/**/*.test.ts'],
+  },
+})

@@ -12,6 +12,8 @@ import { EventoForm } from './pages/EventoForm'
 import { Eventos } from './pages/Eventos'
 import { Painel } from './pages/Painel'
 import { Relatorios } from './pages/Relatorios'
+import { TelaConexao } from './components/layout/TelaConexao'
+import { useDados } from './store/dados'
 import { aplicarTema, useUI } from './store/ui'
 
 function Rotas() {
@@ -37,6 +39,10 @@ function Rotas() {
 
 export default function App() {
   const tema = useUI((s) => s.tema)
+  const status = useDados((s) => s.status)
+
+  // Conecta ao servidor (dados + atualizações em tempo real)
+  useEffect(() => useDados.getState().iniciar(), [])
 
   useEffect(() => {
     aplicarTema(tema)
@@ -49,11 +55,15 @@ export default function App() {
 
   return (
     <MotionConfig reducedMotion="user">
-      <HashRouter>
-        <Rotas />
-        <Toaster />
-        <ConfirmHost />
-      </HashRouter>
+      {status === 'pronto' ? (
+        <HashRouter>
+          <Rotas />
+          <Toaster />
+          <ConfirmHost />
+        </HashRouter>
+      ) : (
+        <TelaConexao />
+      )}
     </MotionConfig>
   )
 }

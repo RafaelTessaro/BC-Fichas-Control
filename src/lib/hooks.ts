@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useDados } from '../store/dados'
-import { calcularEvento, type ResumoEvento } from './calc'
-import type { Cliente, Evento } from './types'
+import { calcularEvento, type ResumoEvento } from '#shared/calc.ts'
+import type { Cliente, Evento } from '#shared/tipos.ts'
 
 export interface EventoCompleto {
   evento: Evento

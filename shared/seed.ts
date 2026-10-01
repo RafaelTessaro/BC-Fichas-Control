@@ -1,6 +1,8 @@
 import { addDays, format, subMonths } from 'date-fns'
-import { novoId } from './storage'
-import type { Cliente, Evento, FormaPagamento, StatusEvento } from './types'
+import { CLIENTE_VAZIO } from './dominio.ts'
+import { completarCnpj, completarCpf, mascaraCnpj, mascaraCpf } from './documentos.ts'
+import { novoId } from './id.ts'
+import type { Cliente, Evento, FormaPagamento, StatusEvento } from './tipos.ts'
 
 /** Gerador pseudoaleatório determinístico para que o exemplo seja sempre igual. */
 function rng(semente: number) {
@@ -20,6 +22,7 @@ const CLIENTES: Array<Partial<Cliente> & Pick<Cliente, 'nome' | 'tipo'>> = [
   { nome: 'Buffet Estrela', tipo: 'PJ', responsavel: 'Rogério Alves', cidade: 'Rio Claro', uf: 'SP' },
   { nome: 'Juliana Martins', tipo: 'PF', responsavel: '', cidade: 'Santa Gertrudes', uf: 'SP' },
   { nome: 'Comissão de Festas Vila Nova', tipo: 'PJ', responsavel: 'Sérgio Tavares', cidade: 'Ipeúna', uf: 'SP' },
+  { nome: 'Barraca do Seu Zé', tipo: 'AVULSO', responsavel: '', cidade: 'Rio Claro', uf: 'SP' },
 ]
 
 const EVENTOS = [
@@ -45,15 +48,18 @@ export function gerarDadosExemplo(hoje: Date) {
   const ts = hoje.toISOString()
 
   const clientes: Cliente[] = CLIENTES.map((c, i) => ({
+    ...CLIENTE_VAZIO,
     id: novoId(),
-    documento: c.tipo === 'PJ' ? `${10 + i}.${300 + i * 7}.${400 + i * 3}/0001-${10 + i}` : '123.456.789-09',
+    versao: 1,
+    documento:
+      c.tipo === 'PJ'
+        ? mascaraCnpj(completarCnpj(`${10 + i}${300 + i * 7}${400 + i * 3}0001`))
+        : c.tipo === 'PF'
+          ? mascaraCpf(completarCpf(`${123456780 + i}`))
+          : '',
+    razaoSocial: c.tipo === 'PJ' ? `${c.nome.toUpperCase()} LTDA` : '',
+    situacaoCadastral: c.tipo === 'PJ' ? 'ATIVA' : '',
     telefone: `(19) 9${8100 + i * 37}-${String(1000 + i * 413).slice(0, 4)}`,
-    email: '',
-    endereco: '',
-    observacoes: '',
-    responsavel: '',
-    cidade: '',
-    uf: 'SP',
     criadoEm: ts,
     atualizadoEm: ts,
     ...c,
@@ -93,6 +99,7 @@ export function gerarDadosExemplo(hoje: Date) {
 
     eventos.push({
       id: novoId(),
+      versao: 1,
       codigo: codigo++,
       clienteId: cliente.id,
       nome: pick(EVENTOS),

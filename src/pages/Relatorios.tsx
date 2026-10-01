@@ -18,7 +18,7 @@ import { Button } from '../components/ui/Button'
 import { Field, Input, Select } from '../components/ui/Form'
 import { EmptyState, PageHeader, Segmented, StatCard } from '../components/ui/Misc'
 import { Tabela, Td, Th } from '../components/ui/Table'
-import { FORMAS_PAGAMENTO } from '../lib/calc'
+import { FORMAS_PAGAMENTO } from '#shared/calc.ts'
 import { cn } from '../lib/cn'
 import { exportarCSV } from '../lib/csv'
 import { dataCurta, moeda, numero } from '../lib/format'
@@ -32,7 +32,7 @@ import {
   somar,
   totaisVazios,
 } from '../lib/relatorio'
-import type { FormaPagamento } from '../lib/types'
+import type { FormaPagamento } from '#shared/tipos.ts'
 import { useDados } from '../store/dados'
 
 type Preset = 'mes' | '3m' | '6m' | '12m' | 'ano' | 'custom'

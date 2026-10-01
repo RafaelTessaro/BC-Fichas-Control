@@ -28,7 +28,8 @@ import { codigoEvento, dataExtensa, hojeISO, moeda, numero, periodo } from '../l
 import { useEventosCompletos, type EventoCompleto } from '../lib/hooks'
 import { agruparPorPeriodo, filtrarPeriodo, somar, totaisVazios } from '../lib/relatorio'
 import { useDados } from '../store/dados'
-import { toast } from '../store/ui'
+import { avisarErro, toast } from '../store/ui'
+import { MigracaoNavegador } from '../components/MigracaoNavegador'
 
 export function Painel() {
   const todos = useEventosCompletos()
@@ -103,6 +104,8 @@ export function Painel() {
         }
       />
 
+      {vazio && <MigracaoNavegador />}
+
       {vazio && (
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
           <Card className="relative mb-6 overflow-hidden p-6 sm:p-8">
@@ -140,14 +143,20 @@ export function Painel() {
                 <Button
                   variante="soft"
                   icone={<Database className="h-4 w-4" />}
-                  onClick={() => {
-                    carregarExemplo()
-                    toast.sucesso('Dados de exemplo carregados', 'Você pode apagá-los em Configurações.')
+                  onClick={async () => {
+                    try {
+                      await carregarExemplo()
+                      toast.sucesso('Dados de exemplo carregados', 'Você pode apagá-los em Configurações.')
+                    } catch (e) {
+                      avisarErro('Não foi possível carregar o exemplo', e)
+                    }
                   }}
                 >
                   Explorar com dados de exemplo
                 </Button>
-                <span className="text-xs text-muted">Os dados ficam salvos neste navegador.</span>
+                <span className="text-xs text-muted">
+                  Os dados ficam no servidor e aparecem em todos os computadores da rede.
+                </span>
               </div>
             </div>
           </Card>

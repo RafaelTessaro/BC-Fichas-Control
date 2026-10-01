@@ -4,6 +4,7 @@ import { create } from 'zustand'
 import { cn } from '../../lib/cn'
 import { useToasts } from '../../store/ui'
 import { Button } from './Button'
+import { Input } from './Form'
 import { Modal } from './Modal'
 
 // ---- Toasts ----------------------------------------------------------------
@@ -60,6 +61,8 @@ interface PedidoConfirmacao {
   descricao?: string
   confirmar?: string
   perigo?: boolean
+  /** Exige que o usuário digite esta palavra para liberar o botão (ações irreversíveis). */
+  digitar?: string
   resolver: (ok: boolean) => void
 }
 
@@ -73,6 +76,7 @@ export function ConfirmHost() {
   const pedido = useConfirmacao((s) => s.pedido)
   const responder = (ok: boolean) => {
     pedido?.resolver(ok)
+    useTextoDigitado.setState({ texto: '' })
     useConfirmacao.setState({ pedido: null })
   }
   return (
@@ -83,14 +87,41 @@ export function ConfirmHost() {
       titulo={pedido?.titulo}
       descricao={pedido?.descricao}
       icone={pedido?.perigo ? <TriangleAlert className="h-5 w-5 text-danger" /> : undefined}
-      rodape={
-        <>
-          <Button onClick={() => responder(false)}>Cancelar</Button>
-          <Button variante={pedido?.perigo ? 'danger' : 'primary'} onClick={() => responder(true)} autoFocus>
-            {pedido?.confirmar ?? 'Confirmar'}
-          </Button>
-        </>
-      }
-    />
+      rodape={pedido && <BotoesConfirmacao key={pedido.titulo} pedido={pedido} responder={responder} />}
+    >
+      {pedido?.digitar && <CampoDigitar palavra={pedido.digitar} />}
+    </Modal>
+  )
+}
+
+const useTextoDigitado = create<{ texto: string }>(() => ({ texto: '' }))
+
+function CampoDigitar({ palavra }: { palavra: string }) {
+  const texto = useTextoDigitado((s) => s.texto)
+  return (
+    <label className="flex flex-col gap-1.5 text-[13px] text-ink-2">
+      <span>
+        Para confirmar, digite <b className="font-semibold text-ink">{palavra}</b>
+      </span>
+      <Input autoFocus value={texto} onChange={(e) => useTextoDigitado.setState({ texto: e.target.value })} autoComplete="off" />
+    </label>
+  )
+}
+
+function BotoesConfirmacao({ pedido, responder }: { pedido: PedidoConfirmacao; responder: (ok: boolean) => void }) {
+  const texto = useTextoDigitado((s) => s.texto)
+  const liberado = !pedido.digitar || texto.trim().toUpperCase() === pedido.digitar.toUpperCase()
+  return (
+    <>
+      <Button onClick={() => responder(false)}>Cancelar</Button>
+      <Button
+        variante={pedido.perigo ? 'danger' : 'primary'}
+        onClick={() => responder(true)}
+        disabled={!liberado}
+        autoFocus={!pedido.digitar}
+      >
+        {pedido.confirmar ?? 'Confirmar'}
+      </Button>
+    </>
   )
 }

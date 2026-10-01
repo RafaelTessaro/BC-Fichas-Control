@@ -11,9 +11,9 @@ import { Linha, Tabela, Td, Th } from '../components/ui/Table'
 import { exportarCSV } from '../lib/csv'
 import { dataCurta, moeda, normalizar, numero } from '../lib/format'
 import { useEventosCompletos } from '../lib/hooks'
-import type { Cliente } from '../lib/types'
+import type { Cliente } from '#shared/tipos.ts'
 import { useDados } from '../store/dados'
-import { toast } from '../store/ui'
+import { avisarErro, toast } from '../store/ui'
 
 type Ordem = 'nome' | 'faturado' | 'recente'
 
@@ -71,9 +71,12 @@ export function Clientes() {
       perigo: true,
     })
     if (!ok) return
-    const r = excluirCliente(c.id)
-    if (r.ok) toast.sucesso('Cliente excluído')
-    else toast.erro('Não foi possível excluir', r.motivo)
+    try {
+      await excluirCliente(c.id)
+      toast.sucesso('Cliente excluído')
+    } catch (e) {
+      avisarErro('Não foi possível excluir', e)
+    }
   }
 
   const exportar = () => {

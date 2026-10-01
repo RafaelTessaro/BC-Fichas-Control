@@ -21,10 +21,10 @@ import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { confirmar } from '../components/ui/Feedback'
 import { Avatar, EmptyState, PageHeader, StatCard } from '../components/ui/Misc'
-import { dataCurta, moeda, numero } from '../lib/format'
+import { dataCurta, enderecoCompleto, moeda, numero } from '../lib/format'
 import { porDataDesc, useEventosCompletos } from '../lib/hooks'
 import { useDados } from '../store/dados'
-import { toast } from '../store/ui'
+import { avisarErro, toast } from '../store/ui'
 
 export function ClienteDetalhe() {
   const { id } = useParams()
@@ -69,11 +69,13 @@ export function ClienteDetalhe() {
       perigo: true,
     })
     if (!ok) return
-    const r = excluirCliente(cliente.id)
-    if (r.ok) {
+    try {
+      await excluirCliente(cliente.id)
       toast.sucesso('Cliente excluído')
       navegar('/clientes', { replace: true })
-    } else toast.erro('Não foi possível excluir', r.motivo)
+    } catch (e) {
+      avisarErro('Não foi possível excluir', e)
+    }
   }
 
   return (
@@ -163,7 +165,7 @@ export function ClienteDetalhe() {
               {cliente.email}
             </Dado>
             <Dado rotulo="Endereço" icone={<MapPin className="h-4 w-4" />}>
-              {[cliente.endereco, cliente.cidade && `${cliente.cidade}/${cliente.uf}`].filter(Boolean).join(' — ')}
+              {enderecoCompleto(cliente)}
             </Dado>
             {cliente.observacoes && (
               <div className="col-span-full">

@@ -1,4 +1,4 @@
-import type { Evento, FormaPagamento, StatusEvento } from './types'
+import type { Evento, FormaPagamento, StatusEvento } from './tipos.ts'
 
 /**
  * Regras de cálculo herdadas da planilha "Controle Interno de Locação":

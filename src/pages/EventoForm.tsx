@@ -26,14 +26,16 @@ import { Card, CardHeader } from '../components/ui/Card'
 import { Combobox } from '../components/ui/Combobox'
 import { CurrencyInput, Field, Input, NumberInput, Select, Textarea } from '../components/ui/Form'
 import { Modal } from '../components/ui/Modal'
+import { confirmar } from '../components/ui/Feedback'
+import { ErroApi } from '../lib/api'
 import { AnimatedNumber, Avatar, EmptyState, PageHeader } from '../components/ui/Misc'
-import { calcularEvento, FORMAS_PAGAMENTO, ocupacaoPorDia, STATUS_EVENTO } from '../lib/calc'
+import { calcularEvento, FORMAS_PAGAMENTO, ocupacaoPorDia, STATUS_EVENTO } from '#shared/calc.ts'
 import { cn } from '../lib/cn'
 import { codigoEvento, dataExtensa, hojeISO, moeda, numero } from '../lib/format'
 import { novoId } from '../lib/storage'
-import type { DiaEvento, FormaPagamento, StatusEvento } from '../lib/types'
+import type { DiaEvento, Evento, FormaPagamento, StatusEvento } from '#shared/tipos.ts'
 import { useDados, type EventoInput } from '../store/dados'
-import { toast } from '../store/ui'
+import { avisarErro, toast } from '../store/ui'
 
 const ICONES_PAGAMENTO: Record<FormaPagamento, ReactNode> = {
   NAO_PAGO: <Clock className="h-4 w-4" />,
@@ -56,7 +58,7 @@ export function EventoForm() {
 
   const [f, setF] = useState<EventoInput>(() => {
     if (existente) {
-      const { id: _i, codigo: _c, criadoEm: _cr, atualizadoEm: _a, ...resto } = existente
+      const { id: _i, versao: _v, codigo: _c, criadoEm: _cr, atualizadoEm: _a, google: _g, ...resto } = existente
       return { ...resto, dias: resto.dias.map((d) => ({ ...d })) }
     }
     return {
@@ -78,6 +80,9 @@ export function EventoForm() {
     }
   })
   const [erros, setErros] = useState<Erros>({})
+  const [salvando, setSalvando] = useState(false)
+  // Versão aberta para edição; se outra pessoa salvar antes, o servidor recusa e avisamos
+  const [versaoBase, setVersaoBase] = useState(existente?.versao)
   const [clienteModal, setClienteModal] = useState<{ aberto: boolean; nome?: string }>({ aberto: false })
   const [periodoModal, setPeriodoModal] = useState(false)
 
@@ -161,7 +166,8 @@ export function EventoForm() {
     return e
   }, [f, datasRepetidas])
 
-  const salvar = useCallback(() => {
+  const salvar = useCallback(async () => {
+    if (salvando) return
     const e = validar()
     setErros(e)
     const primeiro = Object.values(e)[0]
@@ -169,19 +175,40 @@ export function EventoForm() {
       toast.erro('Revise o formulário', primeiro)
       return
     }
-    const salvo = salvarEvento(
-      { ...f, nome: f.nome.trim(), dataPagamento: f.formaPagamento === 'NAO_PAGO' ? '' : f.dataPagamento || hojeISO() },
-      existente?.id,
-    )
-    toast.sucesso(existente ? 'Evento atualizado' : 'Evento cadastrado', `${codigoEvento(salvo.codigo)} • ${salvo.nome}`)
-    navegar(`/eventos/${salvo.id}`, { replace: !!existente })
-  }, [validar, salvarEvento, f, existente, navegar])
+    const dados = {
+      ...f,
+      nome: f.nome.trim(),
+      dataPagamento: f.formaPagamento === 'NAO_PAGO' ? '' : f.dataPagamento || hojeISO(),
+    }
+    setSalvando(true)
+    try {
+      const salvo = await salvarEvento(dados, id && versaoBase !== undefined ? { id, versao: versaoBase } : undefined)
+      toast.sucesso(id ? 'Evento atualizado' : 'Evento cadastrado', `${codigoEvento(salvo.codigo)} • ${salvo.nome}`)
+      navegar(`/eventos/${salvo.id}`, { replace: !!id })
+    } catch (err) {
+      if (err instanceof ErroApi && err.status === 409) {
+        const atual = err.dados.atual as Evento | undefined
+        const manter = await confirmar({
+          titulo: 'Evento alterado por outra pessoa',
+          descricao:
+            'Alguém salvou este evento enquanto você editava. Deseja manter as suas alterações por cima das dela? (Se não, recarregue o evento para ver a versão atual.)',
+          confirmar: 'Manter as minhas',
+        })
+        if (manter && atual) {
+          setVersaoBase(atual.versao)
+          toast.info('Clique em “Salvar evento” novamente para confirmar.')
+        }
+      } else avisarErro('Não foi possível salvar o evento', err)
+    } finally {
+      setSalvando(false)
+    }
+  }, [salvando, validar, salvarEvento, f, id, versaoBase, navegar])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault()
-        salvar()
+        void salvar()
       }
     }
     window.addEventListener('keydown', onKey)
@@ -216,8 +243,8 @@ export function EventoForm() {
         acoes={
           <>
             <Button onClick={() => navegar(-1)}>Cancelar</Button>
-            <Button variante="primary" icone={<Save className="h-4 w-4" />} onClick={salvar}>
-              Salvar evento
+            <Button variante="primary" icone={<Save className="h-4 w-4" />} onClick={salvar} disabled={salvando}>
+              {salvando ? 'Salvando…' : 'Salvar evento'}
             </Button>
           </>
         }
@@ -563,8 +590,14 @@ export function EventoForm() {
               {resumo.desconto > 0 && <Linha rotulo="Desconto" valor={`− ${moeda(resumo.desconto)}`} />}
             </dl>
             <div className="border-t border-line p-5">
-              <Button variante="primary" className="w-full" icone={<Save className="h-4 w-4" />} onClick={salvar}>
-                Salvar evento
+              <Button
+                variante="primary"
+                className="w-full"
+                icone={<Save className="h-4 w-4" />}
+                onClick={salvar}
+                disabled={salvando}
+              >
+                {salvando ? 'Salvando…' : 'Salvar evento'}
               </Button>
               <p className="mt-2.5 text-center text-xs text-muted">
                 Atalho: <kbd className="rounded border border-line bg-surface-2 px-1">Ctrl</kbd> +{' '}

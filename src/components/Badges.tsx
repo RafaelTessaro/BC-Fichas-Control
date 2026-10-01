@@ -1,5 +1,5 @@
-import { CONFERENCIA, FORMAS_PAGAMENTO, STATUS_EVENTO, type StatusConferencia } from '../lib/calc'
-import type { FormaPagamento, StatusEvento } from '../lib/types'
+import { CONFERENCIA, FORMAS_PAGAMENTO, STATUS_EVENTO, type StatusConferencia } from '#shared/calc.ts'
+import type { FormaPagamento, StatusEvento } from '#shared/tipos.ts'
 import { Badge } from './ui/Badge'
 
 export function StatusBadge({ status }: { status: StatusEvento }) {

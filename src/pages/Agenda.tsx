@@ -21,11 +21,11 @@ import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { Drawer } from '../components/ui/Modal'
 import { PageHeader } from '../components/ui/Misc'
-import { STATUS_EVENTO } from '../lib/calc'
+import { STATUS_EVENTO } from '#shared/calc.ts'
 import { cn } from '../lib/cn'
 import { cap, codigoEvento, dataExtensa } from '../lib/format'
 import { useEventosCompletos, type EventoCompleto } from '../lib/hooks'
-import type { StatusEvento } from '../lib/types'
+import type { StatusEvento } from '#shared/tipos.ts'
 import { useDados } from '../store/dados'
 
 const COR_STATUS: Record<StatusEvento, string> = {

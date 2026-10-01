@@ -1,7 +1,7 @@
 import { format } from 'date-fns'
 import { Cpu, Database, Download, Monitor, Moon, Palette, Receipt, RotateCcw, Save, Sun, Trash2, Upload } from 'lucide-react'
 import { motion } from 'motion/react'
-import { useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { confirmar } from '../components/ui/Feedback'
@@ -10,9 +10,14 @@ import { PageHeader } from '../components/ui/Misc'
 import { cn } from '../lib/cn'
 import { numero } from '../lib/format'
 import { baixarArquivo } from '../lib/storage'
-import type { Configuracoes as Config } from '../lib/types'
+import type { Configuracoes as Config } from '#shared/tipos.ts'
 import { CONFIG_PADRAO, useDados } from '../store/dados'
-import { toast, useUI, type Tema } from '../store/ui'
+import { avisarErro, toast, useUI, type Tema } from '../store/ui'
+import { api } from '../lib/api'
+import { GoogleAgendaConfig } from '../components/GoogleAgendaConfig'
+
+type CopiaServidor = { arquivo: string; tamanho: number; criadoEm: string }
+const dataHora = (iso: string) => format(new Date(iso), "dd/MM/yyyy 'às' HH:mm")
 
 export function Configuracoes() {
   const { config, salvarConfig, clientes, eventos, exportar, importar, carregarExemplo, limparTudo } = useDados()
@@ -28,34 +33,77 @@ export function Configuracoes() {
   }
   const alterado = JSON.stringify(f) !== JSON.stringify(config)
 
-  const salvar = () => {
-    salvarConfig({ ...f, frotaMaquinas: Math.max(1, f.frotaMaquinas) })
-    toast.sucesso('Configurações salvas', 'Os novos valores valem para os próximos eventos.')
+  const [salvando, setSalvando] = useState(false)
+  const [ocupado, setOcupado] = useState(false)
+  const [copias, setCopias] = useState<CopiaServidor[] | null>(null)
+
+  useEffect(() => {
+    let ativo = true
+    api
+      .backupsAutomaticos()
+      .then((r) => ativo && setCopias(r.backups))
+      .catch(() => ativo && setCopias([]))
+    return () => {
+      ativo = false
+    }
+  }, [])
+
+  const salvar = async () => {
+    setSalvando(true)
+    try {
+      await salvarConfig({ ...f, frotaMaquinas: Math.max(1, f.frotaMaquinas) })
+      toast.sucesso('Configurações salvas', 'Os novos valores valem para os próximos eventos, em todos os computadores.')
+    } catch (e) {
+      avisarErro('Não foi possível salvar', e)
+    } finally {
+      setSalvando(false)
+    }
   }
 
-  const fazerBackup = () => {
-    const nome = `bc-fichas-backup_${format(new Date(), 'yyyy-MM-dd_HH-mm')}.json`
-    baixarArquivo(nome, JSON.stringify(exportar(), null, 2), 'application/json')
-    toast.sucesso('Backup gerado', nome)
+  const fazerBackup = async () => {
+    try {
+      const dados = await exportar()
+      const nome = `bc-fichas-backup_${format(new Date(), 'yyyy-MM-dd_HH-mm')}.json`
+      baixarArquivo(nome, JSON.stringify(dados, null, 2), 'application/json')
+      toast.sucesso('Backup baixado', nome)
+    } catch (e) {
+      avisarErro('Não foi possível gerar o backup', e)
+    }
+  }
+
+  const copiaAgora = async () => {
+    try {
+      setCopias((await api.copiaAgora()).backups)
+      toast.sucesso('Cópia salva no servidor')
+    } catch (e) {
+      avisarErro('Não foi possível fazer a cópia', e)
+    }
   }
 
   const restaurar = async (file: File) => {
+    let dados: unknown
     try {
-      const dados = JSON.parse(await file.text())
-      const ok = await confirmar({
-        titulo: 'Restaurar backup?',
-        descricao: `Os dados atuais (${clientes.length} clientes e ${eventos.length} eventos) serão substituídos pelos do arquivo “${file.name}”.`,
-        confirmar: 'Substituir dados',
-        perigo: true,
-      })
-      if (!ok) return
-      importar(dados)
-      toast.sucesso('Backup restaurado')
+      dados = JSON.parse(await file.text())
+    } catch {
+      toast.erro('Não foi possível restaurar', 'O arquivo não é um backup válido (JSON).')
+      return
+    }
+    const ok = await confirmar({
+      titulo: 'Restaurar backup?',
+      descricao: `Os dados atuais (${clientes.length} clientes e ${eventos.length} eventos) serão substituídos pelos do arquivo “${file.name}” em todos os computadores. O servidor guarda uma cópia automática antes.`,
+      confirmar: 'Restaurar',
+      perigo: true,
+      digitar: 'RESTAURAR',
+    })
+    if (!ok) return
+    setOcupado(true)
+    try {
+      const r = await importar(dados)
+      toast.sucesso('Backup restaurado', `${r.clientes} clientes e ${r.eventos} eventos.`)
     } catch (e) {
-      toast.erro(
-        'Não foi possível restaurar',
-        e instanceof SyntaxError ? 'O arquivo não é um JSON válido.' : (e as Error).message,
-      )
+      avisarErro('Não foi possível restaurar', e)
+    } finally {
+      setOcupado(false)
     }
   }
 
@@ -65,8 +113,8 @@ export function Configuracoes() {
         titulo="Configurações"
         descricao="Valores padrão, frota, aparência e backup dos dados."
         acoes={
-          <Button variante="primary" icone={<Save className="h-4 w-4" />} onClick={salvar} disabled={!alterado}>
-            Salvar alterações
+          <Button variante="primary" icone={<Save className="h-4 w-4" />} onClick={salvar} disabled={!alterado || salvando}>
+            {salvando ? 'Salvando…' : 'Salvar alterações'}
           </Button>
         }
       />
@@ -159,7 +207,7 @@ export function Configuracoes() {
           <CardHeader
             icone={<Database className="h-4 w-4" />}
             titulo="Dados e backup"
-            descricao="Os dados ficam salvos neste navegador. Faça backups com frequência."
+            descricao="Os dados ficam no servidor da empresa e são copiados automaticamente todos os dias."
           />
           <div className="flex flex-col gap-4 px-5 pb-5">
             <div className="grid grid-cols-2 gap-2">
@@ -174,10 +222,10 @@ export function Configuracoes() {
             </div>
             <div className="flex flex-wrap gap-2">
               <Button icone={<Download className="h-4 w-4" />} onClick={fazerBackup}>
-                Fazer backup
+                Baixar backup
               </Button>
-              <Button icone={<Upload className="h-4 w-4" />} onClick={() => arquivo.current?.click()}>
-                Restaurar backup
+              <Button icone={<Upload className="h-4 w-4" />} onClick={() => arquivo.current?.click()} disabled={ocupado}>
+                {ocupado ? 'Restaurando…' : 'Restaurar backup'}
               </Button>
               <input
                 ref={arquivo}
@@ -186,32 +234,53 @@ export function Configuracoes() {
                 className="hidden"
                 onChange={(e) => {
                   const file = e.target.files?.[0]
-                  if (file) restaurar(file)
+                  if (file) void restaurar(file)
                   e.target.value = ''
                 }}
               />
             </div>
+            <div className="rounded-xl border border-line px-3.5 py-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-[13px] font-medium text-ink-2">Cópias automáticas no servidor</p>
+                <Button tamanho="sm" variante="ghost" icone={<Save className="h-3.5 w-3.5" />} onClick={copiaAgora}>
+                  Copiar agora
+                </Button>
+              </div>
+              {copias === null ? (
+                <p className="mt-1 text-xs text-muted">Carregando…</p>
+              ) : copias.length === 0 ? (
+                <p className="mt-1 text-xs text-muted">Nenhuma cópia ainda. A primeira é feita ao iniciar o servidor.</p>
+              ) : (
+                <ul className="mt-1.5 flex flex-col gap-1 text-xs text-muted">
+                  {copias.slice(0, 3).map((c) => (
+                    <li key={c.arquivo} className="flex justify-between gap-3">
+                      <span className="truncate">{dataHora(c.criadoEm)}</span>
+                      <span className="tnum shrink-0">
+                        {(c.tamanho / 1024).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} KB
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
             <div className="flex flex-wrap gap-2 border-t border-line pt-4">
-              <Button
-                tamanho="sm"
-                variante="ghost"
-                icone={<Database className="h-3.5 w-3.5" />}
-                onClick={async () => {
-                  const ok =
-                    clientes.length + eventos.length === 0 ||
-                    (await confirmar({
-                      titulo: 'Carregar dados de exemplo?',
-                      descricao: 'Os clientes e eventos atuais serão substituídos por dados fictícios.',
-                      confirmar: 'Carregar exemplo',
-                      perigo: true,
-                    }))
-                  if (!ok) return
-                  carregarExemplo()
-                  toast.sucesso('Dados de exemplo carregados')
-                }}
-              >
-                Carregar dados de exemplo
-              </Button>
+              {clientes.length + eventos.length === 0 && (
+                <Button
+                  tamanho="sm"
+                  variante="ghost"
+                  icone={<Database className="h-3.5 w-3.5" />}
+                  onClick={async () => {
+                    try {
+                      await carregarExemplo()
+                      toast.sucesso('Dados de exemplo carregados')
+                    } catch (e) {
+                      avisarErro('Não foi possível carregar o exemplo', e)
+                    }
+                  }}
+                >
+                  Carregar dados de exemplo
+                </Button>
+              )}
               <Button
                 tamanho="sm"
                 variante="ghost"
@@ -220,13 +289,19 @@ export function Configuracoes() {
                 onClick={async () => {
                   const ok = await confirmar({
                     titulo: 'Apagar todos os dados?',
-                    descricao: 'Todos os clientes e eventos serão removidos deste navegador. Recomendamos fazer um backup antes.',
+                    descricao:
+                      'Todos os clientes e eventos serão removidos do servidor, para todos os computadores. O servidor guarda uma cópia automática antes de apagar.',
                     confirmar: 'Apagar tudo',
                     perigo: true,
+                    digitar: 'APAGAR',
                   })
                   if (!ok) return
-                  limparTudo()
-                  toast.sucesso('Dados apagados')
+                  try {
+                    await limparTudo()
+                    toast.sucesso('Dados apagados')
+                  } catch (e) {
+                    avisarErro('Não foi possível apagar', e)
+                  }
                 }}
               >
                 Apagar todos os dados
@@ -234,6 +309,10 @@ export function Configuracoes() {
             </div>
           </div>
         </Card>
+      </div>
+
+      <div className="mt-6">
+        <GoogleAgendaConfig />
       </div>
 
       <p className="mt-6 text-center text-xs text-muted">
