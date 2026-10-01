@@ -401,7 +401,9 @@ function FormularioCliente({
               label: (
                 <span className="flex items-center gap-1.5">
                   <Building2 className="h-3.5 w-3.5" />
-                  Empresa (CNPJ)
+                  <span>
+                    Empresa<span className="max-sm:hidden"> (CNPJ)</span>
+                  </span>
                 </span>
               ),
             },
@@ -410,7 +412,8 @@ function FormularioCliente({
               label: (
                 <span className="flex items-center gap-1.5">
                   <User className="h-3.5 w-3.5" />
-                  Pessoa física (CPF)
+                  <span className="max-sm:hidden">Pessoa física (CPF)</span>
+                  <span className="sm:hidden">Pessoa</span>
                 </span>
               ),
             },
