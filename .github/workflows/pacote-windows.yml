@@ -1,0 +1,61 @@
+name: Pacote para Windows
+
+# Roda os testes, monta o pacote completo (Node.js + dependências + interface compilada, ver
+# scripts/empacotar-windows.sh) e publica na página de versões (Releases) do repositório como
+# BC-Fichas-Control-<versão>-windows.zip. Um novo commit na mesma versão substitui o arquivo.
+on:
+  push:
+    paths-ignore: ['**.md']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: pacote-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pacote:
+    # Só o branch principal do repositório publica pacotes
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Testes
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+
+      - name: Monta o pacote
+        run: scripts/empacotar-windows.sh pacotes
+
+      - name: Publica na página de versões
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          versao="$(node -p "require('./package.json').version")"
+          tag="v$versao"
+          arquivo="pacotes/BC-Fichas-Control-$versao-windows.zip"
+          notas="$(cat <<EOF
+          Pacote completo para o servidor Windows (já traz o Node.js; não precisa de internet para instalar).
+
+          **Instalar:** baixe o BC-Fichas-Control-$versao-windows.zip, extraia direto no C:\\ e dê dois cliques em INSTALAR.bat.
+          **Atualizar:** extraia em outra pasta (ex.: C:\\BC-Fichas-Control-novo) e dê dois cliques no ATUALIZAR.bat de lá.
+
+          Passo a passo completo no arquivo COMO-INSTALAR.txt, dentro do pacote.
+
+          Gerado a partir do commit ${GITHUB_SHA::7}.
+          EOF
+          )"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$arquivo" --clobber
+            gh release edit "$tag" --notes "$notas"
+          else
+            gh release create "$tag" "$arquivo" --target "$GITHUB_SHA" --title "BC Fichas Control $versao" --notes "$notas"
+          fi

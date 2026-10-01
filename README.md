@@ -55,7 +55,10 @@ rede (peça ao responsável pela rede para reservar o IP no roteador).
 ### Com o pacote completo (recomendado)
 
 O pacote `BC-Fichas-Control-<versão>-windows.zip` já traz o Node.js, as dependências e a interface
-compilada: **não precisa de internet nem de instalar nada antes**.
+compilada: **não precisa de internet nem de instalar nada antes**. Ele fica na página
+[**Releases**](../../releases) do repositório: a cada alteração enviada, o GitHub roda os testes, monta
+o pacote ([`.github/workflows/pacote-windows.yml`](.github/workflows/pacote-windows.yml)) e
+substitui o arquivo da versão.
 
 1. Extraia o `.zip` direto no `C:\` (a pasta fica `C:\BC-Fichas-Control`). Não use Downloads nem
    a Área de Trabalho: pastas de usuário podem ser limpas ou sincronizadas, e o instalador as recusa.
