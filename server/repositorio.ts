@@ -107,6 +107,7 @@ export class Repositorio {
     const ts = agora()
     const cliente: Cliente = { ...dados, id: novoId(), versao: 1, criadoEm: ts, atualizadoEm: ts }
     const rev = transacao(this.db, () => {
+      this.verificarDocumentoUnico(cliente.documento)
       this.gravarCliente(cliente, true)
       return this.incrementarRevisao()
     })
@@ -117,15 +118,17 @@ export class Repositorio {
   /** Atualiza o cliente. Com `versaoEsperada`, recusa (409) se outra pessoa já alterou. */
   atualizarCliente(id: string, entrada: unknown, versaoEsperada?: number): Cliente {
     const dados = validar(normalizarCliente(entrada))
-    const { cliente, rev } = transacao(this.db, () => {
+    const { cliente, anterior, rev } = transacao(this.db, () => {
       const atual = this.obterCliente(id)
       if (!atual) throw naoEncontrado('Cliente')
       this.verificarVersao(atual, versaoEsperada, 'cliente')
+      this.verificarDocumentoUnico(dados.documento, id)
       const cliente: Cliente = { ...atual, ...dados, versao: atual.versao + 1, atualizadoEm: agora() }
       this.gravarCliente(cliente, false)
-      return { cliente, rev: this.incrementarRevisao() }
+      return { cliente, anterior: atual, rev: this.incrementarRevisao() }
     })
     this.publicar({ revisao: rev, tipo: 'cliente', acao: 'salvo', dado: cliente })
+    this.chamarExtensoes((x) => x.clienteSalvo?.(cliente, anterior))
     return cliente
   }
 
@@ -318,6 +321,17 @@ export class Repositorio {
           : 'Este evento foi alterado por outra pessoa enquanto você editava.',
         { atual: tipo === 'evento' ? this.decorar(atual as Evento) : atual },
       )
+    }
+  }
+
+  /** Impede dois clientes com o mesmo CNPJ/CPF (avulsos, sem documento, ficam de fora). */
+  private verificarDocumentoUnico(documento: string, idIgnorado?: string) {
+    if (!documento) return
+    const outro = this.listarClientes().find((c) => c.id !== idIgnorado && c.documento === documento)
+    if (outro) {
+      throw new ErroApi(409, `Já existe um cliente com este ${documento.length > 14 ? 'CNPJ' : 'CPF'}: ${outro.nome}.`, {
+        duplicado: { id: outro.id, nome: outro.nome },
+      })
     }
   }
 

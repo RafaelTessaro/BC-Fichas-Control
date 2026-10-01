@@ -95,6 +95,19 @@ describe('API de dados', () => {
     expect(c).toMatchObject({ tipo: 'AVULSO', nome: 'Cliente avulso', documento: '' })
   })
 
+  it('recusa CNPJ/CPF já cadastrado em outro cliente (409)', async () => {
+    const c = await criarCliente()
+    const r = await app.inject({ method: 'POST', url: '/api/clientes', headers: H, payload: { ...clienteBase, nome: 'Outra' } })
+    expect(r.statusCode).toBe(409)
+    expect(r.json().duplicado).toEqual({ id: c.id, nome: 'Padaria Ideal' })
+    const outro = await criarCliente({ tipo: 'PJ', nome: 'Outra', documento: '' })
+    const troca = await app.inject({ method: 'PUT', url: `/api/clientes/${outro.id}`, headers: H, payload: { ...outro, documento: clienteBase.documento } })
+    expect(troca.statusCode).toBe(409)
+    // avulsos sem documento não conflitam entre si
+    await criarCliente({ tipo: 'AVULSO', nome: 'A' })
+    await criarCliente({ tipo: 'AVULSO', nome: 'B' })
+  })
+
   it('detecta edição simultânea do mesmo cliente (409)', async () => {
     const c = await criarCliente()
     const r1 = await app.inject({

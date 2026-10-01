@@ -1,4 +1,4 @@
-import type { Evento } from '#shared/tipos.ts'
+import type { Cliente, Evento } from '#shared/tipos.ts'
 
 /**
  * Pontos de extensão do repositório, usados por módulos opcionais
@@ -10,6 +10,8 @@ export interface ExtensaoRepositorio {
   decorarEvento?(evento: Evento): Evento
   /** Evento criado ou alterado (inclui mudança de status/pagamento). */
   eventoSalvo?(evento: Evento, anterior: Evento | undefined): void
+  /** Cliente alterado (nome, telefone etc. aparecem no conteúdo dos eventos dele). */
+  clienteSalvo?(cliente: Cliente, anterior: Cliente): void
   /** Evento excluído definitivamente. */
   eventoExcluido?(evento: Evento): void
   /** Todos os dados foram substituídos (restauração de backup, exemplo ou limpeza). */
