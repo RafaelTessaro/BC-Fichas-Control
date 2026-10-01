@@ -80,6 +80,32 @@ describe('chamadas à agenda', () => {
     expect(sim.eventos('ag')).toEqual([])
   })
 
+  it('404 ao apagar com a agenda inacessível é erro, não "já apagado"', async () => {
+    const { sim, cliente } = preparar()
+    sim.criarAgenda('ag')
+    await cliente.salvarEvento('ag', { id: 'bcfabc0' })
+    sim.definirAcesso('ag', 'nenhum') // deixou de ser compartilhada: o Google responde 404
+    expect(await cliente.apagarEvento('ag', 'bcfabc0').catch((e) => e)).toMatchObject({ motivo: 'agendaNaoEncontrada' })
+    sim.definirAcesso('ag', true)
+    expect(sim.eventos('ag')).toHaveLength(1)
+  })
+
+  it('lista só os eventos criados pelo sistema, percorrendo todas as páginas', async () => {
+    const { sim, cliente } = preparar()
+    sim.criarAgenda('ag')
+    sim.tamanhoPagina = 2
+    for (const n of [1, 2, 3]) sim.inserir('ag', { id: `bcf${n}`, extendedProperties: { private: { bcFichasId: `e${n}` } } })
+    sim.inserir('ag', { id: 'manual1', summary: 'Criado à mão' })
+    sim.inserir('ag', { id: 'bcf4', extendedProperties: { private: { bcFichasId: 'e4' } } })
+    sim.apagar('ag', 'bcf4')
+    expect(await cliente.listarEventosDoSistema('ag')).toEqual([
+      { id: 'bcf1', bcFichasId: 'e1' },
+      { id: 'bcf2', bcFichasId: 'e2' },
+      { id: 'bcf3', bcFichasId: 'e3' },
+    ])
+    expect(sim.chamadas.filter((c) => c.metodo === 'GET').length).toBe(2) // 4 visíveis, 2 por página
+  })
+
   it('traduz as falhas em mensagens amigáveis', async () => {
     const { sim, cliente } = preparar()
     sim.criarAgenda('somente-leitura', false)

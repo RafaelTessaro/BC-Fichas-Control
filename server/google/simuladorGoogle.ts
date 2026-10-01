@@ -34,13 +34,20 @@ export interface Chamada {
 
 type EventoSimulado = Record<string, unknown> & { id: string; status: string }
 
+/**
+ * Acesso da conta de serviço a uma agenda: `edicao` (Fazer alterações nos eventos),
+ * `leitura` (lê a agenda e os eventos, mas não altera: 403) ou `nenhum` (não
+ * compartilhada: o Google responde 404 a tudo, como se ela não existisse).
+ */
+export type AcessoAgenda = 'edicao' | 'leitura' | 'nenhum'
+
 const resposta = (status: number, corpo?: unknown) =>
   new Response(corpo === undefined ? null : JSON.stringify(corpo), {
     status,
     headers: corpo === undefined ? {} : { 'Content-Type': 'application/json' },
   })
 
-const erroGoogle = (code: number, message: string, reason = 'notFound') =>
+export const erroGoogle = (code: number, message: string, reason = 'notFound') =>
   resposta(code, { error: { code, message, errors: [{ domain: 'global', reason, message }] } })
 
 /**
@@ -50,10 +57,12 @@ const erroGoogle = (code: number, message: string, reason = 'notFound') =>
  */
 export function criarSimuladorGoogle(chavePublica: string) {
   const agendas = new Map<string, Map<string, EventoSimulado>>()
-  const permitidas = new Set<string>()
+  const acessos = new Map<string, AcessoAgenda>()
   const chamadas: Chamada[] = []
   const jwts: Array<{ cabecalho: Record<string, unknown>; corpo: Record<string, unknown> }> = []
   let tokensEmitidos = 0
+  type Interceptador = (c: Chamada, seguir: () => Response) => Response
+  let interceptar: Interceptador | null = null
   const sim = {
     offline: false,
     /** Força um código de erro em todas as chamadas à API (ex.: 500). */
@@ -63,10 +72,34 @@ export function criarSimuladorGoogle(chavePublica: string) {
     get tokensEmitidos() {
       return tokensEmitidos
     },
-    /** Cria uma agenda; `compartilhada` = a conta de serviço tem permissão de edição. */
-    criarAgenda(id: string, compartilhada = true) {
+    /**
+     * Permite simular falhas em chamadas específicas: recebe a chamada e a função que a
+     * aplica no Google simulado (lançar `TypeError` = falha de rede, como o `fetch`).
+     */
+    get interceptar(): Interceptador | null {
+      return interceptar
+    },
+    set interceptar(f: Interceptador | null) {
+      interceptar = f
+    },
+    /** Eventos por página na listagem (o Google usa `maxResults`; aqui pode ser menor para testar a paginação). */
+    tamanhoPagina: 250,
+    /** Cria uma agenda; `true` = edição, `false` = somente leitura. */
+    criarAgenda(id: string, acesso: boolean | AcessoAgenda = true) {
       agendas.set(id, new Map())
-      if (compartilhada) permitidas.add(id)
+      sim.definirAcesso(id, acesso)
+    },
+    definirAcesso(id: string, acesso: boolean | AcessoAgenda) {
+      acessos.set(id, acesso === true ? 'edicao' : acesso === false ? 'leitura' : acesso)
+    },
+    /** Grava um evento direto na agenda (como se tivesse sido enviado antes). */
+    inserir(agenda: string, evento: Record<string, unknown> & { id: string }) {
+      agendas.get(agenda)?.set(evento.id, { ...evento, status: 'confirmed' })
+    },
+    /** Apaga um evento direto na agenda (como se alguém o tivesse apagado no Google). */
+    apagar(agenda: string, id: string) {
+      const ev = agendas.get(agenda)?.get(id)
+      if (ev) ev.status = 'cancelled'
     },
     /** Eventos ativos (não apagados) de uma agenda. */
     eventos(agenda: string): EventoSimulado[] {
@@ -99,46 +132,62 @@ export function criarSimuladorGoogle(chavePublica: string) {
       }
 
       if (!url.startsWith(URL_API)) return resposta(404, {})
-      const caminho = url.slice(URL_API.length)
+      const [caminho, consulta = ''] = url.slice(URL_API.length).split('?')
+      const params = new URLSearchParams(consulta)
       const corpo = corpoTexto ? (JSON.parse(corpoTexto) as Record<string, unknown>) : null
-      chamadas.push({ metodo, url, caminho, corpo })
+      const chamada: Chamada = { metodo, url, caminho, corpo }
+      chamadas.push(chamada)
+      return interceptar ? interceptar(chamada, responderApi) : responderApi()
 
-      const auth = (init?.headers as Record<string, string> | undefined)?.Authorization ?? ''
-      if (!/^Bearer token-\d+$/.test(auth)) return erroGoogle(401, 'Invalid Credentials', 'authError')
-      if (sim.falharCom) return erroGoogle(sim.falharCom, 'Backend Error', 'backendError')
+      function responderApi(): Response {
+        const auth = (init?.headers as Record<string, string> | undefined)?.Authorization ?? ''
+        if (!/^Bearer token-\d+$/.test(auth)) return erroGoogle(401, 'Invalid Credentials', 'authError')
+        if (sim.falharCom) return erroGoogle(sim.falharCom, 'Backend Error', 'backendError')
 
-      const m = /^\/calendars\/([^/]+)(\/events(?:\/([^/]+))?)?$/.exec(caminho)
-      if (!m) return erroGoogle(404, 'Not Found')
-      const agendaId = decodeURIComponent(m[1])
-      const agenda = agendas.get(agendaId)
-      if (!agenda) return erroGoogle(404, 'Not Found')
-      if (!permitidas.has(agendaId)) {
-        return metodo === 'GET' && !m[2] ? erroGoogle(404, 'Not Found') : erroGoogle(403, 'Forbidden', 'requiredAccessLevel')
-      }
+        const m = /^\/calendars\/([^/]+)(\/events(?:\/([^/]+))?)?$/.exec(caminho)
+        if (!m) return erroGoogle(404, 'Not Found')
+        const agendaId = decodeURIComponent(m[1])
+        const agenda = agendas.get(agendaId)
+        const acesso = acessos.get(agendaId) ?? 'nenhum'
+        if (!agenda || acesso === 'nenhum') return erroGoogle(404, 'Not Found')
+        if (acesso === 'leitura' && metodo !== 'GET') return erroGoogle(403, 'Forbidden', 'requiredAccessLevel')
 
-      if (!m[2] && metodo === 'GET')
-        return resposta(200, { id: agendaId, summary: 'Agenda BC Fichas', timeZone: 'America/Sao_Paulo' })
-      const eventoId = m[3] ? decodeURIComponent(m[3]) : ''
+        if (!m[2] && metodo === 'GET')
+          return resposta(200, { id: agendaId, summary: 'Agenda BC Fichas', timeZone: 'America/Sao_Paulo' })
+        const eventoId = m[3] ? decodeURIComponent(m[3]) : ''
 
-      if (metodo === 'POST' && !eventoId) {
-        const id = String(corpo?.id ?? '')
-        if (agenda.has(id)) return erroGoogle(409, 'The requested identifier already exists.', 'duplicate')
-        agenda.set(id, { ...corpo, id, status: 'confirmed' })
-        return resposta(200, agenda.get(id))
+        if (metodo === 'GET' && !eventoId) {
+          // Lista paginada; sem `showDeleted`, os apagados (cancelled) não aparecem
+          const todos = [...agenda.values()].filter((e) => params.get('showDeleted') === 'true' || e.status !== 'cancelled')
+          const pagina = Math.min(Number(params.get('maxResults')) || 250, sim.tamanhoPagina)
+          const inicio = Number(params.get('pageToken') ?? 0)
+          const fim = inicio + pagina
+          return resposta(200, {
+            items: todos.slice(inicio, fim),
+            ...(fim < todos.length ? { nextPageToken: String(fim) } : {}),
+          })
+        }
+
+        if (metodo === 'POST' && !eventoId) {
+          const id = String(corpo?.id ?? '')
+          if (agenda.has(id)) return erroGoogle(409, 'The requested identifier already exists.', 'duplicate')
+          agenda.set(id, { ...corpo, id, status: 'confirmed' })
+          return resposta(200, agenda.get(id))
+        }
+        if (metodo === 'PUT' && eventoId) {
+          if (!agenda.has(eventoId)) return erroGoogle(404, 'Not Found')
+          agenda.set(eventoId, { ...corpo, id: eventoId, status: String(corpo?.status ?? 'confirmed') })
+          return resposta(200, agenda.get(eventoId))
+        }
+        if (metodo === 'DELETE' && eventoId) {
+          const ev = agenda.get(eventoId)
+          if (!ev) return erroGoogle(404, 'Not Found')
+          if (ev.status === 'cancelled') return erroGoogle(410, 'Resource has been deleted', 'deleted')
+          ev.status = 'cancelled'
+          return resposta(204)
+        }
+        return erroGoogle(400, 'Bad Request', 'badRequest')
       }
-      if (metodo === 'PUT' && eventoId) {
-        if (!agenda.has(eventoId)) return erroGoogle(404, 'Not Found')
-        agenda.set(eventoId, { ...corpo, id: eventoId, status: String(corpo?.status ?? 'confirmed') })
-        return resposta(200, agenda.get(eventoId))
-      }
-      if (metodo === 'DELETE' && eventoId) {
-        const ev = agenda.get(eventoId)
-        if (!ev) return erroGoogle(404, 'Not Found')
-        if (ev.status === 'cancelled') return erroGoogle(410, 'Resource has been deleted', 'deleted')
-        ev.status = 'cancelled'
-        return resposta(204)
-      }
-      return erroGoogle(400, 'Bad Request', 'badRequest')
     }) as FuncaoFetch,
   }
   return sim

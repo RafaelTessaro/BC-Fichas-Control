@@ -15,7 +15,7 @@ import { TempoReal } from '../tempoReal.ts'
 import { MSG_SEM_INTERNET } from './cliente.ts'
 import { idGoogle } from './mapeamento.ts'
 import { criarModuloGoogle, type ModuloGoogle } from './modulo.ts'
-import { criarSimuladorGoogle, EMAIL_TESTE, gerarContaServico } from './simuladorGoogle.ts'
+import { criarSimuladorGoogle, EMAIL_TESTE, erroGoogle, gerarContaServico } from './simuladorGoogle.ts'
 
 const conta = gerarContaServico()
 const AGENDA = 'bcfichas@group.calendar.google.com'
@@ -117,8 +117,11 @@ afterEach(async () => {
   await t.fechar()
 })
 
+/** Chamadas que alteram a agenda (as leituras — teste da agenda, conferência — ficam de fora). */
 const chamadasApi = () =>
-  t.sim.chamadas.filter((c) => c.caminho !== 'token').map((c) => `${c.metodo} ${c.caminho.replace(/\/calendars\/[^/]+/, '')}`)
+  t.sim.chamadas
+    .filter((c) => c.caminho !== 'token' && c.metodo !== 'GET')
+    .map((c) => `${c.metodo} ${c.caminho.replace(/\/calendars\/[^/]+/, '')}`)
 const syncDe = (e: Evento) => t.repo.obterEvento(e.id)?.google
 
 describe('sincronização com o Google Agenda', () => {
@@ -390,6 +393,10 @@ describe('rotas /api/google', () => {
 describe('integração com o servidor', () => {
   it('as rotas exigem o cabeçalho do app e o evento traz o status quando ativo', async () => {
     const pasta = mkdtempSync(join(tmpdir(), 'bcf-app-'))
+    // O app usa o fetch global: aponta para o Google simulado (ao ativar, a agenda é conferida)
+    const sim = criarSimuladorGoogle(conta.chavePublica)
+    sim.criarAgenda(AGENDA)
+    vi.stubGlobal('fetch', sim.fetch)
     const { app } = await criarApp({ pastaDados: pasta, arquivoBanco: ':memory:', pastaEstatica: null })
     try {
       expect(
@@ -423,8 +430,318 @@ describe('integração com o servidor', () => {
       expect(status.json()).toMatchObject({ ativo: true, contaServico: EMAIL_TESTE, resumo: { pendentes: 1 } })
       expect(status.body).not.toContain('PRIVATE KEY')
     } finally {
+      vi.unstubAllGlobals()
       await app.close()
       rmSync(pasta, { recursive: true, force: true })
     }
+  })
+})
+
+describe('robustez (revisão)', () => {
+  const NOVA = 'nova@group.calendar.google.com'
+  const datas = (agenda: string) =>
+    t.sim.eventos(agenda).map((g) => [g.id, (g.start as { date: string }).date, (g.end as { date: string }).date])
+  const donos = (agenda: string) =>
+    t.sim.eventos(agenda).map((g) => (g.extendedProperties as { private: { bcFichasId: string } }).private.bcFichasId)
+
+  it('recusa trocar para uma agenda inexistente (ou ativar com ela) e não toca na agenda atual', async () => {
+    t.criarEvento()
+    await t.ativar()
+    await t.modulo.sincronizarAgora()
+
+    const r = await t.req('PUT', '/api/google/config', { calendarId: 'erradoo@group.calendar.google.com' })
+    expect(r.statusCode).toBe(400)
+    expect(r.json().erro).toBe('Agenda não encontrada: confira o ID da agenda.')
+    expect((await t.req('GET', '/api/google/status')).json()).toMatchObject({ calendarId: AGENDA, resumo: { ok: 1 } })
+    for (let i = 0; i < 3; i++) {
+      t.avancar(60 * 60_000)
+      await t.modulo.sincronizarAgora()
+    }
+    expect(t.sim.eventos(AGENDA)).toHaveLength(2)
+
+    await t.req('PUT', '/api/google/config', { ativo: false })
+    const ativar = await t.req('PUT', '/api/google/config', { ativo: true, calendarId: 'erradoo@group.calendar.google.com' })
+    expect(ativar.statusCode).toBe(400)
+    expect((await t.req('GET', '/api/google/status')).json()).toMatchObject({ ativo: false, calendarId: AGENDA })
+  })
+
+  it('agenda nova sem permissão de edição: nada é apagado da anterior até a troca dar certo', async () => {
+    const e1 = t.criarEvento()
+    t.criarEvento({ nome: 'Quermesse' })
+    await t.ativar()
+    await t.modulo.sincronizarAgora()
+    t.sim.criarAgenda(NOVA, 'leitura') // existe e pode ser lida, mas não alterada
+
+    expect((await t.req('PUT', '/api/google/config', { calendarId: NOVA })).statusCode).toBe(200)
+    for (let i = 0; i < 4; i++) {
+      await t.modulo.sincronizarAgora()
+      t.avancar(60 * 60_000)
+    }
+    expect(t.sim.eventos(AGENDA)).toHaveLength(4)
+    expect(syncDe(e1)?.erro).toContain(EMAIL_TESTE)
+
+    // Com a permissão corrigida, cria na nova e só então apaga da anterior
+    t.sim.definirAcesso(NOVA, 'edicao')
+    t.sim.limparChamadas()
+    await t.modulo.sincronizarAgora()
+    expect(t.sim.eventos(AGENDA)).toEqual([])
+    expect(t.sim.eventos(NOVA)).toHaveLength(4)
+    const ops = t.sim.chamadas.filter((c) => c.metodo !== 'GET' && c.caminho !== 'token').map((c) => c.caminho)
+    const primeiraExclusao = ops.findIndex((c) => c.startsWith(`/calendars/${encodeURIComponent(AGENDA)}`))
+    expect(primeiraExclusao).toBeGreaterThan(0)
+    expect(ops.slice(0, primeiraExclusao).every((c) => c.startsWith(`/calendars/${encodeURIComponent(NOVA)}`))).toBe(true)
+    expect((await t.req('GET', '/api/google/status')).json().resumo).toEqual({ ok: 2, pendentes: 0, erros: 0 })
+  })
+
+  it('voltar para a agenda anterior depois de uma troca que falhou não duplica nem apaga nada', async () => {
+    t.criarEvento()
+    t.criarEvento({ nome: 'Quermesse' })
+    await t.ativar()
+    await t.modulo.sincronizarAgora()
+    t.sim.criarAgenda(NOVA, 'leitura')
+    await t.req('PUT', '/api/google/config', { calendarId: NOVA })
+    await t.modulo.sincronizarAgora()
+
+    expect((await t.req('PUT', '/api/google/config', { calendarId: AGENDA })).statusCode).toBe(200)
+    await t.modulo.sincronizarAgora()
+    expect(t.sim.eventos(AGENDA)).toHaveLength(4)
+    expect(t.sim.eventos(NOVA)).toEqual([])
+    expect((await t.req('GET', '/api/google/status')).json().resumo).toEqual({ ok: 2, pendentes: 0, erros: 0 })
+  })
+
+  it('envio interrompido no meio: desfazer a edição reenvia tudo (o hash antigo não vale mais)', async () => {
+    const dias = [
+      { id: 'a', data: '2026-08-01', maquinas: 2 },
+      { id: 'b', data: '2026-08-02', maquinas: 2 },
+    ]
+    const e = t.criarEvento({ dias })
+    await t.ativar()
+    await t.modulo.sincronizarAgora()
+    const b0 = idGoogle(e.id, 0)
+    const b1 = idGoogle(e.id, 1)
+    expect(datas(AGENDA)).toEqual([[b0, '2026-08-01', '2026-08-03']])
+
+    // Dias 01 e 03: o PUT do b0 (só o dia 01) dá certo e a rede cai no b1
+    t.sim.interceptar = (c, seguir) => {
+      if (c.caminho.endsWith(b1)) throw new TypeError('fetch failed')
+      return seguir()
+    }
+    t.repo.atualizarEvento(e.id, { ...e, dias: [dias[0], { id: 'b', data: '2026-08-03', maquinas: 2 }] })
+    await t.modulo.sincronizarAgora()
+    expect(syncDe(e)?.status).toBe('erro')
+    expect(datas(AGENDA)).toEqual([[b0, '2026-08-01', '2026-08-02']])
+
+    // A rede volta e o usuário desfaz a edição
+    t.sim.interceptar = null
+    t.repo.atualizarEvento(e.id, { ...t.repo.obterEventoBruto(e.id)!, dias })
+    await t.modulo.sincronizarAgora()
+    expect(syncDe(e)?.status).toBe('ok')
+    expect(datas(AGENDA)).toEqual([[b0, '2026-08-01', '2026-08-03']])
+  })
+
+  it('bloco criado por um POST cuja resposta se perdeu é apagado quando deixa de existir', async () => {
+    const e = t.criarEvento()
+    await t.ativar()
+    const b1 = idGoogle(e.id, 1)
+    t.sim.interceptar = (c, seguir) => {
+      const r = seguir()
+      if (c.metodo === 'POST' && c.corpo?.id === b1) throw new TypeError('tempo esgotado')
+      return r
+    }
+    await t.modulo.sincronizarAgora()
+    expect(syncDe(e)?.status).toBe('erro')
+    expect(t.sim.eventos(AGENDA)).toHaveLength(2) // o Google aplicou o POST
+
+    t.sim.interceptar = null
+    t.repo.atualizarEvento(e.id, { ...e, dias: e.dias.filter((d) => d.data !== '2026-08-05') })
+    await t.modulo.sincronizarAgora()
+    expect(t.sim.eventos(AGENDA).map((g) => g.id)).toEqual([idGoogle(e.id, 0)])
+  })
+
+  it('alterar o nome ou o telefone do cliente reenvia os eventos dele', async () => {
+    const e = t.criarEvento()
+    const cancelado = t.criarEvento({ nome: 'Cancelado', status: 'CANCELADO' })
+    await t.ativar()
+    await t.modulo.sincronizarAgora()
+
+    // O e-mail não aparece no Google: nada a reenviar
+    t.repo.atualizarCliente(t.cliente.id, { ...t.cliente, email: 'contato@padaria.com.br' })
+    expect(syncDe(e)?.status).toBe('ok')
+
+    t.sim.limparChamadas()
+    const atual = t.repo.obterCliente(t.cliente.id)!
+    t.repo.atualizarCliente(t.cliente.id, { ...atual, nome: 'Padaria Nova', telefone: '19911112222' })
+    expect(syncDe(e)?.status).toBe('pendente')
+    expect(syncDe(cancelado)).toBeUndefined()
+    await t.modulo.sincronizarAgora()
+    expect(syncDe(e)?.status).toBe('ok')
+    expect(chamadasApi()).toEqual([`PUT /events/${idGoogle(e.id, 0)}`, `PUT /events/${idGoogle(e.id, 1)}`])
+    const g = t.sim.eventos(AGENDA)[0]
+    expect(g.summary).toBe('Baile da Cidade — Padaria Nova (2–3 máquinas)')
+    expect(String(g.description)).toContain('Telefone: 19911112222')
+  })
+
+  it('cliente alterado com a integração desativada: não marca eventos que nunca foram ao Google', async () => {
+    const e = t.criarEvento()
+    t.repo.atualizarCliente(t.cliente.id, { ...t.cliente, nome: 'Padaria Nova' })
+    expect(t.ctx.db.prepare('SELECT COUNT(*) AS n FROM google_sync').get()).toEqual({ n: 0 })
+    expect(syncDe(e)).toBeUndefined()
+  })
+
+  it('troca de agenda com a API desativada ao apagar da anterior: tenta de novo e não deixa cópia duplicada', async () => {
+    const e = t.criarEvento()
+    await t.ativar()
+    await t.modulo.sincronizarAgora()
+    t.sim.criarAgenda(NOVA)
+    expect((await t.req('PUT', '/api/google/config', { calendarId: NOVA })).statusCode).toBe(200)
+
+    t.sim.interceptar = (c, seguir) =>
+      c.metodo === 'DELETE'
+        ? erroGoogle(403, 'Google Calendar API has not been used in project 123 before or it is disabled.', 'accessNotConfigured')
+        : seguir()
+    await t.modulo.sincronizarAgora()
+    expect(syncDe(e)).toMatchObject({ status: 'erro', erro: expect.stringMatching(/não está ativada/) })
+    expect(t.sim.eventos(NOVA)).toHaveLength(2)
+    expect(t.sim.eventos(AGENDA)).toHaveLength(2)
+
+    // A API volta a funcionar
+    t.sim.interceptar = null
+    t.avancar(30 * 60_000)
+    await t.modulo.sincronizarAgora()
+    expect(syncDe(e)?.status).toBe('ok')
+    expect(t.sim.eventos(AGENDA)).toEqual([])
+    expect(t.sim.eventos(NOVA)).toHaveLength(2)
+  })
+
+  it('excluir ou cancelar com a agenda inacessível (404) não é dado como feito', async () => {
+    const e1 = t.criarEvento()
+    const e2 = t.criarEvento({ nome: 'Quermesse' })
+    await t.ativar()
+    await t.modulo.sincronizarAgora()
+
+    t.sim.definirAcesso(AGENDA, 'nenhum') // compartilhamento removido por engano
+    t.repo.excluirEvento(e1.id)
+    t.repo.alterarEvento(e2.id, { status: 'CANCELADO' })
+    for (let i = 0; i < 3; i++) {
+      await t.modulo.sincronizarAgora()
+      t.avancar(60 * 60_000)
+    }
+    expect((await t.req('GET', '/api/google/status')).json()).toMatchObject({
+      ultimoErro: 'Agenda não encontrada: confira o ID da agenda.',
+      resumo: { erros: 2 },
+    })
+    expect(syncDe(e2)?.status).toBe('erro')
+
+    // O compartilhamento é refeito: as exclusões acontecem de fato
+    t.sim.definirAcesso(AGENDA, 'edicao')
+    await t.modulo.sincronizarAgora()
+    expect(t.sim.eventos(AGENDA)).toEqual([])
+    expect((await t.req('GET', '/api/google/status')).json().resumo).toEqual({ ok: 0, pendentes: 0, erros: 0 })
+  })
+
+  it('ao iniciar, confere a agenda: corrige o Google depois de voltar uma cópia antiga do banco (.db)', async () => {
+    const tabelas = ['eventos', 'meta', 'google_sync', 'google_estado']
+    const db = t.ctx.db
+    const y = t.criarEvento({ nome: 'Y' })
+    await t.ativar()
+    await t.modulo.sincronizarAgora()
+    // Dia 1: cópia de segurança
+    const copia = Object.fromEntries(tabelas.map((n) => [n, db.prepare(`SELECT * FROM ${n}`).all()]))
+
+    // Dia 2: cria X (vai para o Google) e exclui Y (sai do Google)
+    const x = t.criarEvento({ nome: 'X' })
+    await t.modulo.sincronizarAgora()
+    t.repo.excluirEvento(y.id)
+    await t.modulo.sincronizarAgora()
+    expect(new Set(donos(AGENDA))).toEqual(new Set([x.id]))
+
+    // Dia 3: o .db do dia 1 é copiado por cima e o servidor é iniciado de novo
+    t.modulo.parar()
+    for (const n of tabelas) {
+      db.exec(`DELETE FROM ${n}`)
+      for (const l of copia[n] as Array<Record<string, any>>) {
+        const cols = Object.keys(l)
+        db.prepare(`INSERT INTO ${n} (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`).run(
+          ...cols.map((c) => l[c]),
+        )
+      }
+    }
+    expect(syncDe(y)?.status).toBe('ok') // o registro antigo diz que está no Google (não está)
+    const reiniciado = criarModuloGoogle(t.ctx, { fetch: t.sim.fetch, agora: t.agora })
+    try {
+      reiniciado.iniciar()
+      await reiniciado.sincronizarAgora()
+    } finally {
+      reiniciado.parar()
+    }
+    expect(donos(AGENDA)).toEqual([y.id, y.id])
+    expect(db.prepare('SELECT status FROM google_sync WHERE evento_id = ?').get(y.id)).toEqual({ status: 'ok' })
+  })
+
+  it('"Sincronizar tudo" apaga as cópias órfãs do sistema e não toca nos eventos criados à mão', async () => {
+    const e = t.criarEvento()
+    await t.ativar()
+    await t.modulo.sincronizarAgora()
+    t.sim.tamanhoPagina = 1 // obriga a percorrer várias páginas
+    const orfao = { bcFichasId: 'evento-que-nao-existe-mais', codigo: '#0099' }
+    t.sim.inserir(AGENDA, { id: idGoogle(orfao.bcFichasId, 0), summary: 'Órfão', extendedProperties: { private: orfao } })
+    t.sim.inserir(AGENDA, {
+      id: idGoogle(e.id, 5),
+      summary: 'Bloco perdido',
+      extendedProperties: { private: { bcFichasId: e.id, codigo: '#0001' } },
+    })
+    t.sim.inserir(AGENDA, { id: 'reuniaofeitaamao1', summary: 'Reunião' })
+
+    expect((await t.req('POST', '/api/google/sincronizar')).statusCode).toBe(200)
+    await t.modulo.sincronizarAgora()
+    expect(t.sim.eventos(AGENDA).map((g) => g.summary)).toEqual([
+      'Baile da Cidade — Padaria Ideal (2–3 máquinas)',
+      'Baile da Cidade — Padaria Ideal (1 máquina)',
+      'Reunião',
+    ])
+  })
+
+  it('uma vez por dia confere a agenda e recria as cópias apagadas direto no Google', async () => {
+    const e = t.criarEvento()
+    await t.ativar()
+    await t.modulo.sincronizarAgora()
+    t.sim.apagar(AGENDA, idGoogle(e.id, 0))
+    await t.modulo.sincronizarAgora()
+    expect(t.sim.eventos(AGENDA)).toHaveLength(1)
+
+    t.avancar(24 * 60 * 60_000)
+    await t.modulo.sincronizarAgora()
+    expect(t.sim.eventos(AGENDA)).toHaveLength(2)
+    expect(syncDe(e)?.status).toBe('ok')
+  })
+
+  it('quando a conexão volta, os outros eventos em erro de rede são enviados na hora', async () => {
+    const e1 = t.criarEvento()
+    const e2 = t.criarEvento({ nome: 'Quermesse' })
+    await t.ativar()
+    t.sim.offline = true
+    await t.modulo.sincronizarAgora()
+    t.avancar(1_000)
+    await t.modulo.sincronizarAgora()
+    expect([syncDe(e1)?.status, syncDe(e2)?.status]).toEqual(['erro', 'erro'])
+
+    // A internet volta e um evento novo é enviado: os demais não esperam o próprio prazo
+    t.sim.offline = false
+    const e3 = t.criarEvento({ nome: 'Festa junina' })
+    await t.modulo.sincronizarAgora()
+    expect([syncDe(e1)?.status, syncDe(e2)?.status, syncDe(e3)?.status]).toEqual(['ok', 'ok', 'ok'])
+    expect(t.sim.eventos(AGENDA)).toHaveLength(6)
+  })
+
+  it('sem internet, a espera entre tentativas não passa de 5 minutos', async () => {
+    t.criarEvento()
+    await t.ativar()
+    t.sim.offline = true
+    const proxima = () => (t.ctx.db.prepare('SELECT proxima_tentativa AS p FROM google_sync').get() as { p: number }).p
+    for (let i = 0; i < 10; i++) {
+      t.avancar(Math.max(0, proxima() - t.agora()))
+      await t.modulo.sincronizarAgora()
+    }
+    expect(proxima() - t.agora()).toBe(5 * 60_000)
   })
 })

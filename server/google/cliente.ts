@@ -248,14 +248,45 @@ export class ClienteGoogle {
     await this.chamar('POST', `/calendars/${agenda}/events`, evento)
   }
 
-  /** Apaga o evento; se ele já não existe (404/410), não faz nada. */
+  /**
+   * Apaga o evento; se ele já foi apagado (410) ou nunca existiu (404), não faz nada.
+   * O Google também responde 404 quando a AGENDA foi apagada ou deixou de ser
+   * compartilhada com a conta de serviço; por isso, num 404 a agenda é conferida
+   * (lança `agendaNaoEncontrada`/`permissao` se ela estiver inacessível), para a
+   * exclusão não ser dada como feita sem ter apagado nada.
+   */
   async apagarEvento(calendarId: string, id: string) {
-    await this.chamar(
-      'DELETE',
-      `/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(id)}`,
-      undefined,
-      [404, 410],
-    )
+    const agenda = encodeURIComponent(calendarId)
+    const r = await this.chamar('DELETE', `/calendars/${agenda}/events/${encodeURIComponent(id)}`, undefined, [404, 410])
+    if (r.status === 404) await this.chamar('GET', `/calendars/${agenda}`)
+  }
+
+  /**
+   * Eventos da agenda criados por este sistema (com `extendedProperties.private.bcFichasId`),
+   * sem os apagados. Percorre todas as páginas.
+   */
+  async listarEventosDoSistema(calendarId: string): Promise<Array<{ id: string; bcFichasId: string }>> {
+    const encontrados: Array<{ id: string; bcFichasId: string }> = []
+    let pagina = ''
+    for (let i = 0; i < 1_000; i++) {
+      const params = new URLSearchParams({
+        maxResults: '2500',
+        showDeleted: 'false',
+        fields: 'items(id,extendedProperties/private/bcFichasId),nextPageToken',
+      })
+      if (pagina) params.set('pageToken', pagina)
+      const r = await this.chamar('GET', `/calendars/${encodeURIComponent(calendarId)}/events?${params}`)
+      const itens = Array.isArray(r.json.items) ? (r.json.items as Array<Record<string, unknown>>) : []
+      for (const item of itens) {
+        const privadas = (item?.extendedProperties as { private?: Record<string, unknown> } | undefined)?.private
+        const bcFichasId = privadas?.bcFichasId
+        if (typeof item?.id === 'string' && typeof bcFichasId === 'string' && bcFichasId)
+          encontrados.push({ id: item.id, bcFichasId })
+      }
+      pagina = typeof r.json.nextPageToken === 'string' ? r.json.nextPageToken : ''
+      if (!pagina) break
+    }
+    return encontrados
   }
 }
 

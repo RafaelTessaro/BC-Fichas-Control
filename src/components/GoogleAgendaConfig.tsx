@@ -164,9 +164,26 @@ export function GoogleAgendaConfig() {
     })
   }
 
-  const salvarAgenda = () => {
-    if (!status || calendarId.trim() === status.calendarId) return
-    void executar('agenda', async () => {
+  /** O ID digitado é diferente do salvo no servidor (só é salvo com confirmação explícita). */
+  const agendaAlterada = !!status && calendarId.trim() !== status.calendarId
+
+  /** Trocar de agenda com eventos já enviados move todos eles: pede confirmação. */
+  const confirmarTroca = () =>
+    !status?.calendarId || calendarId.trim() === status.calendarId
+      ? Promise.resolve(true)
+      : confirmar({
+          titulo: 'Mover os eventos para outra agenda?',
+          descricao:
+            `Todos os eventos serão criados na agenda nova e, depois disso, apagados da agenda atual (${status.calendarId}). ` +
+            'A agenda nova é testada antes; se ela não existir ou não estiver compartilhada, nada é alterado.',
+          confirmar: 'Mover eventos',
+          perigo: true,
+        })
+
+  const salvarAgenda = async () => {
+    if (!status || !agendaAlterada || ocupado === 'agenda') return
+    if (status.ativo && !(await confirmarTroca())) return
+    await executar('agenda', async () => {
       try {
         const s = await googleAgenda.salvarConfig({ calendarId })
         setStatus(s)
@@ -174,26 +191,31 @@ export function GoogleAgendaConfig() {
         setTeste(null)
         toast.sucesso(
           'ID da agenda salvo',
-          s.ativo ? 'Os eventos serão enviados para a nova agenda e apagados da anterior.' : undefined,
+          s.ativo ? 'Os eventos estão sendo criados na nova agenda e, depois, apagados da anterior.' : undefined,
         )
       } catch (e) {
-        avisarErro('ID da agenda inválido', e)
+        avisarErro('A agenda não foi trocada', e)
       }
     })
   }
 
-  const alternarAtivo = (ativo: boolean) =>
-    executar('ativo', async () => {
+  const alternarAtivo = async (ativo: boolean) => {
+    // Ao ativar, usa o ID do campo (o servidor testa a agenda antes); ao desativar, não mexe nele
+    // (só pergunta se já há eventos enviados à agenda anterior)
+    const jaEnviou = !!status && status.resumo.ok + status.resumo.erros > 0
+    if (ativo && agendaAlterada && jaEnviou && !(await confirmarTroca())) return
+    await executar('ativo', async () => {
       try {
-        const s = await googleAgenda.salvarConfig({ ativo, calendarId })
+        const s = await googleAgenda.salvarConfig(ativo ? { ativo, calendarId } : { ativo })
         setStatus(s)
-        setCalendarId(s.calendarId)
+        if (ativo) setCalendarId(s.calendarId)
         if (ativo) toast.sucesso('Google Agenda ativado', 'Os eventos estão sendo enviados para a agenda.')
         else toast.info('Envio ao Google Agenda desativado', 'Os eventos já enviados continuam na agenda do Google.')
       } catch (e) {
         avisarErro(ativo ? 'Não foi possível ativar' : 'Não foi possível desativar', e)
       }
     })
+  }
 
   const alternarValores = (incluirValores: boolean) =>
     executar('valores', async () => {
@@ -411,22 +433,62 @@ export function GoogleAgendaConfig() {
               <Field
                 label="ID da agenda"
                 htmlFor={idAgenda}
-                hint="Em Configurações da agenda › Integrar agenda › ID da agenda (ex.: seu-email@gmail.com ou …@group.calendar.google.com)."
+                hint={
+                  agendaAlterada && status.calendarId ? (
+                    <span className="text-warning">
+                      Alteração não salva.
+                      {status.ativo
+                        ? ' Ao salvar, os eventos são movidos: criados na agenda nova e depois apagados da atual.'
+                        : ' Clique em “Salvar” para usar esta agenda.'}
+                    </span>
+                  ) : (
+                    'Em Configurações da agenda › Integrar agenda › ID da agenda (ex.: seu-email@gmail.com ou …@group.calendar.google.com).'
+                  )
+                }
               >
-                <Input
-                  id={idAgenda}
-                  value={calendarId}
-                  onChange={(e) => {
-                    setCalendarId(e.target.value)
-                    setTeste(null)
-                  }}
-                  onBlur={salvarAgenda}
-                  onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
-                  placeholder="exemplo@group.calendar.google.com"
-                  spellCheck={false}
-                  autoComplete="off"
-                  className="font-mono text-[13px]"
-                />
+                <div className="flex flex-col gap-2 sm:flex-row">
+                  <Input
+                    id={idAgenda}
+                    value={calendarId}
+                    onChange={(e) => {
+                      setCalendarId(e.target.value)
+                      setTeste(null)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return
+                      e.preventDefault()
+                      void salvarAgenda()
+                    }}
+                    placeholder="exemplo@group.calendar.google.com"
+                    spellCheck={false}
+                    autoComplete="off"
+                    className="min-w-0 flex-1 font-mono text-[13px]"
+                  />
+                  {agendaAlterada && (
+                    <div className="flex shrink-0 gap-2">
+                      <Button
+                        variante="primary"
+                        icone={
+                          ocupado === 'agenda' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />
+                        }
+                        onClick={() => void salvarAgenda()}
+                        disabled={!calendarId.trim() || ocupado === 'agenda'}
+                      >
+                        {status.ativo && status.calendarId ? 'Salvar e mover' : 'Salvar'}
+                      </Button>
+                      <Button
+                        variante="ghost"
+                        onClick={() => {
+                          setCalendarId(status.calendarId)
+                          setTeste(null)
+                        }}
+                        disabled={ocupado === 'agenda'}
+                      >
+                        Desfazer
+                      </Button>
+                    </div>
+                  )}
+                </div>
               </Field>
 
               <div className="flex flex-col divide-y divide-line rounded-xl border border-line">

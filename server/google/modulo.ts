@@ -6,7 +6,7 @@ import type { Contexto } from '../contexto.ts'
 import { ErroApi } from '../erros.ts'
 import type { ExtensaoRepositorio } from '../extensoes.ts'
 import { ClienteGoogle, ErroGoogle, validarCredenciais, type CredenciaisGoogle, type FuncaoFetch } from './cliente.ts'
-import { EstadoGoogle, idsDaLinha, type ConfigGoogle } from './estado.ts'
+import { EstadoGoogle, idsDaLinha, temCopias, type ConfigGoogle } from './estado.ts'
 import { SincronizadorGoogle } from './sincronizador.ts'
 
 export interface ModuloGoogle {
@@ -120,6 +120,7 @@ export function criarModuloGoogle(ctx: Contexto, opcoes: OpcoesModuloGoogle = {}
     estado,
     obterEvento: (id) => ctx.repo.obterEventoBruto(id),
     obterCliente: (id) => ctx.repo.obterCliente(id),
+    listarEventos: () => ctx.repo.listarEventosBrutos(),
     clienteGoogle: () => cliente,
     aoMudarStatus: republicar,
     agora,
@@ -136,12 +137,12 @@ export function criarModuloGoogle(ctx: Contexto, opcoes: OpcoesModuloGoogle = {}
     for (const e of eventos) {
       const linha = estado.obter(e.id)
       // Cancelado que nunca foi enviado: nada a fazer
-      if (e.status === 'CANCELADO' && (!linha || idsDaLinha(linha).length === 0)) continue
+      if (e.status === 'CANCELADO' && (!linha || !temCopias(linha))) continue
       estado.marcarPendente(e.id, { forcar })
       marcados++
     }
     for (const l of estado.todas()) {
-      if (!existentes.has(l.evento_id) && idsDaLinha(l).length > 0) {
+      if (!existentes.has(l.evento_id) && temCopias(l)) {
         estado.marcarPendente(l.evento_id, { excluido: true })
         marcados++
       }
@@ -173,6 +174,23 @@ export function criarModuloGoogle(ctx: Contexto, opcoes: OpcoesModuloGoogle = {}
       if (!integracaoAtiva() && !estado.obter(evento.id)) return
       estado.marcarPendente(evento.id)
       sinc.agendar()
+    },
+
+    clienteSalvo(cliente, anterior) {
+      // Só o nome e o telefone do cliente aparecem nos eventos do Google (ver mapeamento.ts)
+      if (cliente.nome === anterior.nome && cliente.telefone === anterior.telefone) return
+      let marcados = 0
+      for (const e of ctx.repo.listarEventosBrutos()) {
+        if (e.clienteId !== cliente.id) continue
+        const linha = estado.obter(e.id)
+        if (!integracaoAtiva() && !linha) continue
+        // Cancelado que nunca foi enviado: nada a atualizar
+        if (e.status === 'CANCELADO' && (!linha || !temCopias(linha))) continue
+        estado.marcarPendente(e.id)
+        republicar(e.id)
+        marcados++
+      }
+      if (marcados) sinc.agendar()
     },
 
     eventoExcluido(evento) {
@@ -243,14 +261,27 @@ export function criarModuloGoogle(ctx: Contexto, opcoes: OpcoesModuloGoogle = {}
       }
       if (nova.ativo && !nova.calendarId) throw new ErroApi(400, 'Informe o ID da agenda do Google antes de ativar.')
 
-      estado.gravarConfig(nova)
       const ativou = nova.ativo && !anterior.ativo
       const desativou = !nova.ativo && anterior.ativo
       const trocouAgenda = nova.ativo && anterior.ativo && nova.calendarId !== anterior.calendarId
       const mudouConteudo = nova.ativo && anterior.ativo && nova.incluirValores !== anterior.incluirValores
+      // Antes de enviar (e mover) os eventos, confirma que a agenda existe e está acessível.
+      // Permissão só de leitura passa aqui; o sincronizador cuida disso (só apaga da agenda
+      // anterior depois de criar na nova).
+      if ((ativou || trocouAgenda) && cliente) {
+        try {
+          await cliente.obterAgenda(nova.calendarId)
+        } catch (e) {
+          if (e instanceof ErroGoogle) throw new ErroApi(statusHttp(e), e.message)
+          throw e
+        }
+      }
+
+      estado.gravarConfig(nova)
       if (ativou || trocouAgenda || mudouConteudo) {
         const { eventos } = reconciliar(ativou)
         republicarTodos(eventos)
+        if (ativou || trocouAgenda) sinc.solicitarConferencia()
         sinc.agendar(300)
       } else if (desativou) {
         republicarTodos()
@@ -306,6 +337,8 @@ export function criarModuloGoogle(ctx: Contexto, opcoes: OpcoesModuloGoogle = {}
       if (!integracaoAtiva()) throw new ErroApi(400, 'Ative a integração com o Google Agenda antes de sincronizar.')
       const { eventos, marcados } = reconciliar(true)
       republicarTodos(eventos)
+      // Também confere a agenda inteira: apaga cópias que o sistema não conhece mais
+      sinc.solicitarConferencia()
       sinc.agendar(0)
       return { marcados, ...status() }
     })
@@ -314,7 +347,11 @@ export function criarModuloGoogle(ctx: Contexto, opcoes: OpcoesModuloGoogle = {}
   return {
     extensao,
     rotas,
-    iniciar: () => sinc.iniciar(),
+    iniciar: () => {
+      // Ao subir o servidor, confere a agenda: o banco pode ter sido trocado por uma cópia antiga
+      if (integracaoAtiva()) sinc.solicitarConferencia()
+      sinc.iniciar()
+    },
     parar: () => sinc.parar(),
     sincronizarAgora: () => sinc.processar(),
   }
