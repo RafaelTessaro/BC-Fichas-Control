@@ -1,6 +1,6 @@
 import { Check, ChevronsUpDown, Plus } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { cn } from '../../lib/cn'
 import { normalizar } from '../../lib/format'
 
@@ -23,6 +23,7 @@ export interface AcaoCombo {
 
 /**
  * Seleção com busca e navegação por teclado (↑ ↓ Home End Enter Esc), incluindo as ações do rodapé.
+ * Digitar com o campo fechado já abre a lista buscando pelo texto.
  * Segue o padrão ARIA de combobox: a busca aponta o item ativo (`aria-activedescendant`) e, ao
  * escolher ou fechar, o foco volta ao botão do campo.
  */
@@ -107,6 +108,12 @@ export function Combobox({
     lista.current?.querySelector<HTMLElement>(`[data-idx="${ativo}"]`)?.scrollIntoView({ block: 'nearest' })
   }, [ativo])
 
+  // Foco na busca logo que a lista aparece (antes do próximo quadro), para a primeira tecla
+  // digitada depois do clique não se perder
+  useLayoutEffect(() => {
+    if (aberto) input.current?.focus()
+  }, [aberto])
+
   const abrir = () => {
     setBusca('')
     setAtivo(
@@ -117,7 +124,6 @@ export function Combobox({
     )
     abertoRef.current = true
     setAberto(true)
-    requestAnimationFrame(() => input.current?.focus())
   }
 
   const escolher = (o: OpcaoCombo) => {
@@ -163,6 +169,13 @@ export function Combobox({
         // Com a lista aberta, o clique só fecha: não tira o foco da busca antes (Safari não foca botões)
         onMouseDown={(e) => aberto && e.preventDefault()}
         onClick={() => (aberto ? fechar() : abrir())}
+        onKeyDown={(e) => {
+          // Começar a digitar com o campo fechado abre a lista já buscando pelo que foi digitado
+          if (aberto || e.key.length !== 1 || e.key === ' ' || e.ctrlKey || e.metaKey || e.altKey) return
+          e.preventDefault()
+          abrir()
+          setBusca(e.key)
+        }}
         aria-haspopup="listbox"
         aria-expanded={aberto}
         aria-controls={aberto ? idLista : undefined}
