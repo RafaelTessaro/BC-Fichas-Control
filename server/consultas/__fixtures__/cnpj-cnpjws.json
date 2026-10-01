@@ -1,0 +1,106 @@
+{
+  "cnpj_raiz": "12403843",
+  "razao_social": "FABIO DE GODOY LIMA LTDA",
+  "capital_social": "5000.00",
+  "responsavel_federativo": "",
+  "atualizado_em": "2026-09-12T03:00:00.000Z",
+  "porte": {
+    "id": "01",
+    "descricao": "Micro Empresa"
+  },
+  "natureza_juridica": {
+    "id": "2062",
+    "descricao": "Sociedade Empresária Limitada"
+  },
+  "qualificacao_do_responsavel": {
+    "id": 49,
+    "descricao": "Sócio-Administrador "
+  },
+  "simples": {
+    "mei": "Não",
+    "simples": "Sim",
+    "data_opcao_mei": null,
+    "data_exclusao_mei": null,
+    "data_opcao_simples": "2017-01-01",
+    "data_exclusao_simples": null,
+    "atualizado_em": "2026-09-12T03:00:00.000Z"
+  },
+  "estabelecimento": {
+    "cnpj": "12403843000118",
+    "atividades_secundarias": [
+      {
+        "id": "4530703",
+        "secao": "G",
+        "divisao": "45",
+        "grupo": "45.3",
+        "classe": "45.30-7",
+        "subclasse": "4530-7/03",
+        "descricao": "Comércio a varejo de peças e acessórios novos para veículos automotores"
+      },
+      {
+        "id": "9511800",
+        "secao": "S",
+        "divisao": "95",
+        "grupo": "95.1",
+        "classe": "95.11-8",
+        "subclasse": "9511-8/00",
+        "descricao": "Reparação e manutenção de computadores e de equipamentos periféricos"
+      }
+    ],
+    "cnpj_raiz": "12403843",
+    "cnpj_ordem": "0001",
+    "cnpj_digito_verificador": "18",
+    "tipo": "Matriz",
+    "nome_fantasia": "BALANCAS.COM",
+    "situacao_cadastral": "Ativa",
+    "data_situacao_cadastral": "2010-08-05",
+    "data_inicio_atividade": "2010-08-05",
+    "nome_cidade_exterior": null,
+    "tipo_logradouro": "RUA",
+    "logradouro": "13",
+    "numero": "650",
+    "complemento": null,
+    "bairro": "BAIRRO DA BOA MORTE",
+    "cep": "13500120",
+    "ddd1": "19",
+    "telefone1": "81182225",
+    "ddd2": null,
+    "telefone2": null,
+    "ddd_fax": "19",
+    "fax": "35240090",
+    "email": "balancas.com@gmail.com",
+    "situacao_especial": null,
+    "data_situacao_especial": null,
+    "atualizado_em": "2026-09-12T03:00:00.000Z",
+    "atividade_principal": {
+      "id": "4751201",
+      "secao": "G",
+      "divisao": "47",
+      "grupo": "47.5",
+      "classe": "47.51-2",
+      "subclasse": "4751-2/01",
+      "descricao": "Comércio varejista especializado de equipamentos e suprimentos de informática"
+    },
+    "pais": {
+      "id": "1058",
+      "iso2": "BR",
+      "iso3": "BRA",
+      "nome": "Brasil",
+      "comex_id": "105"
+    },
+    "estado": {
+      "id": 26,
+      "nome": "São Paulo",
+      "sigla": "SP",
+      "ibge_id": 35
+    },
+    "cidade": {
+      "id": 3761,
+      "nome": "Rio Claro",
+      "ibge_id": 3543907,
+      "siafi_id": "6979"
+    },
+    "motivo_situacao_cadastral": null
+  },
+  "observacao": null
+}

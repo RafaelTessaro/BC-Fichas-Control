@@ -1,0 +1,11 @@
+{
+  "cep": "13504000",
+  "state": "SP",
+  "city": "Rio Claro",
+  "neighborhood": "Vila Saibreiro",
+  "street": "Rua Saibreiro 1",
+  "service": "open-cep",
+  "ibge": { "city": "3543907", "state": "35" },
+  "timezoneName": "America/Sao_Paulo",
+  "location": { "type": "Point", "coordinates": { "longitude": "-47.56139", "latitude": "-22.41139" } }
+}

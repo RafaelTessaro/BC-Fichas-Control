@@ -1,21 +1,30 @@
-import { CalendarPlus, Download, Ellipsis, Pencil, Plus, Trash2, Users } from 'lucide-react'
+import { Building2, CalendarPlus, Download, Ellipsis, Pencil, Plus, Trash2, User, UserRound, Users } from 'lucide-react'
+import type { ReactNode } from 'react'
 import { useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ClienteFormModal } from '../components/ClienteFormModal'
+import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { confirmar } from '../components/ui/Feedback'
 import { Select } from '../components/ui/Form'
 import { Avatar, EmptyState, Menu, PageHeader, SearchInput, Segmented } from '../components/ui/Misc'
 import { Linha, Tabela, Td, Th } from '../components/ui/Table'
+import { ROTULO_TIPO_CLIENTE, rotuloSituacao, situacaoPedeAtencao, tomSituacao } from '../lib/consultas'
 import { exportarCSV } from '../lib/csv'
-import { dataCurta, moeda, normalizar, numero } from '../lib/format'
+import { dataCurta, enderecoCompleto, moeda, normalizar, numero } from '../lib/format'
 import { useEventosCompletos } from '../lib/hooks'
-import type { Cliente } from '#shared/tipos.ts'
+import type { Cliente, TipoCliente } from '#shared/tipos.ts'
 import { useDados } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
 
 type Ordem = 'nome' | 'faturado' | 'recente'
+
+const ICONE_TIPO: Record<TipoCliente, ReactNode> = {
+  PJ: <Building2 className="h-3 w-3" />,
+  PF: <User className="h-3 w-3" />,
+  AVULSO: <UserRound className="h-3 w-3" />,
+}
 
 export function Clientes() {
   const clientes = useDados((s) => s.clientes)
@@ -25,7 +34,7 @@ export function Clientes() {
   const [params, setParams] = useSearchParams()
 
   const [busca, setBusca] = useState('')
-  const [tipo, setTipo] = useState<'todos' | 'PJ' | 'PF'>('todos')
+  const [tipo, setTipo] = useState<'todos' | TipoCliente>('todos')
   const [ordem, setOrdem] = useState<Ordem>('nome')
   const [modalLocal, setModal] = useState<{ aberto: boolean; cliente?: Cliente }>({ aberto: false })
   // `?novo=1` (vindo do painel ou da busca global) abre o cadastro direto
@@ -47,13 +56,25 @@ export function Clientes() {
     return m
   }, [eventos])
 
+  const contagem = useMemo(() => {
+    const n: Record<TipoCliente, number> = { PJ: 0, PF: 0, AVULSO: 0 }
+    for (const c of clientes) n[c.tipo]++
+    return n
+  }, [clientes])
+
   const lista = useMemo(() => {
     const q = normalizar(busca)
     const vazio = { qtd: 0, faturado: 0, ultimo: null }
     return clientes
       .filter((c) => tipo === 'todos' || c.tipo === tipo)
       .filter(
-        (c) => !q || normalizar(`${c.nome} ${c.documento} ${c.responsavel} ${c.cidade} ${c.telefone} ${c.email}`).includes(q),
+        (c) =>
+          !q ||
+          normalizar(`${c.nome} ${c.razaoSocial} ${c.documento} ${c.responsavel} ${c.cidade} ${c.telefone} ${c.email}`).includes(
+            q,
+          ) ||
+          // CNPJ/CPF digitado só com números
+          (/^\d{3,}$/.test(q) && c.documento.replace(/\D/g, '').includes(q)),
       )
       .map((c) => ({ c, s: estat.get(c.id) ?? vazio }))
       .sort((a, b) => {
@@ -82,14 +103,33 @@ export function Clientes() {
   const exportar = () => {
     exportarCSV(
       'clientes.csv',
-      ['Nome', 'Tipo', 'CPF/CNPJ', 'Responsável', 'Telefone', 'E-mail', 'Cidade', 'UF', 'Eventos', 'Total faturado'],
+      [
+        'Nome',
+        'Tipo',
+        'CPF/CNPJ',
+        'Razão social',
+        'Situação na Receita',
+        'Responsável',
+        'Telefone',
+        'E-mail',
+        'CEP',
+        'Endereço completo',
+        'Cidade',
+        'UF',
+        'Eventos',
+        'Total faturado',
+      ],
       lista.map(({ c, s }) => [
         c.nome,
-        c.tipo,
+        ROTULO_TIPO_CLIENTE[c.tipo],
         c.documento,
+        c.razaoSocial,
+        c.situacaoCadastral,
         c.responsavel,
         c.telefone,
         c.email,
+        c.cep,
+        enderecoCompleto(c),
         c.cidade,
         c.uf,
         s.qtd,
@@ -117,14 +157,20 @@ export function Clientes() {
 
       <Card className="overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-line p-4 md:flex-row md:items-center">
-          <SearchInput valor={busca} aoMudar={setBusca} placeholder="Buscar por nome, documento, cidade…" className="md:w-80" />
+          <SearchInput
+            valor={busca}
+            aoMudar={setBusca}
+            placeholder="Buscar por nome, razão social, CNPJ/CPF…"
+            className="md:w-80"
+          />
           <Segmented
             valor={tipo}
             aoMudar={setTipo}
             opcoes={[
-              { valor: 'todos', label: 'Todos' },
-              { valor: 'PJ', label: 'Empresas' },
-              { valor: 'PF', label: 'Pessoas' },
+              { valor: 'todos', label: 'Todos', contagem: clientes.length },
+              { valor: 'PJ', label: 'Empresas', contagem: contagem.PJ },
+              { valor: 'PF', label: 'Pessoas', contagem: contagem.PF },
+              { valor: 'AVULSO', label: 'Avulsos', contagem: contagem.AVULSO },
             ]}
           />
           <div className="md:ml-auto md:w-52">
@@ -173,9 +219,18 @@ export function Clientes() {
                     <div className="flex items-center gap-3">
                       <Avatar nome={c.nome} />
                       <div className="min-w-0">
-                        <p className="truncate font-medium text-ink">{c.nome}</p>
-                        <p className="truncate text-xs text-muted">
-                          {c.documento || (c.tipo === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física')}
+                        <div className="flex min-w-0 items-center gap-2">
+                          <p className="truncate font-medium text-ink">{c.nome}</p>
+                          {situacaoPedeAtencao(c) && (
+                            <Badge tom={tomSituacao(c.situacaoCadastral)}>{rotuloSituacao(c.situacaoCadastral)}</Badge>
+                          )}
+                        </div>
+                        <p className="flex min-w-0 items-center gap-1 text-xs text-muted">
+                          <span className="shrink-0">{ICONE_TIPO[c.tipo]}</span>
+                          <span className="truncate">
+                            {ROTULO_TIPO_CLIENTE[c.tipo]}
+                            {c.documento && ` · ${c.documento}`}
+                          </span>
                         </p>
                       </div>
                     </div>

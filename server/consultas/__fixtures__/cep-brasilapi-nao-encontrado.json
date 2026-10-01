@@ -1,0 +1,11 @@
+{
+  "name": "CepPromiseError",
+  "message": "Todos os serviços de CEP retornaram erro.",
+  "type": "service_error",
+  "errors": [
+    { "name": "ServiceError", "message": "Não foi possível interpretar o XML de resposta.", "service": "correios" },
+    { "name": "ServiceError", "message": "Erro ao se conectar com o serviço ViaCEP.", "service": "viacep" },
+    { "name": "ServiceError", "message": "Erro ao se conectar com o serviço WideNet.", "service": "widenet" },
+    { "name": "ServiceError", "message": "Erro ao se conectar com o serviço dos Correios Alt.", "service": "correios-alt" }
+  ]
+}

@@ -13,6 +13,8 @@ import {
   Save,
   Trash2,
   TriangleAlert,
+  UserPlus,
+  UserRound,
   Users,
   Wallet,
 } from 'lucide-react'
@@ -23,7 +25,7 @@ import { ConferenciaBadge } from '../components/Badges'
 import { ClienteFormModal } from '../components/ClienteFormModal'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
-import { Combobox } from '../components/ui/Combobox'
+import { Combobox, type AcaoCombo } from '../components/ui/Combobox'
 import { CurrencyInput, Field, Input, NumberInput, Select, Textarea } from '../components/ui/Form'
 import { Modal } from '../components/ui/Modal'
 import { confirmar } from '../components/ui/Feedback'
@@ -31,7 +33,8 @@ import { ErroApi } from '../lib/api'
 import { AnimatedNumber, Avatar, EmptyState, PageHeader } from '../components/ui/Misc'
 import { calcularEvento, FORMAS_PAGAMENTO, ocupacaoPorDia, STATUS_EVENTO } from '#shared/calc.ts'
 import { cn } from '../lib/cn'
-import { codigoEvento, dataExtensa, hojeISO, moeda, numero } from '../lib/format'
+import { codigoEvento, dataExtensa, hojeISO, moeda, normalizar, numero } from '../lib/format'
+import { CLIENTE_VAZIO } from '#shared/dominio.ts'
 import { novoId } from '../lib/storage'
 import type { DiaEvento, Evento, FormaPagamento, StatusEvento } from '#shared/tipos.ts'
 import { useDados, type EventoInput } from '../store/dados'
@@ -98,11 +101,50 @@ export function EventoForm() {
         .map((c) => ({
           valor: c.id,
           label: c.nome,
-          detalhe: [c.documento, c.cidade].filter(Boolean).join(' • '),
+          detalhe: [c.tipo === 'AVULSO' ? 'Avulso' : c.documento, c.cidade].filter(Boolean).join(' • '),
           icone: <Avatar nome={c.nome} className="h-6 w-6 rounded-md text-[10px]" />,
         })),
     [clientes],
   )
+
+  // ---- Seletor de cliente: cadastro completo (modal) ou cliente avulso na hora ----
+  const salvarCliente = useDados((s) => s.salvarCliente)
+  const selecionarCliente = (c: { id: string; cidade: string }) => {
+    setF((s) => ({ ...s, clienteId: c.id, cidade: s.cidade || c.cidade }))
+    setErros((e) => ({ ...e, cliente: undefined }))
+  }
+  const usarComoAvulso = async (nome: string) => {
+    try {
+      const c = await salvarCliente({ ...CLIENTE_VAZIO, tipo: 'AVULSO', nome })
+      selecionarCliente(c)
+      toast.sucesso('Cliente avulso criado', c.nome)
+    } catch (e) {
+      avisarErro('Não foi possível criar o cliente avulso', e)
+    }
+  }
+  const acoesCliente: AcaoCombo[] = [
+    {
+      label: (nome: string) => (
+        <>
+          Cadastrar novo cliente
+          {nome && <span className="truncate text-muted">“{nome}”</span>}
+        </>
+      ),
+      icone: <UserPlus className="h-4 w-4" />,
+      aoClicar: (nome: string) => setClienteModal({ aberto: true, nome }),
+    },
+    {
+      label: (nome: string) => (
+        <>
+          Usar como cliente avulso: <span className="truncate">“{nome}”</span>
+        </>
+      ),
+      icone: <UserRound className="h-4 w-4" />,
+      aoClicar: usarComoAvulso,
+      // Só com algo digitado e sem um cliente com exatamente esse nome
+      visivel: (nome: string) => !!nome && !clientes.some((c) => normalizar(c.nome) === normalizar(nome)),
+    },
+  ]
 
   // ---- Dias -----------------------------------------------------------------
   const datasRepetidas = useMemo(() => {
@@ -268,13 +310,12 @@ export function EventoForm() {
                   aoMudar={(v) => {
                     // Preenche a cidade com a do cliente quando estiver vazia
                     const escolhido = clientes.find((c) => c.id === v)
-                    setF((s) => ({ ...s, clienteId: v, cidade: s.cidade || escolhido?.cidade || '' }))
-                    setErros((e) => ({ ...e, cliente: undefined }))
+                    selecionarCliente({ id: v, cidade: escolhido?.cidade ?? '' })
                   }}
                   placeholder="Selecione ou cadastre um cliente"
                   vazio="Nenhum cliente encontrado"
                   invalido={!!erros.cliente}
-                  acaoCriar={{ label: 'Cadastrar novo cliente', aoClicar: (nome) => setClienteModal({ aberto: true, nome }) }}
+                  acoes={acoesCliente}
                 />
               </Field>
               <Field label="Nome do evento" htmlFor="ev-nome" erro={erros.nome}>
@@ -612,10 +653,7 @@ export function EventoForm() {
         aberto={clienteModal.aberto}
         nomeInicial={clienteModal.nome}
         aoFechar={() => setClienteModal({ aberto: false })}
-        aoSalvar={(c) => {
-          setF((s) => ({ ...s, clienteId: c.id, cidade: s.cidade || c.cidade }))
-          setErros((e) => ({ ...e, cliente: undefined }))
-        }}
+        aoSalvar={selecionarCliente}
       />
       <PeriodoModal aberto={periodoModal} aoFechar={() => setPeriodoModal(false)} aoConfirmar={adicionarPeriodo} />
     </>

@@ -7,8 +7,10 @@ import {
   MapPin,
   Pencil,
   Phone,
+  RefreshCw,
   Ticket,
   Trash2,
+  TriangleAlert,
   User,
   Wallet,
 } from 'lucide-react'
@@ -20,7 +22,21 @@ import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { confirmar } from '../components/ui/Feedback'
+import { Modal } from '../components/ui/Modal'
 import { Avatar, EmptyState, PageHeader, StatCard } from '../components/ui/Misc'
+import { cnpjValido } from '#shared/documentos.ts'
+import type { Cliente, ClienteInput } from '#shared/tipos.ts'
+import { cn } from '../lib/cn'
+import {
+  avisoSituacao,
+  camposDoCnpj,
+  consultarCnpj,
+  erroDeConsulta,
+  ROTULO_TIPO_CLIENTE,
+  rotuloSituacao,
+  tomSituacao,
+  type DadosCnpj,
+} from '../lib/consultas'
 import { dataCurta, enderecoCompleto, moeda, numero } from '../lib/format'
 import { porDataDesc, useEventosCompletos } from '../lib/hooks'
 import { useDados } from '../store/dados'
@@ -33,6 +49,8 @@ export function ClienteDetalhe() {
   const excluirCliente = useDados((s) => s.excluirCliente)
   const todos = useEventosCompletos()
   const [editando, setEditando] = useState(false)
+  const [consultando, setConsultando] = useState(false)
+  const [atualizacao, setAtualizacao] = useState<DadosCnpj | null>(null)
 
   const eventos = useMemo(() => todos.filter((e) => e.evento.clienteId === id).sort(porDataDesc), [todos, id])
   const t = useMemo(
@@ -78,6 +96,19 @@ export function ClienteDetalhe() {
     }
   }
 
+  const podeConsultar = cliente.tipo === 'PJ' && cnpjValido(cliente.documento)
+
+  const consultarReceita = async () => {
+    setConsultando(true)
+    try {
+      setAtualizacao(await consultarCnpj(cliente.documento))
+    } catch (e) {
+      toast.erro('Não foi possível consultar a Receita', erroDeConsulta(e, 'CNPJ').mensagem)
+    } finally {
+      setConsultando(false)
+    }
+  }
+
   return (
     <>
       <PageHeader
@@ -109,6 +140,15 @@ export function ClienteDetalhe() {
             >
               <Trash2 className="h-4 w-4" />
             </Button>
+            {podeConsultar && (
+              <Button
+                icone={<RefreshCw className={cn('h-4 w-4', consultando && 'animate-spin')} />}
+                onClick={consultarReceita}
+                disabled={consultando}
+              >
+                {consultando ? 'Consultando…' : 'Atualizar dados da Receita'}
+              </Button>
+            )}
             <Button icone={<Pencil className="h-4 w-4" />} onClick={() => setEditando(true)}>
               Editar
             </Button>
@@ -149,12 +189,21 @@ export function ClienteDetalhe() {
             titulo="Dados cadastrais"
             acoes={
               <Badge tom="neutral" ponto={false}>
-                {cliente.tipo === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física'}
+                {ROTULO_TIPO_CLIENTE[cliente.tipo]}
               </Badge>
             }
           />
-          <dl className="grid grid-cols-1 gap-x-6 gap-y-4 px-5 pb-5 text-sm sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
-            <Dado rotulo={cliente.tipo === 'PJ' ? 'CNPJ' : 'CPF'}>{cliente.documento}</Dado>
+          {cliente.tipo === 'PJ' && <AvisoSituacao situacao={cliente.situacaoCadastral} className="mx-5 mb-4" />}
+          <dl className="grid grid-cols-1 gap-x-6 gap-y-4 px-5 pb-5 text-sm sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {cliente.tipo !== 'AVULSO' && <Dado rotulo={cliente.tipo === 'PJ' ? 'CNPJ' : 'CPF'}>{cliente.documento}</Dado>}
+            {cliente.tipo === 'PJ' && <Dado rotulo="Razão social">{cliente.razaoSocial}</Dado>}
+            {cliente.tipo === 'PJ' && (
+              <Dado rotulo="Situação na Receita">
+                {cliente.situacaoCadastral && (
+                  <Badge tom={tomSituacao(cliente.situacaoCadastral)}>{rotuloSituacao(cliente.situacaoCadastral)}</Badge>
+                )}
+              </Dado>
+            )}
             <Dado rotulo="Responsável" icone={<User className="h-4 w-4" />}>
               {cliente.responsavel}
             </Dado>
@@ -165,14 +214,19 @@ export function ClienteDetalhe() {
               {cliente.email}
             </Dado>
             <Dado rotulo="Endereço" icone={<MapPin className="h-4 w-4" />}>
-              {enderecoCompleto(cliente)}
+              {[enderecoCompleto(cliente), cliente.cep && `CEP ${cliente.cep}`].filter(Boolean).join(' — ')}
             </Dado>
             {cliente.observacoes && (
               <div className="col-span-full">
                 <Dado rotulo="Observações">{cliente.observacoes}</Dado>
               </div>
             )}
-            <div className="col-span-full text-xs text-muted">Cliente desde {dataCurta(cliente.criadoEm.slice(0, 10))}</div>
+            <div className="col-span-full flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
+              <span>Cliente desde {dataCurta(cliente.criadoEm.slice(0, 10))}</span>
+              {cliente.tipo === 'PJ' && cliente.consultadoEm && (
+                <span>Dados consultados na Receita em {dataCurta(cliente.consultadoEm)}</span>
+              )}
+            </div>
           </dl>
         </Card>
 
@@ -205,7 +259,144 @@ export function ClienteDetalhe() {
       </div>
 
       <ClienteFormModal aberto={editando} cliente={cliente} aoFechar={() => setEditando(false)} />
+      <Modal
+        aberto={!!atualizacao}
+        aoFechar={() => setAtualizacao(null)}
+        largura="max-w-xl"
+        icone={<RefreshCw className="h-5 w-5" />}
+        titulo="Atualizar dados da Receita"
+        descricao={atualizacao ? `${atualizacao.razaoSocial} · consulta via ${atualizacao.fonte}` : undefined}
+      >
+        {atualizacao && <ConferenciaReceita cliente={cliente} dados={atualizacao} aoFechar={() => setAtualizacao(null)} />}
+      </Modal>
     </>
+  )
+}
+
+function AvisoSituacao({ situacao, className }: { situacao: string; className?: string }) {
+  const aviso = avisoSituacao(situacao)
+  if (!aviso) return null
+  return (
+    <div
+      className={cn(
+        'flex items-start gap-2 rounded-xl px-3.5 py-2.5 text-[13px] font-medium',
+        tomSituacao(situacao) === 'danger' ? 'bg-danger-soft text-danger' : 'bg-warning-soft text-warning',
+        className,
+      )}
+    >
+      <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+      {aviso}
+    </div>
+  )
+}
+
+/** Campos que a consulta pode atualizar, na ordem em que aparecem para conferência. */
+const CAMPOS_RECEITA: Array<{ campo: keyof ClienteInput; rotulo: string }> = [
+  { campo: 'razaoSocial', rotulo: 'Razão social' },
+  { campo: 'nome', rotulo: 'Nome de exibição' },
+  { campo: 'telefone', rotulo: 'Telefone' },
+  { campo: 'email', rotulo: 'E-mail' },
+  { campo: 'cep', rotulo: 'CEP' },
+  { campo: 'logradouro', rotulo: 'Endereço' },
+  { campo: 'numero', rotulo: 'Número' },
+  { campo: 'complemento', rotulo: 'Complemento' },
+  { campo: 'bairro', rotulo: 'Bairro' },
+  { campo: 'cidade', rotulo: 'Cidade' },
+  { campo: 'uf', rotulo: 'UF' },
+]
+
+/** Mostra o que mudou na Receita e salva, após confirmação, os campos escolhidos. */
+function ConferenciaReceita({ cliente, dados, aoFechar }: { cliente: Cliente; dados: DadosCnpj; aoFechar: () => void }) {
+  const salvarCliente = useDados((s) => s.salvarCliente)
+  const [salvando, setSalvando] = useState(false)
+  const [novos] = useState(() => camposDoCnpj(dados, new Date().toISOString()))
+  // Só o que veio com valor: campo vazio na Receita não apaga o que já está no cadastro
+  const mudancas = CAMPOS_RECEITA.filter(({ campo }) => novos[campo] && novos[campo] !== cliente[campo])
+  // O nome de exibição costuma ser escolhido à mão: só vem marcado se estiver vazio
+  const [marcados, setMarcados] = useState(
+    () => new Set(mudancas.filter(({ campo }) => campo !== 'nome' || !cliente.nome).map(({ campo }) => campo)),
+  )
+  const situacaoMudou = !!cliente.situacaoCadastral && dados.situacaoCadastral !== cliente.situacaoCadastral
+
+  const alternar = (campo: keyof ClienteInput) =>
+    setMarcados((m) => {
+      const n = new Set(m)
+      if (n.has(campo)) n.delete(campo)
+      else n.add(campo)
+      return n
+    })
+
+  const salvar = async () => {
+    setSalvando(true)
+    try {
+      const { id, versao, criadoEm: _c, atualizadoEm: _a, ...atual } = cliente
+      const dadosNovos: ClienteInput = {
+        ...atual,
+        situacaoCadastral: dados.situacaoCadastral,
+        consultadoEm: novos.consultadoEm ?? new Date().toISOString(),
+      }
+      for (const campo of marcados) {
+        if (mudancas.some((m) => m.campo === campo)) (dadosNovos as unknown as Record<string, unknown>)[campo] = novos[campo]
+      }
+      await salvarCliente(dadosNovos, { id, versao })
+      toast.sucesso('Dados atualizados com a Receita', marcados.size ? `${marcados.size} campo(s) alterado(s).` : undefined)
+      aoFechar()
+    } catch (e) {
+      avisarErro('Não foi possível salvar', e)
+    } finally {
+      setSalvando(false)
+    }
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-wrap items-center gap-2 text-sm text-ink-2">
+        Situação cadastral:
+        <Badge tom={tomSituacao(dados.situacaoCadastral)}>{rotuloSituacao(dados.situacaoCadastral) || '—'}</Badge>
+        {situacaoMudou && <span className="text-xs text-muted">antes: {rotuloSituacao(cliente.situacaoCadastral)}</span>}
+      </div>
+      <AvisoSituacao situacao={dados.situacaoCadastral} />
+
+      {mudancas.length ? (
+        <div className="overflow-hidden rounded-xl border border-line">
+          <p className="border-b border-line bg-surface-2/60 px-3.5 py-2 text-xs text-muted">
+            Marque o que deve ser trocado pelos dados da Receita:
+          </p>
+          <ul className="divide-y divide-line">
+            {mudancas.map(({ campo, rotulo }) => (
+              <li key={campo}>
+                <label className="flex cursor-pointer items-start gap-3 px-3.5 py-2.5 transition-colors hover:bg-surface-2/60">
+                  <input
+                    type="checkbox"
+                    checked={marcados.has(campo)}
+                    onChange={() => alternar(campo)}
+                    className="mt-1 h-4 w-4 shrink-0 cursor-pointer accent-[var(--brand)]"
+                  />
+                  <span className="min-w-0 flex-1 text-sm">
+                    <span className="block text-xs text-muted">{rotulo}</span>
+                    {cliente[campo] && (
+                      <span className="block break-words text-muted line-through">{String(cliente[campo])}</span>
+                    )}
+                    <span className="block font-medium break-words text-ink">{String(novos[campo])}</span>
+                  </span>
+                </label>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : (
+        <p className="rounded-xl bg-success-soft px-3.5 py-2.5 text-[13px] font-medium text-success">
+          O cadastro já está igual ao da Receita Federal.
+        </p>
+      )}
+
+      <div className="flex flex-wrap justify-end gap-2 border-t border-line pt-4">
+        <Button onClick={aoFechar}>Cancelar</Button>
+        <Button variante="primary" onClick={salvar} disabled={salvando}>
+          {salvando ? 'Salvando…' : mudancas.length ? 'Salvar dados atualizados' : 'Registrar a consulta'}
+        </Button>
+      </div>
+    </div>
   )
 }
 

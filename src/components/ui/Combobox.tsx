@@ -11,7 +11,17 @@ export interface OpcaoCombo {
   icone?: ReactNode
 }
 
-/** Seleção com busca e navegação por teclado (↑ ↓ Enter Esc). */
+/** Ação exibida no rodapé da lista (ex.: "Cadastrar novo cliente"). Recebe o texto digitado na busca. */
+export interface AcaoCombo {
+  /** Texto fixo, ou montado a partir do texto digitado. */
+  label: ReactNode | ((busca: string) => ReactNode)
+  aoClicar: (busca: string) => void
+  icone?: ReactNode
+  /** Esconde a ação conforme o texto digitado (ex.: só com algo digitado). */
+  visivel?: (busca: string) => boolean
+}
+
+/** Seleção com busca e navegação por teclado (↑ ↓ Enter Esc), incluindo as ações do rodapé. */
 export function Combobox({
   opcoes,
   valor,
@@ -19,6 +29,7 @@ export function Combobox({
   placeholder = 'Selecione…',
   vazio = 'Nada encontrado',
   acaoCriar,
+  acoes: acoesExtras,
   id,
   invalido,
 }: {
@@ -27,7 +38,9 @@ export function Combobox({
   aoMudar: (v: string) => void
   placeholder?: string
   vazio?: string
+  /** Ação de criação (mostra o texto digitado ao lado). Mantida por compatibilidade; equivale a uma entrada de `acoes`. */
   acaoCriar?: { label: string; aoClicar: (texto: string) => void }
+  acoes?: AcaoCombo[]
   id?: string
   invalido?: boolean
 }) {
@@ -44,6 +57,24 @@ export function Combobox({
     if (!q) return opcoes
     return opcoes.filter((o) => normalizar(`${o.label} ${o.detalhe ?? ''}`).includes(q))
   }, [opcoes, busca])
+
+  const acoes = useMemo(() => {
+    const todas: AcaoCombo[] = []
+    if (acaoCriar) {
+      todas.push({
+        label: (b) => (
+          <>
+            {acaoCriar.label}
+            {b && <span className="truncate text-muted">“{b}”</span>}
+          </>
+        ),
+        aoClicar: acaoCriar.aoClicar,
+      })
+    }
+    todas.push(...(acoesExtras ?? []))
+    return todas.filter((a) => !a.visivel || a.visivel(busca.trim()))
+  }, [acaoCriar, acoesExtras, busca])
+  const totalItens = filtradas.length + acoes.length
 
   useEffect(() => {
     if (!aberto) return
@@ -73,6 +104,11 @@ export function Combobox({
   const escolher = (o: OpcaoCombo) => {
     aoMudar(o.valor)
     setAberto(false)
+  }
+
+  const executar = (a: AcaoCombo) => {
+    setAberto(false)
+    a.aoClicar(busca.trim())
   }
 
   return (
@@ -116,13 +152,14 @@ export function Combobox({
                 onKeyDown={(e) => {
                   if (e.key === 'ArrowDown') {
                     e.preventDefault()
-                    setAtivo((a) => Math.min(a + 1, filtradas.length - 1))
+                    setAtivo((a) => Math.min(a + 1, totalItens - 1))
                   } else if (e.key === 'ArrowUp') {
                     e.preventDefault()
                     setAtivo((a) => Math.max(a - 1, 0))
                   } else if (e.key === 'Enter') {
                     e.preventDefault()
                     if (filtradas[ativo]) escolher(filtradas[ativo])
+                    else if (acoes[ativo - filtradas.length]) executar(acoes[ativo - filtradas.length])
                   } else if (e.key === 'Escape') {
                     e.stopPropagation()
                     setAberto(false)
@@ -157,19 +194,30 @@ export function Combobox({
                 </button>
               ))}
             </div>
-            {acaoCriar && (
-              <button
-                type="button"
-                onClick={() => {
-                  setAberto(false)
-                  acaoCriar.aoClicar(busca)
-                }}
-                className="flex w-full cursor-pointer items-center gap-2 border-t border-line px-3.5 py-2.5 text-left text-sm font-medium text-brand-ink transition-colors hover:bg-brand-soft"
-              >
-                <Plus className="h-4 w-4" />
-                {acaoCriar.label}
-                {busca && <span className="truncate text-muted">“{busca}”</span>}
-              </button>
+            {acoes.length > 0 && (
+              <div className="border-t border-line p-1">
+                {acoes.map((a, i) => {
+                  const idx = filtradas.length + i
+                  return (
+                    <button
+                      key={i}
+                      type="button"
+                      data-idx={idx}
+                      onMouseEnter={() => setAtivo(idx)}
+                      onClick={() => executar(a)}
+                      className={cn(
+                        'flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-brand-ink transition-colors',
+                        idx === ativo ? 'bg-brand-soft' : 'hover:bg-brand-soft',
+                      )}
+                    >
+                      <span className="shrink-0">{a.icone ?? <Plus className="h-4 w-4" />}</span>
+                      <span className="flex min-w-0 items-center gap-1.5 truncate">
+                        {typeof a.label === 'function' ? a.label(busca.trim()) : a.label}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
             )}
           </motion.div>
         )}

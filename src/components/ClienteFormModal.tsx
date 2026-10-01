@@ -1,11 +1,42 @@
-import { Building2, User, UserPlus, UserRound } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import {
+  Building2,
+  Check,
+  CircleAlert,
+  Loader2,
+  RotateCw,
+  Search,
+  SearchX,
+  Sparkles,
+  TriangleAlert,
+  User,
+  UserPlus,
+  UserRound,
+  WifiOff,
+  X,
+} from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { CLIENTE_VAZIO, normalizarCliente, UFS } from '#shared/dominio.ts'
-import { mascaraCep, mascaraDocumento, mascaraTelefone } from '#shared/documentos.ts'
+import { cnpjValido, cpfValido, mascaraCep, mascaraDocumento, mascaraTelefone, somenteDigitos } from '#shared/documentos.ts'
 import type { Cliente, ClienteInput, TipoCliente } from '#shared/tipos.ts'
 import { ErroApi } from '../lib/api'
+import { cn } from '../lib/cn'
+import {
+  avisoSituacao,
+  camposDoCnpj,
+  consultarCep,
+  consultarCnpj,
+  erroDeConsulta,
+  mesclarConsulta,
+  rotuloSituacao,
+  tomSituacao,
+  type DadosCnpj,
+  type TipoErroConsulta,
+} from '../lib/consultas'
+import { dataCurta } from '../lib/format'
 import { useDados } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
+import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
 import { confirmar } from './ui/Feedback'
 import { Field, Input, Select, Textarea } from './ui/Form'
@@ -59,6 +90,29 @@ export function ClienteFormModal({
   )
 }
 
+type EstadoConsulta =
+  | { estado: 'ocioso' }
+  | { estado: 'carregando'; cnpj: string }
+  | { estado: 'ok'; cnpj: string; dados: DadosCnpj }
+  | { estado: 'erro'; cnpj: string; tipo: TipoErroConsulta; mensagem: string }
+
+type EstadoCep = { estado: 'ocioso' | 'carregando' } | { estado: 'ok' | 'erro'; mensagem: string }
+
+/** Estado inicial: aceita um CNPJ/CPF digitado na busca de outra tela como "nome inicial". */
+function formularioInicial(cliente?: Cliente, nomeInicial?: string, tipoInicial?: TipoCliente): ClienteInput {
+  if (cliente) {
+    const { id: _i, versao: _v, criadoEm: _c, atualizadoEm: _a, ...resto } = cliente
+    return { ...CLIENTE_VAZIO, ...resto }
+  }
+  const base: ClienteInput = { ...CLIENTE_VAZIO, tipo: tipoInicial ?? 'PJ', nome: nomeInicial?.trim() ?? '', uf: 'SP' }
+  const digitos = somenteDigitos(base.nome)
+  if (/^[\d./\-\s]+$/.test(base.nome) && tipoInicial !== 'AVULSO') {
+    if (cnpjValido(digitos)) return { ...base, tipo: 'PJ', nome: '', documento: mascaraDocumento(digitos, 'PJ') }
+    if (cpfValido(digitos)) return { ...base, tipo: 'PF', nome: '', documento: mascaraDocumento(digitos, 'PF') }
+  }
+  return base
+}
+
 function FormularioCliente({
   cliente,
   nomeInicial,
@@ -76,27 +130,153 @@ function FormularioCliente({
 }) {
   const salvarCliente = useDados((s) => s.salvarCliente)
   const clientes = useDados((s) => s.clientes)
-  const [f, setF] = useState<ClienteInput>(() => {
-    if (!cliente) return { ...CLIENTE_VAZIO, tipo: tipoInicial ?? 'PJ', nome: nomeInicial ?? '', uf: 'SP' }
-    const { id: _i, versao: _v, criadoEm: _c, atualizadoEm: _a, ...resto } = cliente
-    return { ...CLIENTE_VAZIO, ...resto }
-  })
+  const [f, setF] = useState<ClienteInput>(() => formularioInicial(cliente, nomeInicial, tipoInicial))
   // Versão que o usuário abriu para editar: se outra pessoa salvar antes, avisamos
   const [versaoBase, setVersaoBase] = useState(cliente?.versao)
   const [tentou, setTentou] = useState(false)
+  const [consulta, setConsulta] = useState<EstadoConsulta>({ estado: 'ocioso' })
+  const [cepEstado, setCepEstado] = useState<EstadoCep>({ estado: 'ocioso' })
+
+  // ---- Controle das consultas (fora do render) ----
+  const fRef = useRef(f)
+  useEffect(() => {
+    fRef.current = f
+  })
+  /** CNPJ já consultado automaticamente (não repete a consulta para o mesmo número). */
+  const ultimoCnpj = useRef(cliente ? somenteDigitos(cliente.documento) : '')
+  /** CNPJ a que pertencem a situação cadastral e a data de consulta guardadas. */
+  const cnpjDaSituacao = useRef(cliente ? somenteDigitos(cliente.documento) : '')
+  /** Valores que a última consulta colocou no formulário (para saber o que foi digitado à mão). */
+  const valoresConsulta = useRef<Partial<ClienteInput>>({})
+  const seqCnpj = useRef(0)
+  const ultimoCep = useRef(cliente ? somenteDigitos(cliente.cep) : '')
+  const seqCep = useRef(0)
+  const timerCnpj = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  const numeroRef = useRef<HTMLInputElement>(null)
+  const logradouroRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => () => clearTimeout(timerCnpj.current), [])
 
   const set = <K extends keyof ClienteInput>(k: K, v: ClienteInput[K]) => setF((s) => ({ ...s, [k]: v }))
-  const mudarTipo = (tipo: TipoCliente) =>
+
+  async function buscarCnpj(cnpj: string, manual: boolean) {
+    clearTimeout(timerCnpj.current)
+    ultimoCnpj.current = cnpj
+    const seq = ++seqCnpj.current
+    setConsulta({ estado: 'carregando', cnpj })
+    try {
+      const dados = await consultarCnpj(cnpj)
+      if (seq !== seqCnpj.current) return
+      const atual = fRef.current
+      // O usuário trocou o CNPJ ou o tipo enquanto esperava: descarta
+      if (atual.tipo !== 'PJ' || somenteDigitos(atual.documento) !== cnpj) return setConsulta({ estado: 'ocioso' })
+      const { form, aplicados } = mesclarConsulta(
+        atual,
+        camposDoCnpj(dados, new Date().toISOString()),
+        valoresConsulta.current,
+        manual,
+      )
+      valoresConsulta.current = { ...valoresConsulta.current, ...aplicados }
+      cnpjDaSituacao.current = cnpj
+      // O endereço veio da Receita: não consulta o CEP por cima
+      ultimoCep.current = somenteDigitos(form.cep)
+      setCepEstado({ estado: 'ocioso' })
+      setF(form)
+      setConsulta({ estado: 'ok', cnpj, dados })
+    } catch (e) {
+      if (seq !== seqCnpj.current) return
+      // Permite tentar de novo redigitando o mesmo número
+      ultimoCnpj.current = ''
+      setConsulta({ estado: 'erro', cnpj, ...erroDeConsulta(e, 'CNPJ') })
+    }
+  }
+
+  /** Consulta automática ~400 ms depois de completar um CNPJ válido. */
+  function agendarCnpj(digitos: string) {
+    clearTimeout(timerCnpj.current)
+    if (digitos.length !== 14 || !cnpjValido(digitos) || digitos === ultimoCnpj.current) return
+    timerCnpj.current = setTimeout(() => void buscarCnpj(digitos, false), 400)
+  }
+
+  // CNPJ vindo da busca de outra tela: consulta assim que o formulário abre
+  // (para um cliente já cadastrado, `ultimoCnpj` já contém o número e nada acontece)
+  useEffect(() => {
+    const inicial = fRef.current
+    if (inicial.tipo === 'PJ') agendarCnpj(somenteDigitos(inicial.documento))
+    // Somente ao abrir
+  }, [])
+
+  async function buscarCep(cep: string) {
+    ultimoCep.current = cep
+    const seq = ++seqCep.current
+    setCepEstado({ estado: 'carregando' })
+    try {
+      const r = await consultarCep(cep)
+      if (seq !== seqCep.current || somenteDigitos(fRef.current.cep) !== cep) return
+      setF((s) => ({
+        ...s,
+        logradouro: r.logradouro || s.logradouro,
+        bairro: r.bairro || s.bairro,
+        cidade: r.cidade || s.cidade,
+        uf: r.uf || s.uf,
+      }))
+      setCepEstado({
+        estado: 'ok',
+        mensagem: r.logradouro ? 'Endereço preenchido pelo CEP.' : 'CEP geral da cidade: informe a rua.',
+      })
+      // Leva o cursor para o próximo campo a preencher
+      requestAnimationFrame(() => (r.logradouro ? numeroRef : logradouroRef).current?.focus())
+    } catch (e) {
+      if (seq !== seqCep.current) return
+      ultimoCep.current = ''
+      const erro = erroDeConsulta(e, 'CEP')
+      setCepEstado({
+        estado: 'erro',
+        mensagem: erro.tipo === 'naoEncontrado' ? 'CEP não encontrado. Confira o número ou preencha o endereço.' : erro.mensagem,
+      })
+    }
+  }
+
+  const mudarDocumento = (valor: string) => {
+    const documento = mascaraDocumento(valor, f.tipo === 'PJ' ? 'PJ' : 'PF')
+    const digitos = somenteDigitos(documento)
+    setF((s) => {
+      const novo = { ...s, documento }
+      // Situação da Receita pertence ao CNPJ consultado: some se o número mudar
+      if ((s.situacaoCadastral || s.consultadoEm) && digitos !== cnpjDaSituacao.current) {
+        novo.situacaoCadastral = ''
+        novo.consultadoEm = ''
+      }
+      return novo
+    })
+    if (f.tipo === 'PJ') agendarCnpj(digitos)
+  }
+
+  const mudarCep = (valor: string) => {
+    const cep = mascaraCep(valor)
+    set('cep', cep)
+    const d = somenteDigitos(cep)
+    if (d.length === 8 && d !== ultimoCep.current) void buscarCep(d)
+    else if (d.length < 8) {
+      seqCep.current++
+      ultimoCep.current = ''
+      setCepEstado({ estado: 'ocioso' })
+    }
+  }
+
+  const mudarTipo = (tipo: TipoCliente) => {
+    clearTimeout(timerCnpj.current)
     setF((s) => ({ ...s, tipo, documento: tipo === 'AVULSO' ? '' : mascaraDocumento(s.documento, tipo) }))
+  }
 
   const { erros } = normalizarCliente(f)
   const erroDoc = erros.find((e) => /CNPJ|CPF/.test(e))
   const erroNome = erros.find((e) => /nome|razão/i.test(e))
   const erroEmail = erros.find((e) => /e-mail/i.test(e))
   const erroCep = erros.find((e) => /CEP/.test(e))
-  const docDigitos = f.documento.replace(/\D/g, '')
+  const docDigitos = somenteDigitos(f.documento)
   const duplicado = docDigitos
-    ? clientes.find((c) => c.id !== cliente?.id && c.documento.replace(/\D/g, '') === docDigitos)
+    ? clientes.find((c) => c.id !== cliente?.id && somenteDigitos(c.documento) === docDigitos)
     : undefined
 
   const enviar = async (e: FormEvent) => {
@@ -130,6 +310,25 @@ function FormularioCliente({
 
   const ehPJ = f.tipo === 'PJ'
   const ehAvulso = f.tipo === 'AVULSO'
+  const cnpjOk = ehPJ && cnpjValido(docDigitos)
+  // O painel só mostra a consulta do CNPJ que está no campo agora
+  const painel = ehPJ && consulta.estado !== 'ocioso' && consulta.cnpj === docDigitos ? consulta : null
+  const consultando = painel?.estado === 'carregando'
+
+  const dicaDocumento: ReactNode = duplicado ? (
+    <span className="inline-flex items-center gap-1 font-medium text-warning">
+      <CircleAlert className="h-3.5 w-3.5 shrink-0" />
+      Já cadastrado: {duplicado.nome}
+    </span>
+  ) : ehPJ ? (
+    f.consultadoEm && f.situacaoCadastral && !painel ? (
+      `Receita: ${rotuloSituacao(f.situacaoCadastral)} · consultado em ${dataCurta(f.consultadoEm)}`
+    ) : (
+      'Ao completar o CNPJ, os dados da empresa são buscados sozinhos.'
+    )
+  ) : (
+    'Opcional'
+  )
 
   return (
     <form id="form-cliente" onSubmit={enviar} className="grid grid-cols-1 gap-4 sm:grid-cols-6" noValidate>
@@ -169,27 +368,63 @@ function FormularioCliente({
         />
       </Field>
 
+      {ehAvulso && (
+        <motion.p
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="flex items-start gap-2 rounded-xl bg-surface-2 px-3.5 py-2.5 text-[13px] text-ink-2 sm:col-span-6"
+        >
+          <UserRound className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
+          Para clientes eventuais, sem CPF ou CNPJ: só o essencial para lançar o evento. Dá para completar o cadastro depois.
+        </motion.p>
+      )}
+
       {!ehAvulso && (
         <Field
           label={ehPJ ? 'CNPJ' : 'CPF'}
           htmlFor="cli-doc"
-          className="sm:col-span-2"
+          className={ehPJ ? 'sm:col-span-3' : 'sm:col-span-2'}
           erro={tentou || docDigitos.length >= (ehPJ ? 14 : 11) ? erroDoc : null}
-          hint={duplicado ? `Já cadastrado: ${duplicado.nome}` : 'Opcional'}
+          hint={dicaDocumento}
         >
-          <Input
-            id="cli-doc"
-            inputMode="numeric"
-            autoFocus
-            value={f.documento}
-            onChange={(e) => set('documento', mascaraDocumento(e.target.value, ehPJ ? 'PJ' : 'PF'))}
-            placeholder={ehPJ ? '00.000.000/0000-00' : '000.000.000-00'}
-          />
+          <div className="relative">
+            <Input
+              id="cli-doc"
+              inputMode="numeric"
+              autoComplete="off"
+              autoFocus
+              value={f.documento}
+              onChange={(e) => mudarDocumento(e.target.value)}
+              onKeyDown={(e) => {
+                // Enter no CNPJ consulta em vez de salvar o formulário
+                if (e.key === 'Enter' && cnpjOk) {
+                  e.preventDefault()
+                  void buscarCnpj(docDigitos, true)
+                }
+              }}
+              placeholder={ehPJ ? '00.000.000/0000-00' : '000.000.000-00'}
+              className={cn(ehPJ && 'pr-[7.25rem]', erroDoc && docDigitos.length >= (ehPJ ? 14 : 11) && 'border-danger')}
+            />
+            {ehPJ && (
+              <div className="absolute inset-y-0 right-1 flex items-center">
+                <Button
+                  variante="soft"
+                  tamanho="sm"
+                  onClick={() => void buscarCnpj(docDigitos, true)}
+                  disabled={!cnpjOk || consultando}
+                  title="Buscar os dados da empresa na Receita Federal"
+                  icone={consultando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
+                >
+                  Consultar
+                </Button>
+              </div>
+            )}
+          </div>
         </Field>
       )}
 
       {ehPJ && (
-        <Field label="Razão social" htmlFor="cli-razao" className="sm:col-span-4">
+        <Field label="Razão social" htmlFor="cli-razao" className="sm:col-span-3">
           <Input
             id="cli-razao"
             value={f.razaoSocial}
@@ -199,12 +434,42 @@ function FormularioCliente({
         </Field>
       )}
 
+      <AnimatePresence initial={false} mode="wait">
+        {painel && (
+          <motion.div
+            key={painel.estado}
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden sm:col-span-6"
+          >
+            {painel.estado === 'carregando' && <ConsultandoCnpj />}
+            {painel.estado === 'ok' && <ResultadoCnpj dados={painel.dados} aoFechar={() => setConsulta({ estado: 'ocioso' })} />}
+            {painel.estado === 'erro' && (
+              <ErroCnpj
+                tipo={painel.tipo}
+                mensagem={painel.mensagem}
+                aoTentar={() => void buscarCnpj(docDigitos, true)}
+                aoFechar={() => setConsulta({ estado: 'ocioso' })}
+              />
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       <Field
         label={ehPJ ? 'Nome fantasia' : ehAvulso ? 'Nome ou apelido' : 'Nome completo'}
         htmlFor="cli-nome"
         className={ehPJ ? 'sm:col-span-3' : ehAvulso ? 'sm:col-span-6' : 'sm:col-span-4'}
         erro={tentou ? erroNome : null}
-        hint={ehAvulso ? 'Se ficar em branco, será salvo como “Cliente avulso”.' : undefined}
+        hint={
+          ehAvulso
+            ? 'Se ficar em branco, será salvo como “Cliente avulso”.'
+            : ehPJ
+              ? 'Nome usado no sistema e nos recibos.'
+              : undefined
+        }
       >
         <Input
           id="cli-nome"
@@ -250,17 +515,54 @@ function FormularioCliente({
 
       {!ehAvulso && (
         <>
-          <Field label="CEP" htmlFor="cli-cep" className="sm:col-span-2" erro={tentou ? erroCep : null}>
-            <Input
-              id="cli-cep"
-              inputMode="numeric"
-              value={f.cep}
-              onChange={(e) => set('cep', mascaraCep(e.target.value))}
-              placeholder="00000-000"
-            />
+          <Field
+            label="CEP"
+            htmlFor="cli-cep"
+            className="sm:col-span-2"
+            erro={tentou ? erroCep : null}
+            hint={
+              cepEstado.estado === 'ok' ? (
+                <span className="text-success">{cepEstado.mensagem}</span>
+              ) : cepEstado.estado === 'erro' ? (
+                <span className="text-warning">{cepEstado.mensagem}</span>
+              ) : (
+                'O endereço é preenchido pelo CEP.'
+              )
+            }
+          >
+            <div className="relative">
+              <Input
+                id="cli-cep"
+                inputMode="numeric"
+                autoComplete="off"
+                value={f.cep}
+                onChange={(e) => mudarCep(e.target.value)}
+                placeholder="00000-000"
+                className="pr-9"
+              />
+              <span className="pointer-events-none absolute top-1/2 right-3 -translate-y-1/2">
+                <AnimatePresence mode="wait" initial={false}>
+                  {cepEstado.estado === 'carregando' ? (
+                    <motion.span key="c" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                      <Loader2 className="h-4 w-4 animate-spin text-muted" />
+                    </motion.span>
+                  ) : cepEstado.estado === 'ok' ? (
+                    <motion.span
+                      key="ok"
+                      initial={{ opacity: 0, scale: 0.6 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      exit={{ opacity: 0 }}
+                    >
+                      <Check className="h-4 w-4 text-success" />
+                    </motion.span>
+                  ) : null}
+                </AnimatePresence>
+              </span>
+            </div>
           </Field>
           <Field label="Endereço" htmlFor="cli-log" className="sm:col-span-3">
             <Input
+              ref={logradouroRef}
               id="cli-log"
               value={f.logradouro}
               onChange={(e) => set('logradouro', e.target.value)}
@@ -268,37 +570,188 @@ function FormularioCliente({
             />
           </Field>
           <Field label="Número" htmlFor="cli-num" className="sm:col-span-1">
-            <Input id="cli-num" value={f.numero} onChange={(e) => set('numero', e.target.value)} />
+            <Input ref={numeroRef} id="cli-num" value={f.numero} onChange={(e) => set('numero', e.target.value)} />
           </Field>
           <Field label="Complemento" htmlFor="cli-comp" className="sm:col-span-2">
             <Input id="cli-comp" value={f.complemento} onChange={(e) => set('complemento', e.target.value)} />
           </Field>
-          <Field label="Bairro" htmlFor="cli-bairro" className="sm:col-span-2">
+          <Field label="Bairro" htmlFor="cli-bairro" className="sm:col-span-4">
             <Input id="cli-bairro" value={f.bairro} onChange={(e) => set('bairro', e.target.value)} />
           </Field>
         </>
       )}
 
-      <Field label="Cidade" htmlFor="cli-cid" className={ehAvulso ? 'sm:col-span-2' : 'sm:col-span-1'}>
+      <Field label="Cidade" htmlFor="cli-cid" className={ehAvulso ? 'sm:col-span-3' : 'sm:col-span-4'}>
         <Input id="cli-cid" value={f.cidade} onChange={(e) => set('cidade', e.target.value)} placeholder="Rio Claro" />
       </Field>
-      <Field label="UF" htmlFor="cli-uf" className="sm:col-span-1">
-        <Select id="cli-uf" value={f.uf} onChange={(e) => set('uf', e.target.value)}>
-          <option value="">—</option>
-          {UFS.map((u) => (
-            <option key={u}>{u}</option>
-          ))}
-        </Select>
-      </Field>
+      {!ehAvulso && (
+        <Field label="UF" htmlFor="cli-uf" className="sm:col-span-2">
+          <Select id="cli-uf" value={f.uf} onChange={(e) => set('uf', e.target.value)}>
+            <option value="">—</option>
+            {UFS.map((u) => (
+              <option key={u}>{u}</option>
+            ))}
+          </Select>
+        </Field>
+      )}
 
       <Field label="Observações" htmlFor="cli-obs" className="sm:col-span-6">
         <Textarea
           id="cli-obs"
           value={f.observacoes}
           onChange={(e) => set('observacoes', e.target.value)}
-          placeholder="Informações internas sobre o cliente"
+          placeholder={ehAvulso ? 'Ex.: barraca na festa junina da escola' : 'Informações internas sobre o cliente'}
         />
       </Field>
     </form>
+  )
+}
+
+// ---- Painel da consulta de CNPJ ----------------------------------------------------
+
+function ConsultandoCnpj() {
+  return (
+    <div className="flex items-center gap-3 rounded-2xl border border-line bg-surface-2/60 p-4">
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand-ink">
+        <Loader2 className="h-5 w-5 animate-spin" />
+      </div>
+      <div className="min-w-0 flex-1 space-y-2">
+        <p className="text-sm font-medium text-ink">Consultando a Receita Federal…</p>
+        <div className="h-2 w-2/3 animate-pulse rounded-full bg-surface-3" />
+      </div>
+    </div>
+  )
+}
+
+function ResultadoCnpj({ dados, aoFechar }: { dados: DadosCnpj; aoFechar: () => void }) {
+  const aviso = avisoSituacao(dados.situacaoCadastral)
+  const tom = tomSituacao(dados.situacaoCadastral)
+  return (
+    <div className="rounded-2xl border border-line bg-surface-2/60 p-4">
+      <div className="flex items-start gap-3">
+        <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand-ink">
+          <Building2 className="h-5 w-5" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="min-w-0 truncate font-semibold text-ink">{dados.nomeSugerido}</p>
+            {dados.situacaoCadastral && <Badge tom={tom}>{rotuloSituacao(dados.situacaoCadastral)}</Badge>}
+          </div>
+          <p className="mt-0.5 truncate text-xs text-muted">
+            {dados.razaoSocial} · {dados.cnpj}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={aoFechar}
+          aria-label="Ocultar resultado"
+          className="-mt-1 -mr-1 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-3 hover:text-ink"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      {aviso && (
+        <motion.div
+          initial={{ opacity: 0, y: -4 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.1 }}
+          className={cn(
+            'mt-3 flex items-start gap-2 rounded-xl px-3 py-2.5 text-[13px] font-medium',
+            tom === 'danger' ? 'bg-danger-soft text-danger' : 'bg-warning-soft text-warning',
+          )}
+        >
+          <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+          {aviso}
+        </motion.div>
+      )}
+
+      <dl className="mt-3 grid grid-cols-1 gap-x-4 gap-y-2.5 text-[13px] sm:grid-cols-4">
+        <Info rotulo="Atividade principal" className="sm:col-span-2">
+          {dados.atividadePrincipal}
+        </Info>
+        <Info rotulo="Aberta em">{dados.dataAbertura ? dataCurta(dados.dataAbertura) : ''}</Info>
+        <Info rotulo="Fonte">{dados.fonte}</Info>
+      </dl>
+
+      <p className="mt-3 flex items-center gap-1.5 text-xs text-muted">
+        <Sparkles className="h-3.5 w-3.5 shrink-0 text-brand" />
+        Campos preenchidos com os dados da Receita. Confira e ajuste se precisar.
+      </p>
+    </div>
+  )
+}
+
+function ErroCnpj({
+  tipo,
+  mensagem,
+  aoTentar,
+  aoFechar,
+}: {
+  tipo: TipoErroConsulta
+  mensagem: string
+  aoTentar: () => void
+  aoFechar: () => void
+}) {
+  const naoEncontrado = tipo === 'naoEncontrado'
+  const semRede = tipo === 'semInternet' || tipo === 'semServidor'
+  return (
+    <div
+      className={cn(
+        'flex items-start gap-3 rounded-2xl border p-4',
+        naoEncontrado ? 'border-warning/30 bg-warning-soft' : 'border-line bg-surface-2/60',
+      )}
+    >
+      <div
+        className={cn(
+          'flex h-9 w-9 shrink-0 items-center justify-center rounded-xl',
+          naoEncontrado ? 'bg-surface text-warning' : 'bg-surface-3 text-ink-2',
+        )}
+      >
+        {naoEncontrado ? (
+          <SearchX className="h-4 w-4" />
+        ) : semRede ? (
+          <WifiOff className="h-4 w-4" />
+        ) : (
+          <CircleAlert className="h-4 w-4" />
+        )}
+      </div>
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-ink">
+          {naoEncontrado ? 'CNPJ não encontrado' : semRede ? 'Consulta indisponível agora' : 'Não foi possível consultar'}
+        </p>
+        <p className="mt-0.5 text-[13px] text-ink-2">
+          {naoEncontrado ? `${mensagem} Confira os números ou preencha os dados à mão.` : mensagem}
+        </p>
+        {!naoEncontrado && (
+          <Button
+            variante="ghost"
+            tamanho="sm"
+            className="mt-2 -ml-2"
+            icone={<RotateCw className="h-3.5 w-3.5" />}
+            onClick={aoTentar}
+          >
+            Tentar de novo
+          </Button>
+        )}
+      </div>
+      <button
+        type="button"
+        onClick={aoFechar}
+        aria-label="Fechar aviso"
+        className="-mt-1 -mr-1 flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-3 hover:text-ink"
+      >
+        <X className="h-4 w-4" />
+      </button>
+    </div>
+  )
+}
+
+function Info({ rotulo, children, className }: { rotulo: string; children: ReactNode; className?: string }) {
+  return (
+    <div className={cn('min-w-0', className)}>
+      <dt className="text-xs text-muted">{rotulo}</dt>
+      <dd className="mt-0.5 text-ink-2">{children || <span className="text-muted">—</span>}</dd>
+    </div>
   )
 }
