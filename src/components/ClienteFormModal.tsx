@@ -305,7 +305,8 @@ function FormularioCliente({
   const erroCep = erros.find((e) => /CEP/.test(e))
   // CNPJ pode ter letras (formato alfanumérico); CPF só números
   const docChave = ehPJ ? normalizarCnpj(f.documento) : somenteDigitos(f.documento)
-  const duplicado = acharDuplicado(clientes, f.documento, cliente?.id)
+  // Na edição, só quando o documento muda: um cliente que já estava repetido continua editável
+  const duplicado = acharDuplicado(clientes, f.documento, cliente?.id, cliente?.documento)
 
   /** CNPJ/CPF já cadastrado em outro cliente: o servidor recusa, então oferece o cadastro existente. */
   async function oferecerExistente(outro: { id: string; nome: string }) {

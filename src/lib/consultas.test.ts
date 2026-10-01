@@ -206,6 +206,18 @@ describe('CNPJ/CPF duplicado', () => {
     expect(acharDuplicado(clientes, '11.444.777/0001-61')).toBeUndefined()
   })
 
+  it('na edição, só confere quando o documento mudou (duplicados antigos continuam editáveis)', () => {
+    // "a2" repete o CNPJ de "a" (ex.: restaurado de um backup feito antes da regra)
+    const repetidos = [...clientes, { id: 'a2', documento: '12.403.843/0001-18', nome: 'Padaria X (cópia)' }]
+    expect(acharDuplicado(repetidos, '12.403.843/0001-18', 'a2', '12.403.843/0001-18')).toBeUndefined()
+    // Mesmo documento com outra máscara também não é mudança
+    expect(acharDuplicado(repetidos, '12403843000118', 'a2', '12.403.843/0001-18')).toBeUndefined()
+    // Trocou para o documento de outro cliente: avisa
+    expect(acharDuplicado(repetidos, '12.ABC.345/01DE-35', 'a2', '12.403.843/0001-18')?.id).toBe('b')
+    // Cliente que não tinha documento e passou a ter um repetido: avisa
+    expect(acharDuplicado(repetidos, '12.403.843/0001-18', 'c', '')?.id).toBe('a')
+  })
+
   it('distingue o 409 de duplicidade do 409 de conflito de versão', () => {
     const dup = new ErroApi(409, 'Já existe um cliente com este CNPJ/CPF: Padaria X.', {
       erro: 'Já existe…',

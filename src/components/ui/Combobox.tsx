@@ -140,8 +140,20 @@ export function Combobox({
       ref={raiz}
       className="relative"
       onBlur={(e) => {
-        // Sair com Tab (ou o foco ir para fora) fecha a lista
+        // O foco ir para fora (clique em outro lugar, atalho do navegador) fecha a lista
         if (abertoRef.current && !raiz.current?.contains(e.relatedTarget as Node | null)) fechar(false)
+      }}
+      onKeyDown={(e) => {
+        if (!abertoRef.current) return
+        if (e.key === 'Escape') {
+          // Vale com o foco na busca ou no botão do campo; não deixa o Esc fechar o modal em volta
+          e.stopPropagation()
+          fechar()
+        } else if (e.key === 'Tab' && (e.shiftKey || e.target !== botao.current)) {
+          // Sair da busca com Tab ou Shift+Tab fecha a lista e o foco segue o caminho normal (Shift+Tab
+          // para no botão do campo). Só o Tab do botão para a busca, logo abaixo, mantém a lista aberta
+          fechar(false)
+        }
       }}
     >
       <button
@@ -175,6 +187,10 @@ export function Combobox({
             exit={{ opacity: 0, y: -4, scale: 0.98, pointerEvents: 'none' }}
             transition={{ duration: 0.14 }}
             className="absolute top-full right-0 left-0 z-40 mt-1.5 origin-top overflow-hidden rounded-xl border border-line bg-surface shadow-float"
+            // Clique em qualquer parte do painel (item, margem, aviso de "nada encontrado") mantém o foco
+            // na busca: a lista não fecha nem perde o texto digitado. Só a própria busca recebe o clique,
+            // para posicionar o cursor
+            onMouseDown={(e) => e.target !== input.current && e.preventDefault()}
           >
             <div className="border-b border-line p-2">
               <input
@@ -206,9 +222,6 @@ export function Combobox({
                     e.preventDefault()
                     if (filtradas[ativo]) escolher(filtradas[ativo])
                     else if (acoes[ativo - filtradas.length]) executar(acoes[ativo - filtradas.length], busca.trim())
-                  } else if (e.key === 'Escape') {
-                    e.stopPropagation()
-                    fechar()
                   }
                 }}
                 placeholder="Digite para buscar…"
@@ -221,16 +234,11 @@ export function Combobox({
               </p>
             )}
             {/* Opções e ações ficam na mesma lista, para o leitor de tela anunciar o item que o Enter vai usar */}
-            <div
-              ref={lista}
-              id={idLista}
-              role="listbox"
-              aria-label={placeholder}
-              // Mantém o foco na busca ao clicar num item
-              onMouseDown={(e) => e.preventDefault()}
-            >
+            <div ref={lista} id={idLista} role="listbox" aria-label={placeholder}>
               {filtradas.length > 0 && (
-                <div role="group" className="scroll-fino max-h-64 overflow-y-auto p-1">
+                // tabIndex -1: o Chrome torna focável um contêiner rolável sem itens focáveis, e o Tab
+                // pararia nele em vez de sair do campo
+                <div role="group" tabIndex={-1} className="scroll-fino max-h-64 overflow-y-auto p-1">
                   {filtradas.map((o, i) => (
                     <button
                       key={o.valor}

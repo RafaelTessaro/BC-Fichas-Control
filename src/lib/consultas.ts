@@ -228,14 +228,20 @@ export function trocarTipoCliente(atual: ClienteInput, tipo: TipoCliente): Clien
 /** Documento só com números e letras, para comparar CNPJ/CPF com ou sem máscara. */
 export const chaveDocumento = (documento: string) => normalizarCnpj(documento)
 
-/** Outro cliente com o mesmo CNPJ/CPF (o servidor recusa salvar um segundo). */
+/**
+ * Outro cliente com o mesmo CNPJ/CPF (o servidor recusa salvar um segundo).
+ * Na edição, passe o documento original: se ele não mudou, não há o que conferir. Assim um par de
+ * clientes que já estava repetido (vindo de um backup antigo) ainda pode ter os outros dados corrigidos.
+ */
 export function acharDuplicado<C extends Pick<Cliente, 'id' | 'documento'>>(
   clientes: C[],
   documento: string,
   idIgnorado?: string,
+  documentoOriginal?: string,
 ): C | undefined {
   const chave = chaveDocumento(documento)
   if (!chave) return undefined
+  if (documentoOriginal !== undefined && chaveDocumento(documentoOriginal) === chave) return undefined
   return clientes.find((c) => c.id !== idIgnorado && chaveDocumento(c.documento) === chave)
 }
 

@@ -159,6 +159,11 @@ export function normalizarCliente(entrada: unknown): Resultado<ClienteInput> {
 export function migrarCliente(entrada: unknown): Cliente {
   const r = obj(entrada)
   const { valor } = normalizarCliente({ ...r, logradouro: r.logradouro ?? r.endereco })
+  // Dado antigo com texto no lugar do CNPJ ("isento", "não informado"): as letras não viram um CNPJ
+  // alfanumérico embaralhado; fica só com os números, como antes do formato com letras
+  if (valor.tipo === 'PJ' && valor.documento && !cnpjValido(valor.documento)) {
+    valor.documento = mascaraCnpj(somenteDigitos(texto(r.documento)))
+  }
   const agora = new Date().toISOString()
   return {
     ...valor,

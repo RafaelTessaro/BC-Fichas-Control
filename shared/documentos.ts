@@ -2,12 +2,30 @@
 
 export const somenteDigitos = (s: string) => (s ?? '').replace(/\D/g, '')
 
+/** Rótulo antes do número, comum ao copiar de nota, e-mail ou assinatura. */
+const ROTULO_CNPJ = /^[^0-9A-Z]*(?:CNPJ(?:\s*\/\s*MF)?|N[º°]|NO?\.?(?=[\s:]))[^0-9A-Z]*/
+/** CNPJ (numérico ou alfanumérico, com ou sem máscara) no meio de um texto. */
+const CNPJ_NO_TEXTO = /(?<![0-9A-Z])[0-9A-Z]{2}\.?[0-9A-Z]{3}\.?[0-9A-Z]{3}\/?[0-9A-Z]{4}-?\d{2}(?![0-9A-Z])/
+
 /**
  * CNPJ só com números e letras maiúsculas, sem pontuação.
  * Desde julho de 2026 a Receita emite CNPJ alfanumérico (IN RFB 2.229/2024): as 12 primeiras
  * posições podem ter letras A-Z; os 2 dígitos verificadores continuam numéricos.
+ * Rótulo ou texto colado junto ("CNPJ: 12.403.843/0001-18") é descartado, como era antes das letras.
  */
-export const normalizarCnpj = (s: string) => (s ?? '').toUpperCase().replace(/[^0-9A-Z]/g, '')
+export function normalizarCnpj(s: string) {
+  let t = (s ?? '').toUpperCase().trim()
+  // Rótulo colado junto ("CNPJ:", "CNPJ/MF nº", "Nº", "No."): as letras dele não fazem parte do número
+  for (let sem = t.replace(ROTULO_CNPJ, ''); sem !== t; sem = t.replace(ROTULO_CNPJ, '')) t = sem
+  const tudo = t.replace(/[^0-9A-Z]/g, '')
+  if (/^[0-9A-Z]{0,12}\d{0,2}$/.test(tudo)) return tudo
+  // Texto em volta do número ("12.403.843/0001-18 (matriz)"): fica com o CNPJ que aparece no meio
+  const achado = t.match(CNPJ_NO_TEXTO)
+  if (achado) return achado[0].replace(/[^0-9A-Z]/g, '')
+  // Como antes do formato alfanumérico: com 14 algarismos no texto, o resto é descartado
+  const digitos = somenteDigitos(t)
+  return digitos.length === 14 ? digitos : tudo
+}
 
 /** `true` quando o CNPJ (já normalizado ou não) tem letras, isto é, está no formato alfanumérico. */
 export const cnpjAlfanumerico = (s: string) => /[A-Z]/.test(normalizarCnpj(s))
