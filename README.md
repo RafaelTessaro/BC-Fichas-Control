@@ -72,13 +72,13 @@ compilada: **não precisa de internet nem de instalar nada antes**.
 
    Se aparecer o aviso de que a rede está como **Pública**, os outros computadores não vão
    conseguir acessar: marque a rede da empresa como **Privada** (o próprio aviso mostra o
-   comando) ou rode o instalador com `-IncluirRedePublica`.
+   comando) ou libere também a rede pública com o comando da tabela [Outros comandos](#outros-comandos).
 4. Nos outros computadores, abra esse endereço no Chrome ou Edge e salve nos favoritos. Para
    ter um ícone na área de trabalho, no Chrome use **menu ⋮ → Transmitir, salvar e compartilhar →
    Criar atalho…** e marque **Abrir como janela**.
 
-**Para atualizar:** extraia o pacote novo em qualquer pasta (ex.: `C:\BC-Fichas-Control-novo`) e dê
-dois cliques no **`ATUALIZAR.bat` dessa pasta nova**. Ele encontra a instalação, faz uma cópia do
+**Para atualizar:** extraia o pacote novo em outra pasta, fora da instalação (ex.:
+`C:\BC-Fichas-Control-novo`), e dê dois cliques no **`ATUALIZAR.bat` dessa pasta nova**. Ele encontra a instalação, faz uma cópia do
 banco, troca os arquivos do sistema (a pasta `dados` e o `.env` ficam como estão) e reinicia o
 servidor. Depois a pasta nova pode ser apagada.
 
@@ -102,9 +102,10 @@ Executados no **PowerShell como Administrador**:
 
 | Para… | Comando |
 | --- | --- |
-| Atualizar na própria pasta (depois de copiar os arquivos novos por cima; a pasta `dados` é preservada) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\atualizar.ps1` |
+| Atualizar na própria pasta (depois de copiar os arquivos novos por cima; a pasta `dados` é preservada; com o código-fonte numa instalação feita pelo pacote, apague antes o `pacote.json`) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\atualizar.ps1` |
 | Mudar a porta (padrão 3000) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\instalar-servico.ps1 -Porta 8080` |
-| Voltar uma cópia do banco | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\restaurar-copia.ps1 -Arquivo C:\BC-Fichas-Control\dados\backups\<arquivo>.db` |
+| Liberar o acesso também com a rede classificada como Pública | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\instalar-servico.ps1 -IncluirRedePublica` |
+| Voltar uma cópia do banco (o servidor volta a funcionar no fim, mesmo se der errado) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\restaurar-copia.ps1 -Arquivo C:\BC-Fichas-Control\dados\backups\<arquivo>.db` |
 | Remover o serviço (os dados não são apagados) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\desinstalar-servico.ps1` |
 
 O registro (log) do servidor fica em `C:\BC-Fichas-Control\dados\servidor.log`. Como a pasta é

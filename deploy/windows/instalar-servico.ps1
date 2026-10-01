@@ -23,12 +23,17 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'comum.ps1')
 
 Confirmar-Administrador
-Exigir-PastaFixa
+# Antes da checagem da pasta: o pacote novo em Downloads deve levar ao ATUALIZAR.bat, e não à
+# instrução de mover a pasta para C:\ (por cima da instalação em uso)
 $instalada = Pasta-Instalada
 if ($instalada -and -not (Mesma-Pasta $instalada $script:Raiz)) {
-  # Instalar de novo em outra pasta deixaria os dados para trás (eles ficam na pasta instalada)
-  throw "O sistema já está instalado em $instalada. Para passar para esta versão, use o ATUALIZAR.bat desta pasta (os dados são mantidos)."
+  if (Test-Path -LiteralPath $instalada) {
+    # Instalar de novo em outra pasta deixaria os dados para trás (eles ficam na pasta instalada)
+    throw "O sistema já está instalado em $instalada. Para passar para esta versão, use o ATUALIZAR.bat desta pasta (os dados são mantidos)."
+  }
+  Write-Warning "A instalação anterior ($instalada) não existe mais. O sistema será instalado nesta pasta."
 }
+Exigir-PastaFixa
 Exigir-Node
 Write-Host "Node.js $(node --version) ($((Get-Command node).Source))"
 
@@ -62,14 +67,10 @@ New-NetFirewallRule -DisplayName $script:NomeTarefa -Direction Inbound -Protocol
 Write-Host "Porta $Porta liberada no Firewall ($perfis)."
 
 Start-ScheduledTask -TaskName $script:NomeTarefa
-Start-Sleep -Seconds 4
-
-try {
-  $saude = Invoke-RestMethod -Uri "http://localhost:$Porta/api/saude" -TimeoutSec 5
-  Write-Host "Servidor respondendo (versão $($saude.versao))." -ForegroundColor Green
-} catch {
-  Write-Warning "O servidor ainda não respondeu em http://localhost:$Porta. Veja o registro: $($script:Raiz)\dados\servidor.log"
-}
+Write-Host 'Iniciando o servidor...'
+$saude = Esperar-Servidor $Porta
+if ($saude) { Write-Host "Servidor respondendo (versão $($saude.versao))." -ForegroundColor Green }
+else { Write-Warning "O servidor ainda não respondeu em http://localhost:$Porta. Veja o registro: $($script:Raiz)\dados\servidor.log" }
 
 $publicas = @(Get-NetConnectionProfile | Where-Object NetworkCategory -eq 'Public')
 if ($publicas.Count -gt 0 -and -not $IncluirRedePublica) {

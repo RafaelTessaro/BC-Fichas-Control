@@ -16,8 +16,12 @@ saida="$(cd "$saida" && pwd)"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 pacote="$tmp/BC-Fichas-Control"
-versao="$(node -p "require('$raiz/package.json').version")"
+# Versão e código vêm do mesmo lugar: o último commit
+versao="$(git -C "$raiz" show HEAD:package.json | node -p "JSON.parse(require('fs').readFileSync(0, 'utf8')).version")"
 commit="$(git -C "$raiz" rev-parse --short HEAD)"
+if [ -n "$(git -C "$raiz" status --porcelain)" ]; then
+  echo "Atenção: há alterações não commitadas; elas NÃO entram no pacote (só o commit $commit)." >&2
+fi
 
 echo "Código do commit $commit..."
 git -C "$raiz" archive --format=tar --prefix=BC-Fichas-Control/ HEAD | tar -x -C "$tmp"
@@ -43,8 +47,9 @@ if [ ! -f "$cache/$zipNode" ]; then
   curl -fsSL -o "$cache/$zipNode.baixando" "https://nodejs.org/dist/v$NODE_VERSAO/$zipNode"
   mv "$cache/$zipNode.baixando" "$cache/$zipNode"
 fi
-# Confere com a soma SHA-256 publicada pelo projeto Node.js
-curl -fsSL "https://nodejs.org/dist/v$NODE_VERSAO/SHASUMS256.txt" | grep " $zipNode\$" | (cd "$cache" && sha256sum -c --quiet -)
+# Confere com a soma SHA-256 publicada pelo projeto Node.js (sha256sum no Linux, shasum no macOS)
+if command -v sha256sum >/dev/null; then conferir=(sha256sum -c --quiet -); else conferir=(shasum -a 256 -c --quiet -); fi
+curl -fsSL "https://nodejs.org/dist/v$NODE_VERSAO/SHASUMS256.txt" | grep " $zipNode\$" | (cd "$cache" && "${conferir[@]}")
 unzip -q "$cache/$zipNode" -d "$tmp"
 mv "$tmp/node-v$NODE_VERSAO-win-x64" "$pacote/node"
 
@@ -59,7 +64,7 @@ cat > "$pacote/pacote.json" <<EOF
 EOF
 
 # Texto do Bloco de Notas: UTF-8 com BOM e quebras de linha do Windows
-{ printf '\xEF\xBB\xBF'; sed 's/$/\r/'; } > "$pacote/COMO-INSTALAR.txt" <<'EOF'
+{ printf '\xEF\xBB\xBF'; awk '{ printf "%s\r\n", $0 }'; } > "$pacote/COMO-INSTALAR.txt" <<'EOF'
 BC FICHAS CONTROL - INSTALAÇÃO NO SERVIDOR DA EMPRESA (Windows 10, 11 ou Server)
 ================================================================================
 
@@ -82,7 +87,8 @@ INSTALAR (primeira vez)
   conseguir acessar: siga a instrução que aparece na própria janela.
 
 ATUALIZAR (quando receber uma versão nova)
-  1. Extraia o pacote novo em qualquer pasta (por exemplo C:\BC-Fichas-Control-novo).
+  1. Extraia o pacote novo em outra pasta (por exemplo C:\BC-Fichas-Control-novo),
+     fora de C:\BC-Fichas-Control.
   2. Dê dois cliques em ATUALIZAR.bat DENTRO da pasta nova.
      Os dados e as configurações são mantidos; antes é feita uma cópia do banco.
   3. Depois pode apagar a pasta nova.

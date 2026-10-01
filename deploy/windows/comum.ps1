@@ -1,7 +1,12 @@
 ﻿# Funções compartilhadas pelos scripts de instalação, atualização e restauração.
 
 $script:NomeTarefa = 'BC Fichas Control'
-$script:Raiz = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+# ProviderPath: caminho do sistema de arquivos mesmo em pasta de rede (o .Path traria o prefixo do PowerShell)
+$script:Raiz = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).ProviderPath
+# Separador de pastas (no Windows, "\"; vale também nos testes fora do Windows)
+$script:Sep = [IO.Path]::DirectorySeparatorChar
+# Ferramentas desta cópia dos scripts (na atualização, as do pacote novo, que estão completas)
+$script:Ferramentas = Join-Path $script:Raiz 'server\ferramentas'
 
 function Confirmar-Administrador {
   $eu = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
@@ -37,7 +42,7 @@ function Executar([string]$Descricao, [scriptblock]$Comando) {
   Write-Host $Descricao
   # Out-Host: a saída do comando vai para a tela, sem virar "valor de retorno" da função
   & $Comando | Out-Host
-  if ($LASTEXITCODE -ne 0) { throw "$Descricao falhou (código $LASTEXITCODE). Nada foi alterado no serviço; corrija e rode de novo." }
+  if ($LASTEXITCODE -ne 0) { throw "$Descricao falhou (código $LASTEXITCODE)." }
 }
 
 # Pasta onde o sistema está instalado (a da tarefa agendada), ou $null se não estiver instalado.
@@ -46,23 +51,32 @@ function Pasta-Instalada {
   if (-not $tarefa) { return $null }
   $pasta = @($tarefa.Actions)[0].WorkingDirectory
   if ([string]::IsNullOrWhiteSpace($pasta)) { return $null }
-  return $pasta.TrimEnd('\')
+  return $pasta.TrimEnd($script:Sep)
 }
 
 # Compara duas pastas do Windows (sem diferenciar maiúsculas nem a barra final).
 function Mesma-Pasta([string]$A, [string]$B) {
-  return [string]::Equals($A.TrimEnd('\'), $B.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
+  return [string]::Equals($A.TrimEnd($script:Sep), $B.TrimEnd($script:Sep), [StringComparison]::OrdinalIgnoreCase)
+}
+
+# $Pasta é $Raiz ou fica dentro dela.
+function Dentro-De([string]$Pasta, [string]$Raiz) {
+  return (Mesma-Pasta $Pasta $Raiz) -or $Pasta.StartsWith($Raiz.TrimEnd($script:Sep) + $script:Sep, [StringComparison]::OrdinalIgnoreCase)
 }
 
 # Lê uma variável do .env exatamente como o servidor lê (o próprio Node interpreta o arquivo,
 # aceitando aspas, "export" etc.). Devolve $Padrao se não houver .env ou a variável.
+# O valor volta em base64: a saída de programas é decodificada na página de código do console
+# (850 no Windows em português), que estragaria acentos (ex.: PASTA_DADOS=D:\Locação).
 function Ler-Variavel([string]$Nome, [string]$Padrao) {
   $arquivoEnv = Join-Path $script:Raiz '.env'
   if (-not (Test-Path $arquivoEnv)) { return $Padrao }
-  $codigo = "try { process.loadEnvFile(process.argv[1]) } catch {} ; process.stdout.write(process.env[process.argv[2]] ?? '')"
+  $codigo = "try { process.loadEnvFile(process.argv[1]) } catch {} ; process.stdout.write(Buffer.from(process.env[process.argv[2]] ?? '').toString('base64'))"
   $valor = & node -e $codigo $arquivoEnv $Nome 2>$null
   if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($valor)) { return $Padrao }
-  return $valor.Trim()
+  $texto = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(([string]$valor).Trim()))
+  if ([string]::IsNullOrWhiteSpace($texto)) { return $Padrao }
+  return $texto.Trim()
 }
 
 # PORTA do .env (ou 3000).
@@ -73,11 +87,11 @@ function Ler-Porta {
   return 3000
 }
 
-# Pasta de dados (PASTA_DADOS do .env; relativa à pasta do sistema, como no servidor).
+# Pasta de dados (PASTA_DADOS do .env; relativa à pasta do sistema, como no servidor), já sem ".." etc.
 function Pasta-Dados {
   $valor = Ler-Variavel 'PASTA_DADOS' 'dados'
-  if ([IO.Path]::IsPathRooted($valor)) { return $valor }
-  return (Join-Path $script:Raiz $valor)
+  if (-not [IO.Path]::IsPathRooted($valor)) { $valor = Join-Path $script:Raiz $valor }
+  return [IO.Path]::GetFullPath($valor).TrimEnd($script:Sep)
 }
 
 # Grava/atualiza PORTA no .env (criado a partir do .env.exemplo se não existir).
@@ -100,14 +114,43 @@ function Parar-Servidor {
   Start-Sleep -Seconds 1
 }
 
+# Espera o servidor responder (até ~40 s: no primeiro início o antivírus examina o node.exe).
+# Devolve a resposta de /api/saude ou $null.
+function Esperar-Servidor([int]$Porta) {
+  for ($i = 0; $i -lt 20; $i++) {
+    try {
+      # 127.0.0.1: o servidor escuta em IPv4; "localhost" tentaria antes o IPv6 (::1) e demoraria
+      return Invoke-RestMethod -Uri "http://127.0.0.1:$Porta/api/saude" -TimeoutSec 3 -UseBasicParsing
+    } catch { Start-Sleep -Seconds 2 }
+  }
+  return $null
+}
+
+function Nome-Copia([string]$Motivo) {
+  $pasta = Join-Path (Pasta-Dados) 'backups'
+  New-Item -ItemType Directory -Force -Path $pasta | Out-Null
+  return Join-Path $pasta ("bc-fichas_{0}_{1}.db" -f (Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'), $Motivo)
+}
+
 # Cópia consistente do banco (aplica o -wal deixado por um encerramento forçado).
 function Copiar-Banco([string]$Motivo) {
   $banco = Join-Path (Pasta-Dados) 'bc-fichas.db'
   if (-not (Test-Path $banco)) { return $null }
-  $pasta = Join-Path (Pasta-Dados) 'backups'
-  New-Item -ItemType Directory -Force -Path $pasta | Out-Null
-  $destino = Join-Path $pasta ("bc-fichas_{0}_{1}.db" -f (Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'), $Motivo)
-  Executar "Copiando o banco de dados ($Motivo)..." { node (Join-Path $script:Raiz 'server\ferramentas\copiar-banco.mjs') $banco $destino }
+  $destino = Nome-Copia $Motivo
+  Executar "Copiando o banco de dados ($Motivo)..." { node (Join-Path $script:Ferramentas 'copiar-banco.mjs') $banco $destino }
+  return $destino
+}
+
+# Cópia dos arquivos do banco como estão (.db, -wal, -shm), para quando a cópia consistente
+# falha (ex.: banco corrompido). Abrir a cópia .db no SQLite aplica o -wal que estiver ao lado.
+function Copiar-Bruto([string]$Motivo) {
+  $banco = Join-Path (Pasta-Dados) 'bc-fichas.db'
+  if (-not (Test-Path $banco)) { return $null }
+  $destino = Nome-Copia "$Motivo-bruto"
+  Copy-Item -LiteralPath $banco -Destination $destino
+  foreach ($sufixo in '-wal', '-shm') {
+    if (Test-Path -LiteralPath "$banco$sufixo") { Copy-Item -LiteralPath "$banco$sufixo" -Destination "$destino$sufixo" }
+  }
   return $destino
 }
 
@@ -117,7 +160,7 @@ function Proteger-Pasta {
   $pastas = @($script:Raiz)
   # Se os dados ficam fora da pasta do sistema (PASTA_DADOS no .env), protege-os também
   $dados = Pasta-Dados
-  if (-not $dados.StartsWith($script:Raiz, [StringComparison]::OrdinalIgnoreCase)) {
+  if (-not (Dentro-De $dados $script:Raiz)) {
     New-Item -ItemType Directory -Force -Path $dados | Out-Null
     $pastas += $dados
   }
@@ -135,4 +178,10 @@ function Proteger-Pasta {
     if ($LASTEXITCODE -ne 0) { $ok = $false }
   }
   if (-not $ok) { Write-Warning 'Não foi possível ajustar todas as permissões (icacls). Confira a pasta manualmente.' }
+}
+
+# Tira a marca de "baixado da internet" dos scripts (uma política de grupo poderia bloqueá-los).
+function Desbloquear-Scripts([string]$Pasta) {
+  Get-ChildItem -LiteralPath (Join-Path $Pasta 'deploy\windows') -Filter *.ps1 -ErrorAction SilentlyContinue |
+    Unblock-File -ErrorAction SilentlyContinue
 }
