@@ -5,6 +5,7 @@ import type { EventoCompleto } from '../lib/hooks'
 import { useDados } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
 import { PagamentoBadge, StatusBadge } from './Badges'
+import { GoogleSyncBadge } from './GoogleSyncBadge'
 import { Button } from './ui/Button'
 import { confirmar } from './ui/Feedback'
 import { Menu } from './ui/Misc'
@@ -100,7 +101,10 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
                 <PagamentoBadge forma={e.formaPagamento} />
               </Td>
               <Td className="max-md:hidden">
-                <StatusBadge status={e.status} />
+                <div className="flex items-center gap-1">
+                  <StatusBadge status={e.status} />
+                  <GoogleSyncBadge evento={e} compacto />
+                </div>
               </Td>
               <Td onClick={(ev) => ev.stopPropagation()}>
                 <Menu
