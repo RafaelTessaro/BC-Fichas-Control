@@ -30,3 +30,4 @@ dados-dev/
 
 # Worktrees temporários de ferramentas
 .claude/worktrees/
+__pycache__/

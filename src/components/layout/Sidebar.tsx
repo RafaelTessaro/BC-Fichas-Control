@@ -81,6 +81,7 @@ export function SeletorTema({ compacto }: { compacto?: boolean }) {
     const Icone = TEMAS[atual]?.icone ?? Monitor
     return (
       <button
+        type="button"
         onClick={() => definirTema(prox.valor)}
         title={`Tema: ${TEMAS[atual]?.label}. Clique para ${prox.label.toLowerCase()}`}
         className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-xl text-muted transition-colors hover:bg-surface-3/60 hover:text-ink"
@@ -95,6 +96,7 @@ export function SeletorTema({ compacto }: { compacto?: boolean }) {
         const ativo = t.valor === tema
         return (
           <button
+            type="button"
             key={t.valor}
             onClick={() => definirTema(t.valor)}
             title={t.label}
@@ -176,6 +178,7 @@ export function Sidebar({ mobile, aoNavegar }: { mobile?: boolean; aoNavegar?: (
           )}
           {!mobile && (
             <button
+              type="button"
               onClick={alternarSidebar}
               title={recolhida ? 'Expandir menu' : 'Recolher menu'}
               className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-xl text-muted transition-colors hover:bg-surface-3/60 hover:text-ink"

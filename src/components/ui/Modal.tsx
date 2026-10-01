@@ -83,6 +83,7 @@ export function Modal({
                   {descricao && <p className="mt-1 text-sm text-muted">{descricao}</p>}
                 </div>
                 <button
+                  type="button"
                   onClick={aoFechar}
                   aria-label="Fechar"
                   className="-mt-1 -mr-2 flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl text-muted transition-colors hover:bg-surface-2 hover:text-ink"
@@ -153,6 +154,7 @@ export function Drawer({
                   {descricao && <p className="mt-0.5 text-[13px] text-muted">{descricao}</p>}
                 </div>
                 <button
+                  type="button"
                   onClick={aoFechar}
                   aria-label="Fechar"
                   className="-mr-1 flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-ink"

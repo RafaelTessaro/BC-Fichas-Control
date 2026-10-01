@@ -87,6 +87,7 @@ export function Segmented<T extends string>({
         const ativo = o.valor === valor
         return (
           <button
+            type="button"
             key={o.valor}
             role="tab"
             aria-selected={ativo}
@@ -145,6 +146,7 @@ export function SearchInput({
       <AnimatePresence>
         {valor && (
           <motion.button
+            type="button"
             initial={{ opacity: 0, scale: 0.8 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.8 }}
@@ -276,6 +278,7 @@ export function Menu({
                   <div key={i} className="my-1 h-px bg-line" />
                 ) : (
                   <button
+                    type="button"
                     key={it.label}
                     onClick={(e) => {
                       e.stopPropagation()

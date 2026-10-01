@@ -187,6 +187,7 @@ function Paleta({ fechar }: { fechar: () => void }) {
                   <p className="px-3 pt-3 pb-1.5 text-[11px] font-semibold tracking-[0.06em] text-muted uppercase">{r.grupo}</p>
                 )}
                 <button
+                  type="button"
                   data-idx={i}
                   onMouseMove={() => setAtivo(i)}
                   onClick={r.ir}

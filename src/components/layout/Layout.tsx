@@ -40,6 +40,7 @@ export function Layout({ children }: { children: ReactNode }) {
         <AvisoConexao />
         <header className="sticky top-0 z-30 flex h-16 shrink-0 items-center gap-3 border-b border-line bg-bg/80 px-4 backdrop-blur-xl sm:px-6">
           <button
+            type="button"
             onClick={() => setMenuMobile(true)}
             className="-ml-1 flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl text-ink-2 hover:bg-surface-2 lg:hidden"
             aria-label="Abrir menu"
@@ -60,6 +61,7 @@ export function Layout({ children }: { children: ReactNode }) {
           </AnimatePresence>
 
           <button
+            type="button"
             onClick={abrirPaleta}
             className="group ml-auto flex h-10 w-10 cursor-pointer items-center gap-2.5 rounded-xl border border-line bg-surface px-3 text-sm text-muted shadow-xs transition-colors hover:border-line-strong hover:text-ink-2 sm:w-72 lg:mr-auto lg:ml-0"
           >

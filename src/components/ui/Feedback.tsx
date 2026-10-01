@@ -40,6 +40,7 @@ export function Toaster() {
                 {t.descricao && <p className="mt-0.5 text-[13px] text-muted">{t.descricao}</p>}
               </div>
               <button
+                type="button"
                 onClick={() => fechar(t.id)}
                 aria-label="Fechar aviso"
                 className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-lg text-muted hover:bg-surface-2 hover:text-ink"

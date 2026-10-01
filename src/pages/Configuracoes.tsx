@@ -351,6 +351,7 @@ function OpcaoTema({
   )
   return (
     <button
+      type="button"
       onClick={() => aoEscolher(valor)}
       aria-pressed={ativo}
       className={cn(

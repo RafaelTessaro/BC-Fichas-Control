@@ -174,6 +174,7 @@ export function Agenda() {
                 const hoje = isToday(d)
                 return (
                   <button
+                    type="button"
                     key={iso}
                     onClick={() => setDiaAberto(iso)}
                     className={cn(
