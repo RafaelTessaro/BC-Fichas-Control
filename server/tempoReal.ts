@@ -33,7 +33,12 @@ export class TempoReal {
     })
     res.write(`retry: 3000\nevent: ola\ndata: ${JSON.stringify({ revisao: revisaoAtual, build: this.build })}\n\n`)
     this.assinantes.add(res)
-    res.on('close', () => this.assinantes.delete(res))
+    // Sai da lista assim que a conexão termina por qualquer motivo. O listener de 'error' é
+    // obrigatório: sem ele, um erro de escrita numa aba que acabou de fechar derrubaria o servidor.
+    const sair = () => this.assinantes.delete(res)
+    res.on('close', sair)
+    res.on('finish', sair)
+    res.on('error', sair)
   }
 
   publicar(msg: MensagemTempoReal) {
@@ -48,6 +53,10 @@ export class TempoReal {
 
   private escreverTodos(texto: string) {
     for (const res of this.assinantes) {
+      if (res.writableEnded || res.destroyed) {
+        this.assinantes.delete(res)
+        continue
+      }
       try {
         res.write(texto)
       } catch {

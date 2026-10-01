@@ -5,7 +5,7 @@
 //   HOST         interface de rede (padrão 0.0.0.0 = acessível pela rede local)
 //   PASTA_DADOS  onde ficam o banco e os backups (padrão ./dados)
 
-import { existsSync } from 'node:fs'
+import { existsSync, writeSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'
 import { criarApp, VERSAO_APP } from './app.ts'
 
@@ -56,10 +56,12 @@ for (const sinal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'] as const) {
 
 // Um erro inesperado não pode deixar o processo em estado inconsistente: registra e encerra
 // (no Windows/Linux o serviço reinicia o servidor automaticamente).
+// Escrita síncrona: com a saída indo para um pipe (ex.: systemd), console.error é assíncrono e a
+// mensagem se perderia com o process.exit logo em seguida.
+const registrar = (rotulo: string, e: unknown) =>
+  writeSync(2, `[${new Date().toISOString()}] ${rotulo}: ${e instanceof Error ? (e.stack ?? e.message) : String(e)}\n`)
 process.on('uncaughtException', (e) => {
-  console.error('[erro fatal]', e)
+  registrar('erro fatal', e)
   process.exit(1)
 })
-process.on('unhandledRejection', (e) => {
-  console.error('[promessa rejeitada sem tratamento]', e)
-})
+process.on('unhandledRejection', (e) => registrar('promessa rejeitada sem tratamento', e))

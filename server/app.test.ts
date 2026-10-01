@@ -311,6 +311,31 @@ describe('encerramento', () => {
   })
 })
 
+describe('tempo real: conexões encerradas', () => {
+  it('não derruba o servidor ao publicar para uma aba que acabou de fechar', async () => {
+    const { TempoReal } = await import('./tempoReal.ts')
+    const http = await import('node:http')
+    const tr = new TempoReal(1_000_000)
+    const erros: unknown[] = []
+    const capturar = (e: unknown) => erros.push(e)
+    process.on('uncaughtException', capturar)
+    const srv = http.createServer((_req, res) => {
+      tr.assinar(res, 0)
+      res.end() // o navegador fechou: a resposta termina antes do evento 'close'
+      tr.publicar({ revisao: 1, tipo: 'tudo', acao: 'recarregar' })
+    })
+    await new Promise<void>((ok) => srv.listen(0, '127.0.0.1', () => ok()))
+    const { port } = srv.address() as { port: number }
+    await fetch(`http://127.0.0.1:${port}/`).then((r) => r.text())
+    await new Promise((ok) => setTimeout(ok, 100))
+    process.off('uncaughtException', capturar)
+    srv.close()
+    tr.fechar()
+    expect(erros).toEqual([])
+    expect(tr.conectados).toBe(0)
+  })
+})
+
 describe('tempo real', () => {
   it('envia as alterações para os navegadores conectados', async () => {
     await app.listen({ port: 0, host: '127.0.0.1' })
