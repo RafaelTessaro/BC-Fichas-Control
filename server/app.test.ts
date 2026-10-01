@@ -74,6 +74,14 @@ describe('API de dados', () => {
     expect(mesmoSite.statusCode).toBe(201)
   })
 
+  it('não deixa contornar a proteção com caminho codificado (/%61pi/...)', async () => {
+    for (const url of ['/%61pi/exemplo', '/%61%70%69/backups', '/API/exemplo']) {
+      const r = await app.inject({ method: 'POST', url, headers: { origin: 'http://evil.com', host: 'localhost:3000' } })
+      expect(r.statusCode, url).toBe(403)
+    }
+    expect((await app.inject({ url: '/api/dados' })).json().clientes).toHaveLength(0)
+  })
+
   it('valida e formata o cliente', async () => {
     const c = await criarCliente({ ...clienteBase, documento: '12403843000118', email: 'CONTATO@PADARIA.COM' })
     expect(c.documento).toBe('12.403.843/0001-18')
@@ -101,7 +109,12 @@ describe('API de dados', () => {
     expect(r.statusCode).toBe(409)
     expect(r.json().duplicado).toEqual({ id: c.id, nome: 'Padaria Ideal' })
     const outro = await criarCliente({ tipo: 'PJ', nome: 'Outra', documento: '' })
-    const troca = await app.inject({ method: 'PUT', url: `/api/clientes/${outro.id}`, headers: H, payload: { ...outro, documento: clienteBase.documento } })
+    const troca = await app.inject({
+      method: 'PUT',
+      url: `/api/clientes/${outro.id}`,
+      headers: H,
+      payload: { ...outro, documento: clienteBase.documento },
+    })
     expect(troca.statusCode).toBe(409)
     // avulsos sem documento não conflitam entre si
     await criarCliente({ tipo: 'AVULSO', nome: 'A' })
@@ -210,6 +223,56 @@ describe('API de dados', () => {
     expect((await criarEvento('c1')).codigo).toBe(8)
   })
 
+  it('mescla dados de vários computadores sem apagar o que já existe', async () => {
+    const existente = await criarCliente()
+    await criarEvento(existente.id)
+    const doNavegador = (id: string, documento: string, codigo: number) => ({
+      app: 'bc-fichas-control',
+      versao: 1,
+      clientes: [
+        { id: `c-${id}`, nome: `Cliente ${id}`, tipo: 'PF', documento: '' },
+        { id: `dup-${id}`, nome: 'Padaria (mesmo CNPJ)', tipo: 'PJ', documento },
+      ],
+      eventos: [
+        { ...eventoBase(`c-${id}`), id: `e-${id}`, codigo },
+        { ...eventoBase(`dup-${id}`), id: `e2-${id}`, codigo: codigo + 1 },
+      ],
+      config: { valorDiariaPadrao: 1, valorBobinaPadrao: 1, frotaMaquinas: 1, rodapePadrao: 'X' },
+      proximoCodigo: 3,
+    })
+    const r1 = await app.inject({
+      method: 'POST',
+      url: '/api/backup/mesclar',
+      headers: H,
+      payload: doNavegador('A', '12403843000118', 1),
+    })
+
+    expect(r1.json()).toEqual({ clientes: 1, eventos: 2, ignorados: 1 })
+    const r2 = await app.inject({
+      method: 'POST',
+      url: '/api/backup/mesclar',
+      headers: H,
+      payload: doNavegador('B', '12403843000118', 1),
+    })
+    expect(r2.json()).toEqual({ clientes: 1, eventos: 2, ignorados: 1 })
+    // repetir o envio do mesmo computador não duplica
+    const r3 = await app.inject({
+      method: 'POST',
+      url: '/api/backup/mesclar',
+      headers: H,
+      payload: doNavegador('A', '12403843000118', 1),
+    })
+    expect(r3.json()).toEqual({ clientes: 0, eventos: 0, ignorados: 4 })
+
+    const dados = (await app.inject({ url: '/api/dados' })).json()
+    expect(dados.clientes).toHaveLength(3)
+    expect(dados.eventos).toHaveLength(5)
+    expect(new Set(dados.eventos.map((e: Evento) => e.codigo)).size).toBe(5)
+    expect(dados.eventos.filter((e: Evento) => e.clienteId === existente.id)).toHaveLength(3)
+    expect(dados.config.frotaMaquinas).toBe(10)
+    expect((await criarEvento(existente.id)).codigo).toBe(6)
+  })
+
   it('só carrega o exemplo com o sistema vazio e exige confirmação para apagar', async () => {
     expect((await app.inject({ method: 'POST', url: '/api/exemplo', headers: H })).statusCode).toBe(200)
     expect((await app.inject({ method: 'POST', url: '/api/exemplo', headers: H })).statusCode).toBe(409)
@@ -220,6 +283,21 @@ describe('API de dados', () => {
     const c = await criarCliente()
     await criarEvento(c.id)
     expect((await app.inject({ url: '/api/saude' })).json().revisao).toBe(2)
+  })
+})
+
+describe('encerramento', () => {
+  it('fecha rápido mesmo com navegadores conectados em tempo real', async () => {
+    await app.listen({ port: 0, host: '127.0.0.1' })
+    const { port } = app.server.address() as { port: number }
+    const resp = await fetch(`http://127.0.0.1:${port}/api/stream`)
+    const leitor = resp.body!.getReader()
+    await leitor.read()
+    const inicio = Date.now()
+    await app.close()
+    expect(Date.now() - inicio).toBeLessThan(2000)
+    // reabre para o afterEach poder fechar novamente sem erro
+    ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: ':memory:', pastaEstatica: null }))
   })
 })
 

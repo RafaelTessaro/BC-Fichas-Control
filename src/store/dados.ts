@@ -46,6 +46,8 @@ interface DadosState {
   salvarConfig: (config: Configuracoes) => Promise<Configuracoes>
   exportar: () => Promise<Backup>
   importar: (dados: unknown) => Promise<{ clientes: number; eventos: number }>
+  /** Acrescenta dados (sem apagar os do servidor). */
+  mesclarDadosAntigos: (dados: unknown) => Promise<{ clientes: number; eventos: number; ignorados: number }>
   carregarExemplo: () => Promise<void>
   limparTudo: () => Promise<void>
 }
@@ -62,11 +64,28 @@ function mesclar<T extends { id: string; versao: number }>(lista: T[], item: T):
 
 let fila: MensagemTempoReal[] = []
 let carregamento: Promise<void> | null = null
+/** Versão da interface vista na primeira conexão; se mudar, o servidor foi atualizado. */
+let buildInicial: string | null = null
+let tentativasRecarga = 0
+let timerRecarga: ReturnType<typeof setTimeout> | undefined
+
+/** Recarrega a página para usar a nova versão (no máximo uma vez a cada 30 s, evitando laço). */
+function recarregarPagina() {
+  try {
+    const ultima = Number(sessionStorage.getItem('bc-fichas:recarregou') ?? 0)
+    if (Date.now() - ultima < 30_000) return
+    sessionStorage.setItem('bc-fichas:recarregou', String(Date.now()))
+  } catch {
+    /* sem sessionStorage: recarrega mesmo assim */
+  }
+  location.reload()
+}
 
 export const useDados = create<DadosState>()((set, get) => {
   const aplicarCarga = (d: DadosCompletos) => {
     set({ clientes: d.clientes, eventos: d.eventos, config: d.config, revisao: d.revisao, status: 'pronto', erro: '' })
-    const pendentes = fila.filter((m) => m.revisao > d.revisao).sort((a, b) => a.revisao - b.revisao)
+    // Mesma revisão também é reaplicada: o status do Google Agenda é republicado sem nova revisão
+    const pendentes = fila.filter((m) => m.revisao >= d.revisao).sort((a, b) => a.revisao - b.revisao)
     fila = []
     pendentes.forEach(aplicarMensagem)
   }
@@ -114,10 +133,16 @@ export const useDados = create<DadosState>()((set, get) => {
     iniciar() {
       let primeiraFalha = true
       const fechar = conectarTempoReal({
-        aoConectar(revisaoServidor) {
+        aoConectar(ola) {
           set({ conectado: true })
+          if (buildInicial === null) buildInicial = ola.build
+          else if (ola.build && ola.build !== buildInicial) {
+            // O servidor foi atualizado: esta aba ainda roda a interface antiga
+            recarregarPagina()
+            return
+          }
           const s = get()
-          if (s.status !== 'pronto' || revisaoServidor !== s.revisao) void get().recarregar()
+          if (s.status !== 'pronto' || ola.revisao !== s.revisao) void get().recarregar()
         },
         aoReceber: aplicarMensagem,
         aoDesconectar() {
@@ -133,17 +158,32 @@ export const useDados = create<DadosState>()((set, get) => {
     },
 
     recarregar() {
+      clearTimeout(timerRecarga)
       carregamento ??= api
         .dados()
         .then((d) => {
           carregamento = null
+          tentativasRecarga = 0
           aplicarCarga(d)
         })
         .catch((e: Error) => {
           carregamento = null
-          if (get().status !== 'pronto') set({ status: 'erro', erro: e.message })
+          if (get().status !== 'pronto') {
+            set({ status: 'erro', erro: e.message })
+            return
+          }
+          // A tela já estava pronta: mostra o aviso de conexão e tenta de novo com espera crescente
+          set({ conectado: false })
+          const espera = Math.min(30_000, 2000 * 2 ** tentativasRecarga++)
+          timerRecarga = setTimeout(() => void get().recarregar(), espera)
         })
       return carregamento
+    },
+
+    async mesclarDadosAntigos(dados) {
+      const r = await api.mesclar(dados)
+      await get().recarregar()
+      return r
     },
 
     async salvarCliente(dados, alvo) {

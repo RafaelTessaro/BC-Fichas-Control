@@ -1,6 +1,7 @@
 import fastifyStatic from '@fastify/static'
 import Fastify, { type FastifyError } from 'fastify'
-import { existsSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { BackupsAutomaticos } from './backup.ts'
 import type { Contexto } from './contexto.ts'
@@ -51,8 +52,10 @@ export async function criarApp(opcoes: OpcoesApp) {
     reply.header('X-Content-Type-Options', 'nosniff')
     reply.header('X-Frame-Options', 'SAMEORIGIN')
     reply.header('Referrer-Policy', 'same-origin')
-    if (!req.url.startsWith('/api/')) return
-    reply.header('Cache-Control', 'no-store')
+    if (req.url.startsWith('/api/')) reply.header('Cache-Control', 'no-store')
+    // A verificação vale para QUALQUER requisição que não seja leitura, independentemente do
+    // caminho (o roteador decodifica /%61pi/... para /api/..., então não dá para filtrar pelo prefixo).
+    // A interface (arquivos estáticos) só usa GET/HEAD.
     if (req.method === 'GET' || req.method === 'HEAD') return
     const origem = req.headers.origin
     if (origem) {
@@ -85,6 +88,7 @@ export async function criarApp(opcoes: OpcoesApp) {
     ok: true,
     versao: VERSAO_APP,
     revisao: repo.revisao(),
+    build: tempoReal.build,
     conectados: tempoReal.conectados,
     horario: new Date().toISOString(),
   }))
@@ -100,6 +104,11 @@ export async function criarApp(opcoes: OpcoesApp) {
   // ---- Interface (arquivos compilados pelo Vite) ----
   const pastaEstatica = opcoes.pastaEstatica === undefined ? resolve('dist') : opcoes.pastaEstatica
   if (pastaEstatica && existsSync(join(pastaEstatica, 'index.html'))) {
+    // O index.html referencia os arquivos com hash: o hash dele identifica a versão da interface
+    tempoReal.build = createHash('sha1')
+      .update(readFileSync(join(pastaEstatica, 'index.html')))
+      .digest('hex')
+      .slice(0, 12)
     await app.register(fastifyStatic, {
       root: pastaEstatica,
       setHeaders(reply, caminho) {
@@ -123,10 +132,20 @@ export async function criarApp(opcoes: OpcoesApp) {
     google.iniciar()
   }
 
+  // As conexões de tempo real (SSE) ficam abertas para sempre: precisam ser encerradas ANTES
+  // do servidor HTTP fechar, senão app.close() espera por elas indefinidamente.
+  app.addHook('preClose', async () => {
+    tempoReal.fechar()
+  })
   app.addHook('onClose', async () => {
     google.parar()
     backups.parar()
-    tempoReal.fechar()
+    try {
+      // Consolida o WAL no arquivo principal para que dados/bc-fichas.db fique completo sozinho
+      db.exec('PRAGMA wal_checkpoint(TRUNCATE)')
+    } catch {
+      /* banco já fechado ou em memória */
+    }
     db.close()
   })
 

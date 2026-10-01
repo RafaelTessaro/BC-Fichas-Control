@@ -41,10 +41,25 @@ ${enderecos.map((e) => `  Na rede da empresa: ${e}`).join('\n')}
   Dados em: ${pastaDados}   (Ctrl+C para encerrar)
 `)
 
-for (const sinal of ['SIGINT', 'SIGTERM'] as const) {
+let encerrando = false
+for (const sinal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'] as const) {
   process.on(sinal, async () => {
+    if (encerrando) return
+    encerrando = true
     console.log('\nEncerrando…')
+    // Garantia: se algo travar o fechamento, o processo sai mesmo assim em 5 s
+    setTimeout(() => process.exit(1), 5000).unref()
     await app.close()
     process.exit(0)
   })
 }
+
+// Um erro inesperado não pode deixar o processo em estado inconsistente: registra e encerra
+// (no Windows/Linux o serviço reinicia o servidor automaticamente).
+process.on('uncaughtException', (e) => {
+  console.error('[erro fatal]', e)
+  process.exit(1)
+})
+process.on('unhandledRejection', (e) => {
+  console.error('[promessa rejeitada sem tratamento]', e)
+})

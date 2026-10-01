@@ -27,9 +27,12 @@ export function Configuracoes() {
   const arquivo = useRef<HTMLInputElement>(null)
 
   // Se a configuração mudar fora deste formulário (ex.: backup restaurado), recarrega os campos
+  // Só substitui os campos se o usuário não tiver alterações pendentes (uma recarga com os mesmos
+  // valores não pode apagar o que está sendo digitado)
   if (base !== config) {
+    const editando = JSON.stringify(f) !== JSON.stringify(base)
     setBase(config)
-    setF(config)
+    if (!editando) setF(config)
   }
   const alterado = JSON.stringify(f) !== JSON.stringify(config)
 

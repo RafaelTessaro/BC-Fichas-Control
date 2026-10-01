@@ -1,7 +1,8 @@
 import { jsPDF } from 'jspdf'
 import timbradoUrl from '../assets/timbrado.jpg'
 import { calcularEvento, FORMAS_PAGAMENTO } from '#shared/calc.ts'
-import { codigoEvento, dataCurta, dataExtensa, hojeISO, moeda, numero, periodo } from './format'
+import { parseISO } from 'date-fns'
+import { codigoEvento, dataCurta, hojeISO, moeda, numero, periodo } from './format'
 import { nomeArquivoSeguro } from './storage'
 import type { Cliente, Configuracoes, Evento } from '#shared/tipos.ts'
 
@@ -25,6 +26,8 @@ function carregarTimbrado() {
 }
 
 /** Fontes padrão do PDF usam WinAnsi: normaliza espaços especiais do Intl. */
+const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
+
 const txt = (s: string) => s.replace(/[\u00a0\u202f]/g, ' ').replace(/\u2212/g, '-')
 
 export async function gerarResumoPDF(evento: Evento, cliente: Cliente | undefined, config: Configuracoes) {
@@ -41,8 +44,18 @@ export async function gerarResumoPDF(evento: Evento, cliente: Cliente | undefine
   })
   doc.addImage(img, 'JPEG', 0, 0, 210, 297, undefined, 'FAST')
 
-  // Cabeçalho do documento
+  // O conteúdo nunca pode invadir a curva verde (~268 mm) nem a faixa cinza do rodapé (~278 mm)
+  // do timbrado: quando não couber, continua numa nova página com o mesmo papel.
+  const LIMITE = 262
   let y = 60
+  const garantirEspaco = (altura: number) => {
+    if (y + altura <= LIMITE) return
+    doc.addPage()
+    doc.addImage(img, 'JPEG', 0, 0, 210, 297, undefined, 'FAST')
+    y = 52
+  }
+
+  // Cabeçalho do documento
   doc
     .setFont('helvetica', 'bold')
     .setFontSize(19)
@@ -85,42 +98,41 @@ export async function gerarResumoPDF(evento: Evento, cliente: Cliente | undefine
     .setFont('helvetica', 'bold')
     .setFontSize(10)
     .setTextColor(...TINTA)
+  garantirEspaco(4 + 9)
   doc.text('DATAS DE UTILIZAÇÃO', L, y)
   y += 4
   const colunas = 3
   const larguraCol = W / colunas
-  const MAX_DIAS = 18
-  const dias = evento.dias.slice(0, MAX_DIAS)
-  dias.forEach((d, i) => {
+  const textoDia = (d: (typeof evento.dias)[number]) =>
+    txt(`${DIAS_SEMANA[parseISO(d.data).getDay()]} • ${d.maquinas} ${d.maquinas === 1 ? 'máquina' : 'máquinas'}`)
+  // Mesmo tamanho de letra em todas as caixinhas: reduz para todas se alguma não couber ao lado da data
+  doc.setFont('helvetica', 'bold').setFontSize(9)
+  const larguraData = doc.getTextWidth('00/00/0000')
+  doc.setFont('helvetica', 'normal')
+  const maiorTexto = Math.max(0, ...evento.dias.map((d) => doc.getTextWidth(textoDia(d))))
+  const fonteDia = maiorTexto > larguraCol - 3 - 6 - larguraData - 3 ? 7.5 : 9
+  evento.dias.forEach((d, i) => {
+    if (i % colunas === 0) {
+      if (i > 0) y += 9
+      garantirEspaco(9)
+    }
     const cx = L + (i % colunas) * larguraCol
-    const cy = y + Math.floor(i / colunas) * 9
+    const cy = y
     doc.setFillColor(244, 246, 245).roundedRect(cx, cy, larguraCol - 3, 7, 1.5, 1.5, 'F')
     doc
       .setFont('helvetica', 'bold')
       .setFontSize(9)
       .setTextColor(...TINTA)
     doc.text(dataCurta(d.data), cx + 3, cy + 4.7)
-    doc.setFont('helvetica', 'normal').setTextColor(...SECUNDARIO)
-    const dia = dataExtensa(d.data, 'EEE')
-    doc.text(txt(`${dia} • ${d.maquinas} ${d.maquinas === 1 ? 'máquina' : 'máquinas'}`), cx + larguraCol - 6, cy + 4.7, {
-      align: 'right',
-    })
+    doc
+      .setFont('helvetica', 'normal')
+      .setFontSize(fonteDia)
+      .setTextColor(...SECUNDARIO)
+    doc.text(textoDia(d), cx + larguraCol - 6, cy + 4.7, { align: 'right' })
   })
-  y += Math.ceil(dias.length / colunas) * 9
-  if (evento.dias.length > MAX_DIAS) {
-    doc.setFontSize(8.5).setTextColor(...SECUNDARIO)
-    doc.text(`+ ${evento.dias.length - MAX_DIAS} datas não exibidas`, L, y + 2)
-    y += 5
-  }
+  if (evento.dias.length) y += 9
 
-  // Resumo financeiro
-  y += 6
-  doc
-    .setFont('helvetica', 'bold')
-    .setFontSize(10)
-    .setTextColor(...TINTA)
-  doc.text('RESUMO FINANCEIRO', L, y)
-  y += 3
+  // Resumo financeiro (mantido inteiro na mesma página, junto com o total)
   const linhas: Array<[string, string]> = [
     ['Quantidade de diárias utilizadas', numero(r.totalDiarias)],
     ['Valor unitário da diária', moeda(evento.valorDiaria)],
@@ -130,6 +142,14 @@ export async function gerarResumoPDF(evento: Evento, cliente: Cliente | undefine
     ['Valor total das bobinas', moeda(r.valorBobinas)],
   ]
   if (r.desconto > 0) linhas.push(['Desconto', `- ${moeda(r.desconto)}`])
+  y += 6
+  garantirEspaco(3 + linhas.length * 7.5 + 8 + 15)
+  doc
+    .setFont('helvetica', 'bold')
+    .setFontSize(10)
+    .setTextColor(...TINTA)
+  doc.text('RESUMO FINANCEIRO', L, y)
+  y += 3
   for (const [rot, val] of linhas) {
     y += 7.5
     doc
@@ -153,8 +173,14 @@ export async function gerarResumoPDF(evento: Evento, cliente: Cliente | undefine
   doc.setFontSize(17)
   doc.text(txt(moeda(r.total)), R - 6, y + 10, { align: 'right' })
 
-  // Pagamento
-  y += 24
+  // Pagamento e observações + mensagem final, sempre acima do rodapé do timbrado
+  y += 15
+  const linhasObs = evento.observacoes.trim()
+    ? (doc.setFontSize(9.5), doc.splitTextToSize(txt(evento.observacoes), R - meio) as string[]).slice(0, 12)
+    : []
+  const alturaPagamento = 9 + 5.5 + Math.max(1, linhasObs.length) * 4.2
+  garantirEspaco(alturaPagamento + 16)
+  y += 9
   doc
     .setFont('helvetica', 'bold')
     .setFontSize(7.5)
@@ -179,12 +205,12 @@ export async function gerarResumoPDF(evento: Evento, cliente: Cliente | undefine
       .setFont('helvetica', 'normal')
       .setFontSize(9.5)
       .setTextColor(...TINTA)
-    doc.text(doc.splitTextToSize(txt(evento.observacoes), R - meio).slice(0, 4), meio, y + 5.5)
+    doc.text(linhasObs, meio, y + 5.5)
   }
 
   // Mensagem de rodapé (campo "RODAPÉ" da planilha)
   const rodape = (evento.rodape || config.rodapePadrao).trim()
-  const yRodape = Math.max(y + 26, 248)
+  const yRodape = Math.min(Math.max(y + 5.5 + Math.max(1, linhasObs.length) * 4.2 + 10, 248), LIMITE - 6)
   if (rodape) {
     doc
       .setFont('helvetica', 'bold')

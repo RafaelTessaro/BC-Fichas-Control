@@ -1,31 +1,32 @@
-<#
-  Atualiza o BC Fichas Control depois de copiar a nova versão dos arquivos para a pasta
-  (ou de rodar "git pull"). Execute como Administrador.
-  Antes de atualizar, o servidor faz uma cópia do banco em dados\backups.
+﻿<#
+  Atualiza o BC Fichas Control depois de copiar a nova versão dos arquivos por cima da pasta
+  (a pasta "dados" é preservada). PowerShell como Administrador:
+    powershell -ExecutionPolicy Bypass -File C:\BC-Fichas\deploy\windows\atualizar.ps1
+  Antes de qualquer mudança é feita uma cópia consistente do banco em dados\backups.
 #>
-param([string]$NomeTarefa = 'BC Fichas Control')
-
 $ErrorActionPreference = 'Stop'
-$raiz = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
-Push-Location $raiz
+. (Join-Path $PSScriptRoot 'comum.ps1')
 
-Write-Host 'Parando o servidor...'
-Stop-ScheduledTask -TaskName $NomeTarefa -ErrorAction SilentlyContinue
-Get-CimInstance Win32_Process -Filter "Name = 'node.exe'" |
-  Where-Object { $_.CommandLine -like '*server\iniciar.mjs*' } |
-  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+Confirmar-Administrador
+Exigir-Node
 
-if (Test-Path 'dados\bc-fichas.db') {
-  New-Item -ItemType Directory -Force -Path 'dados\backups' | Out-Null
-  $carimbo = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
-  Copy-Item 'dados\bc-fichas.db' "dados\backups\bc-fichas_${carimbo}_antes-atualizar.db"
-}
+Push-Location $script:Raiz
+try {
+  Write-Host 'Parando o servidor...'
+  Parar-Servidor
+  $copia = Copiar-Banco 'antes-atualizar'
+  if ($copia) { Write-Host "Cópia de segurança: $copia" }
 
-Write-Host 'Instalando dependências e compilando...'
-npm ci
-npm run build
+  Executar 'Instalando dependências (npm ci)...' { npm.cmd ci }
+  Executar 'Compilando a interface (npm run build)...' { npm.cmd run build }
+  Proteger-Pasta
 
-Write-Host 'Iniciando o servidor...'
-Start-ScheduledTask -TaskName $NomeTarefa
-Pop-Location
-Write-Host 'Atualização concluída.' -ForegroundColor Green
+  Write-Host 'Iniciando o servidor...'
+  Start-ScheduledTask -TaskName $script:NomeTarefa
+  Write-Host 'Atualização concluída.' -ForegroundColor Green
+} catch {
+  Write-Host ''
+  Write-Host "ERRO: $($_.Exception.Message)" -ForegroundColor Red
+  Write-Host 'O servidor ficou PARADO. Depois de corrigir (ex.: internet para baixar os pacotes), rode este script de novo.' -ForegroundColor Red
+  exit 1
+} finally { Pop-Location }

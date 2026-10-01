@@ -54,36 +54,53 @@ rede (peça ao responsável pela rede para reservar o IP no roteador).
 
 1. **Instale o Node.js** — baixe a versão **LTS** em <https://nodejs.org> (precisa ser 22.18 ou mais nova) e instale com as opções padrão.
 2. **Copie a pasta do sistema** para o servidor, por exemplo `C:\BC-Fichas`.
-3. Abra o **PowerShell como Administrador** e rode:
+3. Abra o **PowerShell como Administrador** (botão direito no menu Iniciar → *Terminal (Admin)* ou
+   *Windows PowerShell (Admin)*) e rode, nesta ordem:
 
    ```powershell
    cd C:\BC-Fichas
+   Set-ExecutionPolicy -Scope Process Bypass
    npm ci
    npm run build
-   cd deploy\windows
-   Set-ExecutionPolicy -Scope Process Bypass
-   .\instalar-servico.ps1
+   .\deploy\windows\instalar-servico.ps1
    ```
 
-   O script cria uma tarefa que **inicia o sistema junto com o Windows** (mesmo sem ninguém
-   logado), reinicia sozinho se ele parar, e libera a porta 3000 no Firewall apenas para a
-   rede da empresa. No final ele mostra o endereço, por exemplo `http://192.168.0.10:3000`.
+   O script:
+   - cria uma tarefa que **inicia o sistema junto com o Windows** (mesmo sem ninguém logado) e
+     o **reinicia sozinho** se ele parar por qualquer motivo;
+   - libera a porta no Firewall para a rede da empresa;
+   - deixa a pasta acessível só para Administradores (os dados e a chave do Google ficam protegidos);
+   - mostra o endereço de acesso, por exemplo `http://192.168.0.10:3000`.
+
+   Se aparecer o aviso de que a rede está como **Pública**, os outros computadores não vão
+   conseguir acessar: marque a rede da empresa como **Privada** (o próprio aviso mostra o
+   comando) ou rode o instalador com `-IncluirRedePublica`.
 4. Nos outros computadores, abra esse endereço no Chrome ou Edge e salve nos favoritos. Para
    ter um ícone na área de trabalho, no Chrome use **menu ⋮ → Transmitir, salvar e compartilhar →
    Criar atalho…** e marque **Abrir como janela**.
 
 Para testar antes de instalar como serviço: `npm start` (Ctrl+C encerra).
 
-- **Registro (log):** `C:\BC-Fichas\dados\servidor.log`
-- **Atualizar para uma nova versão:** copie os arquivos novos por cima (a pasta `dados` é preservada) e rode `deploy\windows\atualizar.ps1` como Administrador.
-- **Remover:** `deploy\windows\desinstalar-servico.ps1` (os dados não são apagados).
+Os comandos abaixo também são executados no **PowerShell como Administrador**:
+
+| Para… | Comando |
+| --- | --- |
+| Atualizar para uma nova versão (copie os arquivos novos por cima antes; a pasta `dados` é preservada) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas\deploy\windows\atualizar.ps1` |
+| Mudar a porta (padrão 3000) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas\deploy\windows\instalar-servico.ps1 -Porta 8080` |
+| Voltar uma cópia do banco | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas\deploy\windows\restaurar-copia.ps1 -Arquivo C:\BC-Fichas\dados\backups\<arquivo>.db` |
+| Remover o serviço (os dados não são apagados) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas\deploy\windows\desinstalar-servico.ps1` |
+
+O registro (log) do servidor fica em `C:\BC-Fichas\dados\servidor.log`. Como a pasta é
+restrita a Administradores, ao abri-la pelo Explorer o Windows pede confirmação.
 
 ### Linux
 
+Precisa do Node.js 22.18 ou mais novo em `/usr/bin/node`.
+
 ```bash
-sudo mkdir -p /opt/bc-fichas && sudo cp -r . /opt/bc-fichas && cd /opt/bc-fichas
-npm ci && npm run build
-sudo useradd --system --home /opt/bc-fichas bcfichas && sudo chown -R bcfichas /opt/bc-fichas
+sudo useradd --system --home /opt/bc-fichas bcfichas
+sudo mkdir -p /opt/bc-fichas && sudo cp -r . /opt/bc-fichas && sudo chown -R bcfichas /opt/bc-fichas
+cd /opt/bc-fichas && sudo -u bcfichas npm ci && sudo -u bcfichas npm run build
 sudo cp deploy/linux/bc-fichas.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now bc-fichas
 ```
@@ -91,28 +108,36 @@ sudo systemctl daemon-reload && sudo systemctl enable --now bc-fichas
 ### Configurações do servidor
 
 Copie `.env.exemplo` para `.env` para mudar a porta (`PORTA`), a interface de rede (`HOST`)
-ou a pasta dos dados (`PASTA_DADOS`). Reinicie o servidor depois.
+ou a pasta dos dados (`PASTA_DADOS`) e reinicie o servidor. No Windows, para mudar a porta
+use `instalar-servico.ps1 -Porta N`, que também ajusta o Firewall.
 
 ## Dados e backups
 
-- Tudo fica no arquivo `dados/bc-fichas.db` (SQLite) no servidor.
+- Tudo fica no banco `dados/bc-fichas.db` (SQLite) no servidor.
 - O servidor faz **uma cópia automática por dia** em `dados/backups/` (guarda as 30 mais
-  recentes) e também antes de restaurar um backup ou apagar dados.
+  recentes) e também antes de restaurar um backup, apagar dados ou atualizar o sistema.
 - Em **Configurações → Dados e backup** é possível baixar um backup completo (`.json`),
   restaurar um backup e fazer uma cópia na hora.
 - Recomendado: copiar a pasta `dados/backups` para um pendrive, HD externo ou nuvem uma vez por semana.
-- Para voltar uma cópia `.db`: pare o serviço, copie o arquivo por cima de `dados/bc-fichas.db` e inicie de novo.
+- Para voltar uma cópia `.db`, use o `restaurar-copia.ps1` (tabela acima). **Não** copie o arquivo
+  `.db` por cima com o Explorer: o banco trabalha junto com os arquivos `bc-fichas.db-wal` e
+  `bc-fichas.db-shm`, e misturar arquivos de momentos diferentes corrompe os dados. No Linux:
+  pare o serviço, apague `dados/bc-fichas.db-wal` e `dados/bc-fichas.db-shm`, copie a cópia por
+  cima de `dados/bc-fichas.db` e inicie de novo.
 
-**Vindo da versão anterior (que salvava no navegador)?** Abra o novo sistema naquele mesmo
-navegador: o Painel mostra o aviso *"Encontramos dados da versão anterior"* com o botão
-**Enviar para o servidor**. Também é possível restaurar um backup `.json` feito na versão anterior.
+**Vindo da versão anterior (que salvava no navegador)?** Abra o novo sistema em cada computador
+que usava a versão anterior, no mesmo navegador: o Painel mostra o aviso *"Encontramos dados da
+versão anterior"* com o botão **Enviar para o servidor**. Os dados de cada computador são
+**acrescentados** aos que já estão no servidor (nada é apagado; clientes com o mesmo CNPJ/CPF
+são unificados e códigos de evento repetidos ganham um número novo).
 
 ## Vários usuários ao mesmo tempo
 
 Cada alteração aparece na hora em todos os computadores abertos. Se duas pessoas editarem o
 **mesmo** evento ou cliente ao mesmo tempo, quem salvar por último recebe um aviso e escolhe
-se mantém as próprias alterações. Se a conexão com o servidor cair, uma faixa amarela avisa
-no topo da tela e o sistema reconecta sozinho.
+se mantém as próprias alterações. O servidor também não aceita dois clientes com o mesmo
+CNPJ/CPF. Se a conexão com o servidor cair, uma faixa amarela avisa no topo da tela e o
+sistema reconecta sozinho; quando o servidor é atualizado, as telas abertas recarregam sozinhas.
 
 O acesso não pede senha: qualquer computador da rede da empresa consegue abrir o sistema.
 Não exponha a porta do servidor para a internet.

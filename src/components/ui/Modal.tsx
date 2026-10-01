@@ -4,6 +4,9 @@ import { useEffect, useRef, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { cn } from '../../lib/cn'
 
+/** Janelas abertas, da mais antiga para a mais recente: Esc fecha só a do topo. */
+const pilha: symbol[] = []
+
 function useTravarRolagemEEsc(aberto: boolean, fechar: () => void) {
   const fecharRef = useRef(fechar)
   useEffect(() => {
@@ -11,17 +14,19 @@ function useTravarRolagemEEsc(aberto: boolean, fechar: () => void) {
   })
   useEffect(() => {
     if (!aberto) return
-    const anterior = document.body.style.overflow
+    const id = Symbol('janela')
+    pilha.push(id)
     document.body.style.overflow = 'hidden'
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && pilha[pilha.length - 1] === id) {
         e.stopPropagation()
         fecharRef.current()
       }
     }
     window.addEventListener('keydown', onKey)
     return () => {
-      document.body.style.overflow = anterior
+      pilha.splice(pilha.indexOf(id), 1)
+      if (!pilha.length) document.body.style.overflow = ''
       window.removeEventListener('keydown', onKey)
     }
   }, [aberto])

@@ -16,8 +16,9 @@ export interface InfoBackup {
 }
 
 /**
- * Cópias de segurança automáticas do banco (arquivos .db completos, prontos para
- * restaurar copiando por cima de `dados/bc-fichas.db` com o servidor parado).
+ * Cópias de segurança automáticas do banco (arquivos .db completos e consistentes).
+ * Para voltar uma cópia use deploy/windows/restaurar-copia.ps1 (ou, com o servidor parado,
+ * apague bc-fichas.db-wal e bc-fichas.db-shm antes de copiar o arquivo por cima de bc-fichas.db).
  */
 export class BackupsAutomaticos {
   private db: Banco
@@ -56,7 +57,9 @@ export class BackupsAutomaticos {
   /** Grava uma cópia consistente do banco (mesmo com usuários usando o sistema). */
   copiar(motivo: 'diario' | 'antes-restaurar' | 'antes-limpar' | 'manual'): string {
     mkdirSync(this.pasta, { recursive: true })
-    const arquivo = join(this.pasta, `${PREFIXO}${carimbo()}_${motivo}.db`)
+    // Duas cópias no mesmo segundo não podem colidir (o VACUUM INTO falha se o arquivo existir)
+    let arquivo = join(this.pasta, `${PREFIXO}${carimbo()}_${motivo}.db`)
+    for (let n = 2; existsSync(arquivo); n++) arquivo = join(this.pasta, `${PREFIXO}${carimbo()}-${n}_${motivo}.db`)
     const sql = arquivo.replace(/'/g, "''")
     this.db.exec(`VACUUM INTO '${sql}'`)
     this.limparAntigos()

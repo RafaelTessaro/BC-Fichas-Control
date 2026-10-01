@@ -8,6 +8,11 @@ import type { MensagemTempoReal } from '#shared/tipos.ts'
 export class TempoReal {
   private assinantes = new Set<ServerResponse>()
   private batimento: ReturnType<typeof setInterval>
+  /**
+   * Identifica a versão da interface compilada servida agora. Vai na mensagem de boas-vindas:
+   * se mudar depois de uma reconexão (servidor atualizado), as abas recarregam sozinhas.
+   */
+  build = ''
 
   constructor(intervaloBatimentoMs = 25_000) {
     // Comentários periódicos mantêm a conexão viva em redes com proxy/firewall
@@ -26,7 +31,7 @@ export class TempoReal {
       Connection: 'keep-alive',
       'X-Accel-Buffering': 'no',
     })
-    res.write(`retry: 3000\nevent: ola\ndata: ${JSON.stringify({ revisao: revisaoAtual })}\n\n`)
+    res.write(`retry: 3000\nevent: ola\ndata: ${JSON.stringify({ revisao: revisaoAtual, build: this.build })}\n\n`)
     this.assinantes.add(res)
     res.on('close', () => this.assinantes.delete(res))
   }

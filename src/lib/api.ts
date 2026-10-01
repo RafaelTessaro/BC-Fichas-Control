@@ -26,35 +26,41 @@ export class ErroApi extends Error {
   }
 }
 
+const SEM_CONEXAO = 'Sem conexão com o servidor. Verifique a rede e se o servidor está ligado.'
+
 async function requisitar<T>(metodo: string, caminho: string, corpo?: unknown, timeoutMs = 20_000): Promise<T> {
   const ctrl = new AbortController()
+  // O tempo limite cobre a requisição inteira, inclusive a leitura da resposta
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
-  let resp: Response
   try {
-    resp = await fetch(caminho, {
-      method: metodo,
-      // O servidor só aceita gravações com este cabeçalho (proteção contra sites externos)
-      headers: { 'x-bc-fichas': '1', ...(corpo !== undefined ? { 'Content-Type': 'application/json' } : {}) },
-      body: corpo !== undefined ? JSON.stringify(corpo) : undefined,
-      signal: ctrl.signal,
-      cache: 'no-store',
-    })
-  } catch {
-    throw new ErroApi(0, 'Sem conexão com o servidor. Verifique a rede e se o servidor está ligado.')
+    let resp: Response
+    try {
+      resp = await fetch(caminho, {
+        method: metodo,
+        // O servidor só aceita gravações com este cabeçalho (proteção contra sites externos)
+        headers: { 'x-bc-fichas': '1', ...(corpo !== undefined ? { 'Content-Type': 'application/json' } : {}) },
+        body: corpo !== undefined ? JSON.stringify(corpo) : undefined,
+        signal: ctrl.signal,
+        cache: 'no-store',
+      })
+    } catch {
+      throw new ErroApi(0, SEM_CONEXAO)
+    }
+    if (resp.status === 204) return undefined as T
+    let json: Record<string, unknown> = {}
+    try {
+      json = await resp.json()
+    } catch {
+      if (ctrl.signal.aborted) throw new ErroApi(0, SEM_CONEXAO)
+      if (resp.ok) throw new ErroApi(resp.status, 'Resposta inválida do servidor.')
+    }
+    if (!resp.ok) {
+      throw new ErroApi(resp.status, typeof json.erro === 'string' ? json.erro : `Erro ${resp.status} no servidor.`, json)
+    }
+    return json as T
   } finally {
     clearTimeout(timer)
   }
-  if (resp.status === 204) return undefined as T
-  let json: Record<string, unknown> = {}
-  try {
-    json = await resp.json()
-  } catch {
-    /* resposta sem corpo JSON */
-  }
-  if (!resp.ok) {
-    throw new ErroApi(resp.status, typeof json.erro === 'string' ? json.erro : `Erro ${resp.status} no servidor.`, json)
-  }
-  return json as T
 }
 
 export const api = {
@@ -81,6 +87,9 @@ export const api = {
     requisitar<{ backups: Array<{ arquivo: string; tamanho: number; criadoEm: string }> }>('GET', '/api/backups'),
   copiaAgora: () =>
     requisitar<{ backups: Array<{ arquivo: string; tamanho: number; criadoEm: string }> }>('POST', '/api/backups'),
+  /** Acrescenta os dados de um backup sem apagar os do servidor. */
+  mesclar: (dados: unknown) =>
+    requisitar<{ clientes: number; eventos: number; ignorados: number }>('POST', '/api/backup/mesclar', dados, 120_000),
   carregarExemplo: () => requisitar<{ ok: true }>('POST', '/api/exemplo'),
   limparTudo: () => requisitar<{ ok: true }>('POST', '/api/limpar', { confirmacao: 'APAGAR' }),
 
@@ -90,30 +99,69 @@ export const api = {
     requisitar<T>(metodo, caminho, corpo, timeoutMs),
 }
 
+/** Mensagem de boas-vindas da conexão em tempo real. */
+export interface Ola {
+  revisao: number
+  /** Versão da interface servida agora (muda quando o servidor é atualizado). */
+  build: string
+}
+
 /**
  * Recebe as alterações feitas por qualquer computador da rede (Server-Sent Events).
  * O navegador reconecta sozinho se a conexão cair.
+ *
+ * Cada conexão aberta ocupa uma das ~6 conexões que o navegador permite por servidor; por isso
+ * abas que ficam escondidas por mais de 30 s fecham a sua e reabrem ao voltar (a mensagem de
+ * boas-vindas traz a revisão, e a tela se atualiza se algo mudou enquanto estava escondida).
  */
 export function conectarTempoReal(handlers: {
-  aoConectar: (revisaoServidor: number) => void
+  aoConectar: (ola: Ola) => void
   aoReceber: (msg: MensagemTempoReal) => void
   aoDesconectar: () => void
 }) {
-  const fonte = new EventSource('/api/stream')
-  fonte.addEventListener('ola', (e) => {
-    try {
-      handlers.aoConectar(JSON.parse((e as MessageEvent).data).revisao)
-    } catch {
-      handlers.aoConectar(-1)
+  let fonte: EventSource | null = null
+  let timerOculta: ReturnType<typeof setTimeout> | undefined
+
+  const abrir = () => {
+    clearTimeout(timerOculta)
+    if (fonte) return
+    const f = new EventSource('/api/stream')
+    fonte = f
+    f.addEventListener('ola', (e) => {
+      try {
+        const d = JSON.parse((e as MessageEvent).data)
+        handlers.aoConectar({ revisao: Number(d.revisao), build: String(d.build ?? '') })
+      } catch {
+        handlers.aoConectar({ revisao: -1, build: '' })
+      }
+    })
+    f.onmessage = (e) => {
+      try {
+        handlers.aoReceber(JSON.parse(e.data))
+      } catch {
+        /* mensagem inválida: ignora */
+      }
     }
-  })
-  fonte.onmessage = (e) => {
-    try {
-      handlers.aoReceber(JSON.parse(e.data))
-    } catch {
-      /* mensagem inválida: ignora */
-    }
+    f.onerror = () => handlers.aoDesconectar()
   }
-  fonte.onerror = () => handlers.aoDesconectar()
-  return () => fonte.close()
+
+  const fechar = () => {
+    fonte?.close()
+    fonte = null
+  }
+
+  const aoMudarVisibilidade = () => {
+    if (document.hidden) {
+      clearTimeout(timerOculta)
+      timerOculta = setTimeout(fechar, 30_000)
+    } else abrir()
+  }
+
+  document.addEventListener('visibilitychange', aoMudarVisibilidade)
+  abrir()
+  return () => {
+    clearTimeout(timerOculta)
+    document.removeEventListener('visibilitychange', aoMudarVisibilidade)
+    fechar()
+  }
 }

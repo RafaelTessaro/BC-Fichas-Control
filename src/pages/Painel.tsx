@@ -104,7 +104,8 @@ export function Painel() {
         }
       />
 
-      {vazio && <MigracaoNavegador />}
+      {/* Aparece em qualquer computador que ainda tenha dados da versão anterior no navegador */}
+      <MigracaoNavegador />
 
       {vazio && (
         <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>

@@ -252,6 +252,67 @@ export class Repositorio {
     return { clientes: backup.clientes.length, eventos: backup.eventos.length }
   }
 
+  /**
+   * Acrescenta os dados de um backup aos que já existem, sem apagar nada (usado para trazer
+   * os dados que cada computador guardava no navegador na versão anterior).
+   * - cliente com o mesmo id já existente é ignorado; com o mesmo CNPJ/CPF, reaproveita o existente;
+   * - evento com o mesmo id é ignorado; código repetido ganha um novo número;
+   * - as configurações do servidor não mudam.
+   */
+  mesclar(entrada: unknown) {
+    let backup: Backup
+    try {
+      backup = validarBackup(entrada)
+    } catch (e) {
+      throw new ErroApi(400, (e as Error).message)
+    }
+    const resultado = { clientes: 0, eventos: 0, ignorados: 0 }
+    const novosEventos: Evento[] = []
+    const rev = transacao(this.db, () => {
+      const existentes = this.listarClientes()
+      const porId = new Set(existentes.map((c) => c.id))
+      const porDocumento = new Map(existentes.filter((c) => c.documento).map((c) => [c.documento, c.id]))
+      const mapaCliente = new Map<string, string>()
+      for (const c of backup.clientes) {
+        if (porId.has(c.id)) {
+          mapaCliente.set(c.id, c.id)
+          resultado.ignorados++
+        } else if (c.documento && porDocumento.has(c.documento)) {
+          mapaCliente.set(c.id, porDocumento.get(c.documento)!)
+          resultado.ignorados++
+        } else {
+          this.gravarCliente(c, true)
+          porId.add(c.id)
+          if (c.documento) porDocumento.set(c.documento, c.id)
+          mapaCliente.set(c.id, c.id)
+          resultado.clientes++
+        }
+      }
+      const idsEventos = new Set(this.listarEventosBrutos().map((e) => e.id))
+      const codigos = new Set(
+        (this.db.prepare('SELECT codigo FROM eventos').all() as Array<{ codigo: number }>).map((l) => l.codigo),
+      )
+      for (const e of [...backup.eventos].sort((a, b) => a.codigo - b.codigo)) {
+        if (idsEventos.has(e.id)) {
+          resultado.ignorados++
+          continue
+        }
+        const codigo = codigos.has(e.codigo) ? this.proximoCodigo() : e.codigo
+        const evento: Evento = { ...e, codigo, clienteId: mapaCliente.get(e.clienteId) ?? e.clienteId }
+        this.gravarEvento(evento, true)
+        codigos.add(codigo)
+        novosEventos.push(evento)
+        resultado.eventos++
+      }
+      const maior = Math.max(0, ...codigos)
+      if (Number(lerMeta(this.db, 'proximo_codigo') ?? 1) <= maior) gravarMeta(this.db, 'proximo_codigo', maior + 1)
+      return this.incrementarRevisao()
+    })
+    this.publicar({ revisao: rev, tipo: 'tudo', acao: 'recarregar' })
+    for (const e of novosEventos) this.chamarExtensoes((x) => x.eventoSalvo?.(e, undefined))
+    return resultado
+  }
+
   carregarExemplo() {
     const { qtd } = this.db.prepare('SELECT (SELECT COUNT(*) FROM clientes) + (SELECT COUNT(*) FROM eventos) AS qtd').get() as {
       qtd: number

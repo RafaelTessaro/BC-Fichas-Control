@@ -53,6 +53,12 @@ export async function rotasDados(app: FastifyInstance, { repo, tempoReal, backup
     return repo.restaurar(req.body)
   })
 
+  // Acrescenta (sem apagar) — usado para trazer os dados que ficavam no navegador na versão anterior
+  app.post('/api/backup/mesclar', async (req) => {
+    backups.copiar('antes-restaurar')
+    return repo.mesclar(req.body)
+  })
+
   app.get('/api/backups', async () => ({ backups: backups.listar().slice(0, 10) }))
   app.post('/api/backups', async () => {
     backups.copiar('manual')
