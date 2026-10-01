@@ -1,6 +1,6 @@
 import { Check, ChevronsUpDown, Plus } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react'
 import { cn } from '../../lib/cn'
 import { normalizar } from '../../lib/format'
 
@@ -21,7 +21,11 @@ export interface AcaoCombo {
   visivel?: (busca: string) => boolean
 }
 
-/** Seleção com busca e navegação por teclado (↑ ↓ Enter Esc), incluindo as ações do rodapé. */
+/**
+ * Seleção com busca e navegação por teclado (↑ ↓ Home End Enter Esc), incluindo as ações do rodapé.
+ * Segue o padrão ARIA de combobox: a busca aponta o item ativo (`aria-activedescendant`) e, ao
+ * escolher ou fechar, o foco volta ao botão do campo.
+ */
 export function Combobox({
   opcoes,
   valor,
@@ -48,8 +52,15 @@ export function Combobox({
   const [busca, setBusca] = useState('')
   const [ativo, setAtivo] = useState(0)
   const raiz = useRef<HTMLDivElement>(null)
+  const botao = useRef<HTMLButtonElement>(null)
   const input = useRef<HTMLInputElement>(null)
   const lista = useRef<HTMLDivElement>(null)
+  // Lido pelos cliques: a lista que está saindo (animação de 140 ms) continua na tela com os
+  // handlers antigos, e um segundo clique nela não pode escolher ou executar de novo
+  const abertoRef = useRef(false)
+  const base = useId()
+  const idLista = `${base}-lista`
+  const idItem = (i: number) => `${base}-item-${i}`
 
   const selecionada = opcoes.find((o) => o.valor === valor)
   const filtradas = useMemo(() => {
@@ -76,10 +87,17 @@ export function Combobox({
   }, [acaoCriar, acoesExtras, busca])
   const totalItens = filtradas.length + acoes.length
 
+  /** Fecha a lista; por padrão devolve o foco ao botão do campo (em vez de deixá-lo cair no <body>). */
+  const fechar = (devolverFoco = true) => {
+    abertoRef.current = false
+    setAberto(false)
+    if (devolverFoco) botao.current?.focus()
+  }
+
   useEffect(() => {
     if (!aberto) return
     const fora = (e: MouseEvent) => {
-      if (!raiz.current?.contains(e.target as Node)) setAberto(false)
+      if (!raiz.current?.contains(e.target as Node)) fechar(false)
     }
     document.addEventListener('mousedown', fora)
     return () => document.removeEventListener('mousedown', fora)
@@ -97,28 +115,45 @@ export function Combobox({
         opcoes.findIndex((o) => o.valor === valor),
       ),
     )
+    abertoRef.current = true
     setAberto(true)
     requestAnimationFrame(() => input.current?.focus())
   }
 
   const escolher = (o: OpcaoCombo) => {
+    if (!abertoRef.current) return
+    fechar()
     aoMudar(o.valor)
-    setAberto(false)
   }
 
-  const executar = (a: AcaoCombo) => {
-    setAberto(false)
-    a.aoClicar(busca.trim())
+  const executar = (a: AcaoCombo, texto: string) => {
+    if (!abertoRef.current) return
+    // Devolve o foco antes, para que um modal aberto pela ação possa pegá-lo
+    fechar()
+    a.aoClicar(texto)
   }
+
+  const itemAtivo = totalItens > 0 ? idItem(Math.min(ativo, totalItens - 1)) : undefined
 
   return (
-    <div ref={raiz} className="relative">
+    <div
+      ref={raiz}
+      className="relative"
+      onBlur={(e) => {
+        // Sair com Tab (ou o foco ir para fora) fecha a lista
+        if (abertoRef.current && !raiz.current?.contains(e.relatedTarget as Node | null)) fechar(false)
+      }}
+    >
       <button
+        ref={botao}
         id={id}
         type="button"
-        onClick={() => (aberto ? setAberto(false) : abrir())}
+        // Com a lista aberta, o clique só fecha: não tira o foco da busca antes (Safari não foca botões)
+        onMouseDown={(e) => aberto && e.preventDefault()}
+        onClick={() => (aberto ? fechar() : abrir())}
         aria-haspopup="listbox"
         aria-expanded={aberto}
+        aria-controls={aberto ? idLista : undefined}
         className={cn(
           'flex h-10 w-full cursor-pointer items-center gap-2 rounded-xl border bg-surface px-3.5 text-left text-sm shadow-xs transition-[border-color,box-shadow]',
           aberto ? 'border-brand ring-4 ring-[var(--ring)]' : 'border-line-strong/80 hover:border-line-strong',
@@ -137,13 +172,20 @@ export function Combobox({
           <motion.div
             initial={{ opacity: 0, y: -4, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -4, scale: 0.98 }}
+            exit={{ opacity: 0, y: -4, scale: 0.98, pointerEvents: 'none' }}
             transition={{ duration: 0.14 }}
             className="absolute top-full right-0 left-0 z-40 mt-1.5 origin-top overflow-hidden rounded-xl border border-line bg-surface shadow-float"
           >
             <div className="border-b border-line p-2">
               <input
                 ref={input}
+                role="combobox"
+                aria-expanded={true}
+                aria-controls={idLista}
+                aria-autocomplete="list"
+                aria-activedescendant={itemAtivo}
+                aria-label="Buscar"
+                autoComplete="off"
                 value={busca}
                 onChange={(e) => {
                   setBusca(e.target.value)
@@ -156,69 +198,96 @@ export function Combobox({
                   } else if (e.key === 'ArrowUp') {
                     e.preventDefault()
                     setAtivo((a) => Math.max(a - 1, 0))
+                  } else if (e.key === 'Home' || e.key === 'End') {
+                    if (!totalItens) return
+                    e.preventDefault()
+                    setAtivo(e.key === 'Home' ? 0 : totalItens - 1)
                   } else if (e.key === 'Enter') {
                     e.preventDefault()
                     if (filtradas[ativo]) escolher(filtradas[ativo])
-                    else if (acoes[ativo - filtradas.length]) executar(acoes[ativo - filtradas.length])
+                    else if (acoes[ativo - filtradas.length]) executar(acoes[ativo - filtradas.length], busca.trim())
                   } else if (e.key === 'Escape') {
                     e.stopPropagation()
-                    setAberto(false)
+                    fechar()
                   }
                 }}
                 placeholder="Digite para buscar…"
                 className="h-9 w-full rounded-lg bg-surface-2 px-3 text-sm text-ink outline-none placeholder:text-muted"
               />
             </div>
-            <div ref={lista} role="listbox" className="scroll-fino max-h-64 overflow-y-auto p-1">
-              {filtradas.length === 0 && <p className="px-3 py-6 text-center text-sm text-muted">{vazio}</p>}
-              {filtradas.map((o, i) => (
-                <button
-                  key={o.valor}
-                  type="button"
-                  role="option"
-                  data-idx={i}
-                  aria-selected={o.valor === valor}
-                  onMouseEnter={() => setAtivo(i)}
-                  onClick={() => escolher(o)}
-                  className={cn(
-                    'flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
-                    i === ativo ? 'bg-surface-2 text-ink' : 'text-ink-2',
-                  )}
-                >
-                  {o.icone}
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{o.label}</span>
-                    {o.detalhe && <span className="block truncate text-xs text-muted">{o.detalhe}</span>}
-                  </span>
-                  {o.valor === valor && <Check className="h-4 w-4 shrink-0 text-brand" />}
-                </button>
-              ))}
-            </div>
-            {acoes.length > 0 && (
-              <div className="border-t border-line p-1">
-                {acoes.map((a, i) => {
-                  const idx = filtradas.length + i
-                  return (
+            {filtradas.length === 0 && (
+              <p role="status" className="px-3 py-6 text-center text-sm text-muted">
+                {vazio}
+              </p>
+            )}
+            {/* Opções e ações ficam na mesma lista, para o leitor de tela anunciar o item que o Enter vai usar */}
+            <div
+              ref={lista}
+              id={idLista}
+              role="listbox"
+              aria-label={placeholder}
+              // Mantém o foco na busca ao clicar num item
+              onMouseDown={(e) => e.preventDefault()}
+            >
+              {filtradas.length > 0 && (
+                <div role="group" className="scroll-fino max-h-64 overflow-y-auto p-1">
+                  {filtradas.map((o, i) => (
                     <button
-                      key={i}
+                      key={o.valor}
+                      id={idItem(i)}
                       type="button"
-                      data-idx={idx}
-                      onMouseEnter={() => setAtivo(idx)}
-                      onClick={() => executar(a)}
+                      role="option"
+                      tabIndex={-1}
+                      data-idx={i}
+                      aria-selected={i === ativo}
+                      aria-current={o.valor === valor || undefined}
+                      onMouseEnter={() => setAtivo(i)}
+                      onClick={() => escolher(o)}
                       className={cn(
-                        'flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-brand-ink transition-colors',
-                        idx === ativo ? 'bg-brand-soft' : 'hover:bg-brand-soft',
+                        'flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors',
+                        i === ativo ? 'bg-surface-2 text-ink' : 'text-ink-2',
                       )}
                     >
-                      <span className="shrink-0">{a.icone ?? <Plus className="h-4 w-4" />}</span>
-                      <span className="flex min-w-0 items-center gap-1.5 truncate">
-                        {typeof a.label === 'function' ? a.label(busca.trim()) : a.label}
+                      {o.icone}
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate font-medium">{o.label}</span>
+                        {o.detalhe && <span className="block truncate text-xs text-muted">{o.detalhe}</span>}
                       </span>
+                      {o.valor === valor && <Check className="h-4 w-4 shrink-0 text-brand" />}
                     </button>
-                  )
-                })}
-              </div>
-            )}
+                  ))}
+                </div>
+              )}
+              {acoes.length > 0 && (
+                <div role="group" aria-label="Outras opções" className="border-t border-line p-1">
+                  {acoes.map((a, i) => {
+                    const idx = filtradas.length + i
+                    return (
+                      <button
+                        key={i}
+                        id={idItem(idx)}
+                        type="button"
+                        role="option"
+                        tabIndex={-1}
+                        data-idx={idx}
+                        aria-selected={idx === ativo}
+                        onMouseEnter={() => setAtivo(idx)}
+                        onClick={() => executar(a, busca.trim())}
+                        className={cn(
+                          'flex w-full min-w-0 cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm font-medium text-brand-ink transition-colors',
+                          idx === ativo ? 'bg-brand-soft' : 'hover:bg-brand-soft',
+                        )}
+                      >
+                        <span className="shrink-0">{a.icone ?? <Plus className="h-4 w-4" />}</span>
+                        <span className="flex min-w-0 items-center gap-1.5 truncate">
+                          {typeof a.label === 'function' ? a.label(busca.trim()) : a.label}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>

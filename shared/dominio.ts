@@ -1,7 +1,7 @@
 // Regras de entrada de dados: normalização, validação e migração de versões antigas.
 // Usado pelo servidor (fonte da verdade) e pela interface (validação imediata nos formulários).
 
-import { cnpjValido, cpfValido, mascaraCep, mascaraCnpj, mascaraCpf, somenteDigitos } from './documentos.ts'
+import { cnpjValido, cpfValido, mascaraCep, mascaraCnpj, mascaraCpf, normalizarCnpj, somenteDigitos } from './documentos.ts'
 import type {
   Backup,
   Cliente,
@@ -106,10 +106,13 @@ export function normalizarCliente(entrada: unknown): Resultado<ClienteInput> {
   const erros: string[] = []
 
   let documento = ''
-  const digitos = somenteDigitos(texto(r.documento))
-  if (tipo === 'PJ' && digitos) {
-    documento = mascaraCnpj(digitos)
-    if (!cnpjValido(digitos)) erros.push('CNPJ inválido. Confira os números digitados.')
+  const bruto = texto(r.documento)
+  // CNPJ pode ter letras (formato alfanumérico da Receita, desde julho/2026); CPF só tem números
+  const cnpj = tipo === 'PJ' ? normalizarCnpj(bruto) : ''
+  const digitos = somenteDigitos(bruto)
+  if (tipo === 'PJ' && cnpj) {
+    documento = mascaraCnpj(cnpj)
+    if (!cnpjValido(cnpj)) erros.push('CNPJ inválido. Confira o número digitado.')
   } else if (tipo === 'PF' && digitos) {
     documento = mascaraCpf(digitos)
     if (!cpfValido(digitos)) erros.push('CPF inválido. Confira os números digitados.')

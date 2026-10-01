@@ -16,20 +16,35 @@ import {
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { CLIENTE_VAZIO, normalizarCliente, UFS } from '#shared/dominio.ts'
-import { cnpjValido, cpfValido, mascaraCep, mascaraDocumento, mascaraTelefone, somenteDigitos } from '#shared/documentos.ts'
+import {
+  cnpjValido,
+  cpfValido,
+  mascaraCep,
+  mascaraDocumento,
+  mascaraTelefone,
+  normalizarCnpj,
+  somenteDigitos,
+} from '#shared/documentos.ts'
 import type { Cliente, ClienteInput, TipoCliente } from '#shared/tipos.ts'
 import { ErroApi } from '../lib/api'
 import { cn } from '../lib/cn'
 import {
+  acharDuplicado,
   avisoSituacao,
   camposDoCnpj,
+  camposMantidos,
   consultarCep,
   consultarCnpj,
+  duplicadoDoErro,
   erroDeConsulta,
+  mesclarCep,
   mesclarConsulta,
   rotuloSituacao,
   tomSituacao,
+  trocarTipoCliente,
+  valoresDaConsultaAnterior,
   type DadosCnpj,
   type TipoErroConsulta,
 } from '../lib/consultas'
@@ -93,8 +108,10 @@ export function ClienteFormModal({
 type EstadoConsulta =
   | { estado: 'ocioso' }
   | { estado: 'carregando'; cnpj: string }
-  | { estado: 'ok'; cnpj: string; dados: DadosCnpj }
-  | { estado: 'erro'; cnpj: string; tipo: TipoErroConsulta; mensagem: string }
+  /** `mantidos`: campos já preenchidos que a consulta automática não trocou. */
+  | { estado: 'ok'; cnpj: string; dados: DadosCnpj; mantidos: boolean }
+  /** `manual`: modo da consulta que falhou ("Tentar de novo" repete no mesmo modo). */
+  | { estado: 'erro'; cnpj: string; tipo: TipoErroConsulta; mensagem: string; manual: boolean }
 
 type EstadoCep = { estado: 'ocioso' | 'carregando' } | { estado: 'ok' | 'erro'; mensagem: string }
 
@@ -109,6 +126,10 @@ function formularioInicial(cliente?: Cliente, nomeInicial?: string, tipoInicial?
   if (/^[\d./\-\s]+$/.test(base.nome) && tipoInicial !== 'AVULSO') {
     if (cnpjValido(digitos)) return { ...base, tipo: 'PJ', nome: '', documento: mascaraDocumento(digitos, 'PJ') }
     if (cpfValido(digitos)) return { ...base, tipo: 'PF', nome: '', documento: mascaraDocumento(digitos, 'PF') }
+  }
+  // CNPJ alfanumérico ("12.ABC.345/01DE-35"): só letras, números e pontuação, com vários algarismos (não é um nome)
+  if (/^[\dA-Za-z./\-\s]+$/.test(base.nome) && digitos.length >= 4 && tipoInicial !== 'AVULSO' && cnpjValido(base.nome)) {
+    return { ...base, tipo: 'PJ', nome: '', documento: mascaraDocumento(base.nome, 'PJ') }
   }
   return base
 }
@@ -130,6 +151,7 @@ function FormularioCliente({
 }) {
   const salvarCliente = useDados((s) => s.salvarCliente)
   const clientes = useDados((s) => s.clientes)
+  const navegar = useNavigate()
   const [f, setF] = useState<ClienteInput>(() => formularioInicial(cliente, nomeInicial, tipoInicial))
   // Versão que o usuário abriu para editar: se outra pessoa salvar antes, avisamos
   const [versaoBase, setVersaoBase] = useState(cliente?.versao)
@@ -143,11 +165,15 @@ function FormularioCliente({
     fRef.current = f
   })
   /** CNPJ já consultado automaticamente (não repete a consulta para o mesmo número). */
-  const ultimoCnpj = useRef(cliente ? somenteDigitos(cliente.documento) : '')
+  const ultimoCnpj = useRef(cliente ? normalizarCnpj(cliente.documento) : '')
   /** CNPJ a que pertencem a situação cadastral e a data de consulta guardadas. */
-  const cnpjDaSituacao = useRef(cliente ? somenteDigitos(cliente.documento) : '')
-  /** Valores que a última consulta colocou no formulário (para saber o que foi digitado à mão). */
-  const valoresConsulta = useRef<Partial<ClienteInput>>({})
+  const cnpjDaSituacao = useRef(cliente ? normalizarCnpj(cliente.documento) : '')
+  /**
+   * Valores que a última consulta colocou no formulário (para saber o que foi digitado à mão).
+   * Na edição de uma empresa já consultada, começa com os dados da Receita gravados: trocar o CNPJ
+   * substitui razão social e endereço pelos da empresa nova, em vez de misturar as duas.
+   */
+  const valoresConsulta = useRef<Partial<ClienteInput>>(valoresDaConsultaAnterior(cliente))
   const seqCnpj = useRef(0)
   const ultimoCep = useRef(cliente ? somenteDigitos(cliente.cep) : '')
   const seqCep = useRef(0)
@@ -168,41 +194,41 @@ function FormularioCliente({
       const dados = await consultarCnpj(cnpj)
       if (seq !== seqCnpj.current) return
       const atual = fRef.current
-      // O usuário trocou o CNPJ ou o tipo enquanto esperava: descarta
-      if (atual.tipo !== 'PJ' || somenteDigitos(atual.documento) !== cnpj) return setConsulta({ estado: 'ocioso' })
-      const { form, aplicados } = mesclarConsulta(
-        atual,
-        camposDoCnpj(dados, new Date().toISOString()),
-        valoresConsulta.current,
-        manual,
-      )
+      // O usuário trocou o CNPJ ou o tipo enquanto esperava: descarta e deixa a consulta automática
+      // livre para rodar de novo se o mesmo número voltar ao campo
+      if (atual.tipo !== 'PJ' || normalizarCnpj(atual.documento) !== cnpj) {
+        if (ultimoCnpj.current === cnpj) ultimoCnpj.current = ''
+        return setConsulta({ estado: 'ocioso' })
+      }
+      const novos = camposDoCnpj(dados, new Date().toISOString())
+      const { form, aplicados } = mesclarConsulta(atual, novos, valoresConsulta.current, manual)
       valoresConsulta.current = { ...valoresConsulta.current, ...aplicados }
       cnpjDaSituacao.current = cnpj
       // O endereço veio da Receita: não consulta o CEP por cima
       ultimoCep.current = somenteDigitos(form.cep)
       setCepEstado({ estado: 'ocioso' })
       setF(form)
-      setConsulta({ estado: 'ok', cnpj, dados })
+      setConsulta({ estado: 'ok', cnpj, dados, mantidos: camposMantidos(form, novos).length > 0 })
     } catch (e) {
       if (seq !== seqCnpj.current) return
       // Permite tentar de novo redigitando o mesmo número
       ultimoCnpj.current = ''
-      setConsulta({ estado: 'erro', cnpj, ...erroDeConsulta(e, 'CNPJ') })
+      setConsulta({ estado: 'erro', cnpj, manual, ...erroDeConsulta(e, 'CNPJ') })
     }
   }
 
-  /** Consulta automática ~400 ms depois de completar um CNPJ válido. */
-  function agendarCnpj(digitos: string) {
+  /** Consulta automática ~400 ms depois de completar um CNPJ válido (já normalizado). */
+  function agendarCnpj(cnpj: string) {
     clearTimeout(timerCnpj.current)
-    if (digitos.length !== 14 || !cnpjValido(digitos) || digitos === ultimoCnpj.current) return
-    timerCnpj.current = setTimeout(() => void buscarCnpj(digitos, false), 400)
+    if (cnpj.length !== 14 || !cnpjValido(cnpj) || cnpj === ultimoCnpj.current) return
+    timerCnpj.current = setTimeout(() => void buscarCnpj(cnpj, false), 400)
   }
 
   // CNPJ vindo da busca de outra tela: consulta assim que o formulário abre
   // (para um cliente já cadastrado, `ultimoCnpj` já contém o número e nada acontece)
   useEffect(() => {
     const inicial = fRef.current
-    if (inicial.tipo === 'PJ') agendarCnpj(somenteDigitos(inicial.documento))
+    if (inicial.tipo === 'PJ') agendarCnpj(normalizarCnpj(inicial.documento))
     // Somente ao abrir
   }, [])
 
@@ -213,16 +239,11 @@ function FormularioCliente({
     try {
       const r = await consultarCep(cep)
       if (seq !== seqCep.current || somenteDigitos(fRef.current.cep) !== cep) return
-      setF((s) => ({
-        ...s,
-        logradouro: r.logradouro || s.logradouro,
-        bairro: r.bairro || s.bairro,
-        cidade: r.cidade || s.cidade,
-        uf: r.uf || s.uf,
-      }))
+      // CEP geral da cidade (sem rua e bairro) não deixa a rua e o bairro de outra cidade no formulário
+      setF((s) => mesclarCep(s, r))
       setCepEstado({
         estado: 'ok',
-        mensagem: r.logradouro ? 'Endereço preenchido pelo CEP.' : 'CEP geral da cidade: informe a rua.',
+        mensagem: r.logradouro ? 'Endereço preenchido pelo CEP.' : 'CEP geral da cidade: informe a rua e o bairro.',
       })
       // Leva o cursor para o próximo campo a preencher
       requestAnimationFrame(() => (r.logradouro ? numeroRef : logradouroRef).current?.focus())
@@ -239,17 +260,17 @@ function FormularioCliente({
 
   const mudarDocumento = (valor: string) => {
     const documento = mascaraDocumento(valor, f.tipo === 'PJ' ? 'PJ' : 'PF')
-    const digitos = somenteDigitos(documento)
+    const chave = f.tipo === 'PJ' ? normalizarCnpj(documento) : somenteDigitos(documento)
     setF((s) => {
       const novo = { ...s, documento }
       // Situação da Receita pertence ao CNPJ consultado: some se o número mudar
-      if ((s.situacaoCadastral || s.consultadoEm) && digitos !== cnpjDaSituacao.current) {
+      if ((s.situacaoCadastral || s.consultadoEm) && chave !== cnpjDaSituacao.current) {
         novo.situacaoCadastral = ''
         novo.consultadoEm = ''
       }
       return novo
     })
-    if (f.tipo === 'PJ') agendarCnpj(digitos)
+    if (f.tipo === 'PJ') agendarCnpj(chave)
   }
 
   const mudarCep = (valor: string) => {
@@ -266,23 +287,58 @@ function FormularioCliente({
 
   const mudarTipo = (tipo: TipoCliente) => {
     clearTimeout(timerCnpj.current)
-    setF((s) => ({ ...s, tipo, documento: tipo === 'AVULSO' ? '' : mascaraDocumento(s.documento, tipo) }))
+    // Limpa o que some da tela (e-mail, endereço, responsável…): nada escondido impede salvar ou é gravado
+    setF((s) => trocarTipoCliente(s, tipo))
+    if (tipo === 'AVULSO') {
+      seqCep.current++
+      ultimoCep.current = ''
+      setCepEstado({ estado: 'ocioso' })
+    }
   }
 
+  const ehPJ = f.tipo === 'PJ'
+  const ehAvulso = f.tipo === 'AVULSO'
   const { erros } = normalizarCliente(f)
   const erroDoc = erros.find((e) => /CNPJ|CPF/.test(e))
   const erroNome = erros.find((e) => /nome|razão/i.test(e))
   const erroEmail = erros.find((e) => /e-mail/i.test(e))
   const erroCep = erros.find((e) => /CEP/.test(e))
-  const docDigitos = somenteDigitos(f.documento)
-  const duplicado = docDigitos
-    ? clientes.find((c) => c.id !== cliente?.id && somenteDigitos(c.documento) === docDigitos)
-    : undefined
+  // CNPJ pode ter letras (formato alfanumérico); CPF só números
+  const docChave = ehPJ ? normalizarCnpj(f.documento) : somenteDigitos(f.documento)
+  const duplicado = acharDuplicado(clientes, f.documento, cliente?.id)
+
+  /** CNPJ/CPF já cadastrado em outro cliente: o servidor recusa, então oferece o cadastro existente. */
+  async function oferecerExistente(outro: { id: string; nome: string }) {
+    const doc = ehPJ ? 'CNPJ' : 'CPF'
+    const motivo = `Já existe um cliente com este ${doc}: ${outro.nome || 'sem nome'}. O mesmo ${doc} não pode ser cadastrado duas vezes.`
+    // No lançamento de evento (cadastro novo com `aoSalvar`), dá para usar o cliente existente direto
+    const usarNoEvento = !cliente && !!aoSalvar
+    const existente = usarNoEvento ? useDados.getState().clientes.find((c) => c.id === outro.id) : undefined
+    // Sair da tela do evento perderia o que foi preenchido: sem o cliente na lista daqui, só avisa
+    if (usarNoEvento && !existente) return toast.erro(`${doc} já cadastrado`, motivo)
+    const ok = await confirmar({
+      titulo: `${doc} já cadastrado`,
+      descricao: `${motivo} ${existente ? 'Deseja usar o cliente já cadastrado?' : 'Deseja abrir o cadastro existente?'}`,
+      confirmar: existente ? 'Usar este cliente' : 'Abrir cadastro existente',
+    })
+    if (!ok) return
+    if (existente) aoSalvar?.(existente)
+    else navegar(`/clientes/${outro.id}`)
+    aoFechar()
+  }
 
   const enviar = async (e: FormEvent) => {
     e.preventDefault()
     setTentou(true)
-    if (erros.length) return
+    if (erros.length) {
+      // Erro de um campo que não aparece para este tipo de cliente: avisa em vez de não fazer nada
+      const visiveis = ehAvulso ? [erroNome] : [erroDoc, erroNome, erroEmail, erroCep]
+      const escondido = erros.find((x) => !visiveis.includes(x))
+      if (escondido) toast.erro('Confira o cadastro', escondido)
+      return
+    }
+    // A lista daqui já mostra o mesmo CNPJ/CPF em outro cliente: nem envia
+    if (duplicado) return void oferecerExistente(duplicado)
     setSalvando(true)
     try {
       const alvo = cliente && versaoBase !== undefined ? { id: cliente.id, versao: versaoBase } : undefined
@@ -291,7 +347,12 @@ function FormularioCliente({
       aoSalvar?.(salvo)
       aoFechar()
     } catch (err) {
-      if (err instanceof ErroApi && err.status === 409 && cliente) {
+      const outro = duplicadoDoErro(err)
+      if (outro) {
+        // Outro computador cadastrou o mesmo CNPJ/CPF antes (a lista daqui ainda não mostrava)
+        await oferecerExistente(outro)
+      } else if (err instanceof ErroApi && err.status === 409 && cliente && err.dados.atual) {
+        // Conflito de versão: outra pessoa salvou este cliente enquanto você editava
         const atual = err.dados.atual as Cliente | undefined
         const sobrescrever = await confirmar({
           titulo: 'Cliente alterado por outra pessoa',
@@ -308,11 +369,9 @@ function FormularioCliente({
     }
   }
 
-  const ehPJ = f.tipo === 'PJ'
-  const ehAvulso = f.tipo === 'AVULSO'
-  const cnpjOk = ehPJ && cnpjValido(docDigitos)
+  const cnpjOk = ehPJ && cnpjValido(docChave)
   // O painel só mostra a consulta do CNPJ que está no campo agora
-  const painel = ehPJ && consulta.estado !== 'ocioso' && consulta.cnpj === docDigitos ? consulta : null
+  const painel = ehPJ && consulta.estado !== 'ocioso' && consulta.cnpj === docChave ? consulta : null
   const consultando = painel?.estado === 'carregando'
 
   const dicaDocumento: ReactNode = duplicado ? (
@@ -384,13 +443,15 @@ function FormularioCliente({
           label={ehPJ ? 'CNPJ' : 'CPF'}
           htmlFor="cli-doc"
           className={ehPJ ? 'sm:col-span-3' : 'sm:col-span-2'}
-          erro={tentou || docDigitos.length >= (ehPJ ? 14 : 11) ? erroDoc : null}
+          erro={tentou || docChave.length >= (ehPJ ? 14 : 11) ? erroDoc : null}
           hint={dicaDocumento}
         >
           <div className="relative">
             <Input
               id="cli-doc"
-              inputMode="numeric"
+              // CNPJ alfanumérico tem letras: teclado completo, já em maiúsculas
+              inputMode={ehPJ ? 'text' : 'numeric'}
+              autoCapitalize={ehPJ ? 'characters' : undefined}
               autoComplete="off"
               autoFocus
               value={f.documento}
@@ -399,18 +460,18 @@ function FormularioCliente({
                 // Enter no CNPJ consulta em vez de salvar o formulário
                 if (e.key === 'Enter' && cnpjOk) {
                   e.preventDefault()
-                  void buscarCnpj(docDigitos, true)
+                  void buscarCnpj(docChave, true)
                 }
               }}
               placeholder={ehPJ ? '00.000.000/0000-00' : '000.000.000-00'}
-              className={cn(ehPJ && 'pr-[7.25rem]', erroDoc && docDigitos.length >= (ehPJ ? 14 : 11) && 'border-danger')}
+              className={cn(ehPJ && 'pr-[7.25rem]', erroDoc && docChave.length >= (ehPJ ? 14 : 11) && 'border-danger')}
             />
             {ehPJ && (
               <div className="absolute inset-y-0 right-1 flex items-center">
                 <Button
                   variante="soft"
                   tamanho="sm"
-                  onClick={() => void buscarCnpj(docDigitos, true)}
+                  onClick={() => void buscarCnpj(docChave, true)}
                   disabled={!cnpjOk || consultando}
                   title="Buscar os dados da empresa na Receita Federal"
                   icone={consultando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Search className="h-3.5 w-3.5" />}
@@ -445,12 +506,15 @@ function FormularioCliente({
             className="overflow-hidden sm:col-span-6"
           >
             {painel.estado === 'carregando' && <ConsultandoCnpj />}
-            {painel.estado === 'ok' && <ResultadoCnpj dados={painel.dados} aoFechar={() => setConsulta({ estado: 'ocioso' })} />}
+            {painel.estado === 'ok' && (
+              <ResultadoCnpj dados={painel.dados} mantidos={painel.mantidos} aoFechar={() => setConsulta({ estado: 'ocioso' })} />
+            )}
             {painel.estado === 'erro' && (
               <ErroCnpj
                 tipo={painel.tipo}
                 mensagem={painel.mensagem}
-                aoTentar={() => void buscarCnpj(docDigitos, true)}
+                // Repete no mesmo modo: a automática que falhou não sobrescreve o que foi digitado depois
+                aoTentar={() => void buscarCnpj(docChave, painel.manual)}
                 aoFechar={() => setConsulta({ estado: 'ocioso' })}
               />
             )}
@@ -623,7 +687,7 @@ function ConsultandoCnpj() {
   )
 }
 
-function ResultadoCnpj({ dados, aoFechar }: { dados: DadosCnpj; aoFechar: () => void }) {
+function ResultadoCnpj({ dados, mantidos, aoFechar }: { dados: DadosCnpj; mantidos: boolean; aoFechar: () => void }) {
   const aviso = avisoSituacao(dados.situacaoCadastral)
   const tom = tomSituacao(dados.situacaoCadastral)
   return (
@@ -676,7 +740,9 @@ function ResultadoCnpj({ dados, aoFechar }: { dados: DadosCnpj; aoFechar: () => 
 
       <p className="mt-3 flex items-center gap-1.5 text-xs text-muted">
         <Sparkles className="h-3.5 w-3.5 shrink-0 text-brand" />
-        Campos preenchidos com os dados da Receita. Confira e ajuste se precisar.
+        {mantidos
+          ? 'Campos vazios preenchidos com os dados da Receita; o que já estava preenchido foi mantido. Use “Consultar” para trocar tudo.'
+          : 'Campos preenchidos com os dados da Receita. Confira e ajuste se precisar.'}
       </p>
     </div>
   )
@@ -693,7 +759,9 @@ function ErroCnpj({
   aoTentar: () => void
   aoFechar: () => void
 }) {
-  const naoEncontrado = tipo === 'naoEncontrado'
+  const naoSuportado = tipo === 'naoSuportado'
+  // Os dois avisos pedem para preencher à mão; repetir a consulta não adianta
+  const naoEncontrado = tipo === 'naoEncontrado' || naoSuportado
   const semRede = tipo === 'semInternet' || tipo === 'semServidor'
   return (
     <div
@@ -718,10 +786,16 @@ function ErroCnpj({
       </div>
       <div className="min-w-0 flex-1">
         <p className="text-sm font-medium text-ink">
-          {naoEncontrado ? 'CNPJ não encontrado' : semRede ? 'Consulta indisponível agora' : 'Não foi possível consultar'}
+          {naoSuportado
+            ? 'Consulta indisponível para este CNPJ'
+            : naoEncontrado
+              ? 'CNPJ não encontrado'
+              : semRede
+                ? 'Consulta indisponível agora'
+                : 'Não foi possível consultar'}
         </p>
         <p className="mt-0.5 text-[13px] text-ink-2">
-          {naoEncontrado ? `${mensagem} Confira os números ou preencha os dados à mão.` : mensagem}
+          {tipo === 'naoEncontrado' ? `${mensagem} Confira os números ou preencha os dados à mão.` : mensagem}
         </p>
         {!naoEncontrado && (
           <Button

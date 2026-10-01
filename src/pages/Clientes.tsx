@@ -10,7 +10,7 @@ import { confirmar } from '../components/ui/Feedback'
 import { Select } from '../components/ui/Form'
 import { Avatar, EmptyState, Menu, PageHeader, SearchInput, Segmented } from '../components/ui/Misc'
 import { Linha, Tabela, Td, Th } from '../components/ui/Table'
-import { ROTULO_TIPO_CLIENTE, rotuloSituacao, situacaoPedeAtencao, tomSituacao } from '../lib/consultas'
+import { chaveDocumento, ROTULO_TIPO_CLIENTE, rotuloSituacao, situacaoPedeAtencao, tomSituacao } from '../lib/consultas'
 import { exportarCSV } from '../lib/csv'
 import { dataCurta, enderecoCompleto, moeda, normalizar, numero } from '../lib/format'
 import { useEventosCompletos } from '../lib/hooks'
@@ -73,8 +73,8 @@ export function Clientes() {
           normalizar(`${c.nome} ${c.razaoSocial} ${c.documento} ${c.responsavel} ${c.cidade} ${c.telefone} ${c.email}`).includes(
             q,
           ) ||
-          // CNPJ/CPF digitado só com números
-          (/^\d{3,}$/.test(q) && c.documento.replace(/\D/g, '').includes(q)),
+          // CNPJ/CPF digitado sem pontuação (o CNPJ alfanumérico também tem letras)
+          (/^[\da-z]{3,}$/.test(q) && /\d/.test(q) && chaveDocumento(c.documento).toLowerCase().includes(q)),
       )
       .map((c) => ({ c, s: estat.get(c.id) ?? vazio }))
       .sort((a, b) => {

@@ -11,23 +11,32 @@ const SIGLAS = new Set(['LTDA', 'ME', 'EPP', 'EIRELI', 'S/A', 'SA', 'S.A', 'CIA'
 /** Algarismos romanos com 2+ letras (ex.: "XV de Novembro", "Pio XII"). */
 const ROMANO = /^(?=[IVX]{2,}$)X{0,3}(IX|IV|V?I{0,3})$/
 
+/** Palavra de 2 a 4 consoantes, sem vogal (nem Y): costuma ser sigla em nomes de empresa ("CPFL", "BRF", "DJ"). */
+const SO_CONSOANTES = /^[B-DF-HJ-NP-TV-XZ]{2,4}$/
+
+/** Abreviações sem vogal que ficam como título ("Dr.", "Sr.", "Jr."). */
+const ABREVIACOES = new Set(['DR', 'DRS', 'SR', 'SRS', 'JR'])
+
 /**
  * "BAIRRO DA BOA MORTE" → "Bairro da Boa Morte".
  * Mantém siglas (LTDA, ME, EPP, EIRELI, S/A, CIA, MEI), números e romanos;
  * preposições ficam minúsculas, exceto na primeira palavra.
+ * Com `siglas` (nomes de empresa), também mantém palavras curtas só de consoantes ("CPFL", "BRF S.A.").
  */
-export function formatoTitulo(texto: string | null | undefined) {
+export function formatoTitulo(texto: string | null | undefined, opcoes: { siglas?: boolean } = {}) {
   const palavras = (texto ?? '').trim().split(/\s+/).filter(Boolean)
   return palavras
     .map((palavra, i) => {
       const maiuscula = palavra.toLocaleUpperCase('pt-BR')
       const nucleo = maiuscula.replace(/^[^\p{L}\d]+|[^\p{L}\d]+$/gu, '')
       if (SIGLAS.has(nucleo) || /\d/.test(palavra) || ROMANO.test(nucleo)) return maiuscula
+      if (opcoes.siglas && SO_CONSOANTES.test(nucleo) && !ABREVIACOES.has(nucleo) && !palavra.endsWith('.')) return maiuscula
       const minuscula = palavra.toLocaleLowerCase('pt-BR')
       if (i > 0 && PREPOSICOES.has(minuscula)) return minuscula
-      // Maiúscula no início e depois de hífen, apóstrofo, barra ou parêntese ("D'Oeste", "Sul-Americana")
+      // Maiúscula no início e depois de hífen, apóstrofo, barra ou parêntese ("D'Oeste", "Sul-Americana"),
+      // mas não no possessivo "'s" ("Bob's", "Maria's")
       return minuscula.replace(
-        /(^|[-'’/(])(\p{L})/gu,
+        /(^|[-/(]|['’](?!s(?:[^\p{L}]|$)))(\p{L})/gu,
         (_, antes: string, letra: string) => antes + letra.toLocaleUpperCase('pt-BR'),
       )
     })

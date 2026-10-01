@@ -64,14 +64,14 @@ interface Bruto {
 function montar(b: Bruto, fonte: string): Interpretacao<DadosCnpj> {
   const razaoSocial = textoLimpo(b.razaoSocial)
   if (!razaoSocial) return { tipo: 'falha', motivo: 'resposta sem razão social' }
-  const nomeFantasia = formatoTitulo(textoLimpo(b.nomeFantasia))
+  const nomeFantasia = formatoTitulo(textoLimpo(b.nomeFantasia), { siglas: true })
   return {
     tipo: 'ok',
     dados: {
       cnpj: mascaraCnpj(b.cnpj),
       razaoSocial,
       nomeFantasia,
-      nomeSugerido: nomeFantasia || formatoTitulo(razaoSocial),
+      nomeSugerido: nomeFantasia || formatoTitulo(razaoSocial, { siglas: true }),
       situacaoCadastral: textoLimpo(b.situacao).toLocaleUpperCase('pt-BR'),
       dataAbertura: formatarData(b.dataAbertura),
       atividadePrincipal: textoLimpo(b.atividade),

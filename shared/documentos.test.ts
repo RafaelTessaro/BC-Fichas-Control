@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
+import { normalizarCliente } from './dominio.ts'
 import {
+  cnpjAlfanumerico,
   cnpjValido,
   completarCnpj,
   completarCpf,
@@ -9,6 +11,7 @@ import {
   mascaraCpf,
   mascaraDocumento,
   mascaraTelefone,
+  normalizarCnpj,
   somenteDigitos,
 } from './documentos.ts'
 
@@ -35,6 +38,55 @@ describe('CNPJ', () => {
     expect(cnpjValido(completarCnpj('987654320001'))).toBe(true)
     // Base curta é completada com zeros à esquerda
     expect(completarCnpj('1')).toHaveLength(14)
+  })
+})
+
+describe('CNPJ alfanumérico (IN RFB 2.229/2024)', () => {
+  // Exemplo divulgado pela Receita Federal; DV conferido pelo módulo 11 com o valor (ASCII − 48) de cada caractere
+  it('aceita o exemplo oficial, com ou sem máscara e em minúsculas', () => {
+    expect(cnpjValido('12.ABC.345/01DE-35')).toBe(true)
+    expect(cnpjValido('12ABC34501DE35')).toBe(true)
+    expect(cnpjValido('12.abc.345/01de-35')).toBe(true)
+  })
+
+  it('calcula os verificadores com o valor ASCII − 48 de cada caractere', () => {
+    expect(completarCnpj('12ABC34501DE')).toBe('12ABC34501DE35')
+    expect(completarCnpj('12.abc.345/01de')).toBe('12ABC34501DE35')
+    expect(cnpjValido(completarCnpj('ZZ1A2B3C0001'))).toBe(true)
+  })
+
+  it('recusa verificador errado, letras nos verificadores e caracteres repetidos', () => {
+    expect(cnpjValido('12.ABC.345/01DE-36')).toBe(false)
+    expect(cnpjValido('12.ABC.345/01DE-3A')).toBe(false)
+    expect(cnpjValido('12ABC34501DE3')).toBe(false)
+    expect(cnpjValido('A'.repeat(14))).toBe(false)
+  })
+
+  it('normaliza mantendo letras maiúsculas e identifica o formato', () => {
+    expect(normalizarCnpj('12.abc.345/01de-35')).toBe('12ABC34501DE35')
+    expect(normalizarCnpj(undefined as unknown as string)).toBe('')
+    expect(cnpjAlfanumerico('12.ABC.345/01DE-35')).toBe(true)
+    expect(cnpjAlfanumerico('12.403.843/0001-18')).toBe(false)
+  })
+
+  it('máscara aceita letras nas 12 primeiras posições e só números nos verificadores', () => {
+    expect(mascaraCnpj('12a')).toBe('12.A')
+    expect(mascaraCnpj('12abc345')).toBe('12.ABC.345')
+    expect(mascaraCnpj('12abc34501de')).toBe('12.ABC.345/01DE')
+    expect(mascaraCnpj('12abc34501dex')).toBe('12.ABC.345/01DE')
+    expect(mascaraCnpj('12ABC34501DE35')).toBe('12.ABC.345/01DE-35')
+    expect(mascaraCnpj('12.ABC.345/01DE-35')).toBe('12.ABC.345/01DE-35')
+    expect(mascaraDocumento('12abc34501de35', 'PJ')).toBe('12.ABC.345/01DE-35')
+  })
+
+  it('o cadastro de empresa aceita e guarda o CNPJ com letras maiúsculas', () => {
+    const ok = normalizarCliente({ tipo: 'PJ', nome: 'Nova Empresa', documento: '12abc34501de35' })
+    expect(ok.erros).toEqual([])
+    expect(ok.valor.documento).toBe('12.ABC.345/01DE-35')
+    const ruim = normalizarCliente({ tipo: 'PJ', nome: 'Nova Empresa', documento: '12.ABC.345/01DE-36' })
+    expect(ruim.erros).toEqual(['CNPJ inválido. Confira o número digitado.'])
+    // CPF continua só com números
+    expect(normalizarCliente({ tipo: 'PF', nome: 'Ana', documento: '529.982.247-25' }).valor.documento).toBe('529.982.247-25')
   })
 })
 

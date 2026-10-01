@@ -19,7 +19,7 @@ import {
   Wallet,
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ConferenciaBadge } from '../components/Badges'
 import { ClienteFormModal } from '../components/ClienteFormModal'
@@ -113,13 +113,19 @@ export function EventoForm() {
     setF((s) => ({ ...s, clienteId: c.id, cidade: s.cidade || c.cidade }))
     setErros((e) => ({ ...e, cliente: undefined }))
   }
+  // Trava contra duplo clique (ou Enter seguido de clique): cada execução criaria outro avulso
+  const criandoAvulso = useRef(false)
   const usarComoAvulso = async (nome: string) => {
+    if (criandoAvulso.current) return
+    criandoAvulso.current = true
     try {
       const c = await salvarCliente({ ...CLIENTE_VAZIO, tipo: 'AVULSO', nome })
       selecionarCliente(c)
       toast.sucesso('Cliente avulso criado', c.nome)
     } catch (e) {
       avisarErro('Não foi possível criar o cliente avulso', e)
+    } finally {
+      criandoAvulso.current = false
     }
   }
   const acoesCliente: AcaoCombo[] = [

@@ -1,6 +1,6 @@
 // Serviço de consultas usado pelas rotas: valida, consulta com fallback, guarda em cache e traduz erros.
 
-import { cnpjValido, mascaraCep, mascaraCnpj, somenteDigitos } from '#shared/documentos.ts'
+import { cnpjAlfanumerico, cnpjValido, mascaraCep, mascaraCnpj, normalizarCnpj, somenteDigitos } from '#shared/documentos.ts'
 import { ErroApi } from '../erros.ts'
 import { PROVEDORES_CEP, type DadosCep } from './cep.ts'
 import { PROVEDORES_CNPJ, type DadosCnpj } from './cnpj.ts'
@@ -26,8 +26,10 @@ export interface OpcoesConsultas {
 }
 
 export const MENSAGENS = {
-  cnpjInvalido: 'CNPJ inválido. Confira os números digitados.',
+  cnpjInvalido: 'CNPJ inválido. Confira o número digitado.',
   cnpjNaoEncontrado: 'CNPJ não encontrado na Receita Federal.',
+  cnpjAlfanumerico:
+    'Os serviços de consulta ainda não reconhecem este CNPJ no formato novo, com letras. Preencha os dados da empresa à mão.',
   cepInvalido: 'CEP inválido. Informe os 8 números.',
   cepNaoEncontrado: 'CEP não encontrado.',
   semInternet: 'Sem conexão com a internet no servidor. Preencha os dados manualmente.',
@@ -81,10 +83,16 @@ export function criarServicoConsultas(opcoes: OpcoesConsultas = {}) {
   return {
     /** Dados da empresa na Receita Federal. Lança ErroApi 400, 404 ou 503. */
     async cnpj(valor: string): Promise<DadosCnpj> {
-      const digitos = somenteDigitos(valor)
-      if (!cnpjValido(digitos)) throw new ErroApi(400, MENSAGENS.cnpjInvalido)
-      const r = await cnpj.consultar(digitos)
-      if (r.tipo === 'ok') return { ...r.dados, cnpj: mascaraCnpj(digitos) }
+      // Enviado como está (só sem pontuação): o CNPJ alfanumérico mantém as letras maiúsculas
+      const chave = normalizarCnpj(valor)
+      if (!cnpjValido(chave)) throw new ErroApi(400, MENSAGENS.cnpjInvalido)
+      const r = await cnpj.consultar(chave)
+      if (r.tipo === 'ok') return { ...r.dados, cnpj: mascaraCnpj(chave) }
+      // Os provedores podem ainda não aceitar o CNPJ com letras (respondem 400, 404 ou erro):
+      // repetir não adianta, então avisa para preencher à mão (só a falta de internet é tratada como tal)
+      if (cnpjAlfanumerico(chave) && !(r.tipo === 'indisponivel' && r.semInternet)) {
+        throw new ErroApi(404, MENSAGENS.cnpjAlfanumerico, { motivo: 'cnpj_alfanumerico' })
+      }
       if (r.tipo === 'naoEncontrado') throw new ErroApi(404, MENSAGENS.cnpjNaoEncontrado)
       throw erroIndisponivel(r)
     },

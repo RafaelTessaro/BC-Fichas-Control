@@ -85,6 +85,26 @@ describe('formato de título', () => {
     expect(formatoTitulo(null)).toBe('')
   })
 
+  it('possessivo com apóstrofo fica minúsculo; o "D’" de nomes continua', () => {
+    expect(formatoTitulo("MARIA'S LANCHES")).toBe("Maria's Lanches")
+    expect(formatoTitulo("BOB'S")).toBe("Bob's")
+    expect(formatoTitulo('MC DONALD’S')).toBe('Mc Donald’s')
+    expect(formatoTitulo("RUA D'AVILA")).toBe("Rua D'Avila")
+    expect(formatoTitulo('SANTA BARBARA D’OESTE')).toBe('Santa Barbara D’Oeste')
+  })
+
+  it('em nomes de empresa, mantém siglas curtas só de consoantes', () => {
+    expect(formatoTitulo('CPFL', { siglas: true })).toBe('CPFL')
+    expect(formatoTitulo('BRF S.A.', { siglas: true })).toBe('BRF S.A.')
+    expect(formatoTitulo('MV EVENTOS', { siglas: true })).toBe('MV Eventos')
+    expect(formatoTitulo('DJ MARCOS', { siglas: true })).toBe('DJ Marcos')
+    // Abreviações e palavras com vogal (ou Y) continuam como título
+    expect(formatoTitulo('DR. PET CLINICA', { siglas: true })).toBe('Dr. Pet Clinica')
+    expect(formatoTitulo('BANCO XYZ S/A', { siglas: true })).toBe('Banco Xyz S/A')
+    // Em endereços (sem a opção), nada muda
+    expect(formatoTitulo('JD AMERICA')).toBe('Jd America')
+  })
+
   it('monta o logradouro com o tipo sem repetir', () => {
     expect(juntarLogradouro('RUA', '13')).toBe('Rua 13')
     expect(juntarLogradouro('AVENIDA', 'AVENIDA BRASIL')).toBe('Avenida Brasil')
@@ -245,6 +265,39 @@ describe('consulta de CNPJ com fallback', () => {
       await expect(s.cnpj(ruim)).rejects.toMatchObject({ status: 400, message: MENSAGENS.cnpjInvalido })
     }
     expect(chamadas).toHaveLength(0)
+  })
+
+  it('CNPJ alfanumérico é consultado como está, com as letras', async () => {
+    const corpo = { ...(fixture('cnpj-brasilapi.json') as object), cnpj: '12ABC34501DE35' }
+    const { fetch, chamadas } = fetchFalso({ [BRASILAPI_CNPJ]: { status: 200, corpo } })
+    const r = await criarServicoConsultas({ fetch }).cnpj('12.abc.345/01de-35')
+    expect(chamadas).toEqual([`${BRASILAPI_CNPJ}12ABC34501DE35`])
+    expect(r.cnpj).toBe('12.ABC.345/01DE-35')
+  })
+
+  it('CNPJ alfanumérico que os provedores ainda não aceitam: 404 com mensagem para preencher à mão', async () => {
+    const { fetch } = fetchFalso({
+      [BRASILAPI_CNPJ]: { status: 400, corpo: { message: 'CNPJ 12ABC34501DE35 inválido.' } },
+      [CNPJWS]: { status: 400 },
+      [MINHA_RECEITA]: { status: 400 },
+    })
+    await expect(criarServicoConsultas({ fetch }).cnpj('12ABC34501DE35')).rejects.toMatchObject({
+      status: 404,
+      message: MENSAGENS.cnpjAlfanumerico,
+      dados: { motivo: 'cnpj_alfanumerico' },
+    })
+    const naoAchou = fetchFalso({ [BRASILAPI_CNPJ]: { status: 404 } })
+    await expect(criarServicoConsultas({ fetch: naoAchou.fetch }).cnpj('12ABC34501DE35')).rejects.toMatchObject({
+      status: 404,
+      dados: { motivo: 'cnpj_alfanumerico' },
+    })
+    // Sem internet continua sendo "sem internet"
+    await expect(criarServicoConsultas({ fetch: fetchFalso({}).fetch }).cnpj('12ABC34501DE35')).rejects.toMatchObject({
+      status: 503,
+      dados: { motivo: 'sem_internet' },
+    })
+    // Verificador errado: 400 sem consultar
+    await expect(criarServicoConsultas({ fetch }).cnpj('12ABC34501DE36')).rejects.toMatchObject({ status: 400 })
   })
 
   it('guarda o resultado em cache por 24 h', async () => {

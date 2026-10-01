@@ -1,9 +1,10 @@
 // Consultas de CNPJ e CEP feitas pelo servidor (é ele quem acessa a internet).
 
 import type { Tone } from '#shared/calc.ts'
-import { somenteDigitos } from '#shared/documentos.ts'
-import type { ClienteInput, TipoCliente } from '#shared/tipos.ts'
+import { mascaraDocumento, normalizarCnpj, somenteDigitos } from '#shared/documentos.ts'
+import type { Cliente, ClienteInput, TipoCliente } from '#shared/tipos.ts'
 import { api, ErroApi } from './api'
+import { normalizar } from './format'
 
 /** Dados da empresa na Receita Federal (mesmo formato de `server/consultas/cnpj.ts`). */
 export interface DadosCnpj {
@@ -43,13 +44,15 @@ export interface DadosCep {
 /** Três provedores com até 8 s cada: o navegador espera um pouco mais que isso. */
 const TEMPO_LIMITE = 30_000
 
-export const consultarCnpj = (cnpj: string) => api.get<DadosCnpj>(`/api/consultas/cnpj/${somenteDigitos(cnpj)}`, TEMPO_LIMITE)
+// O CNPJ vai como está, só sem pontuação: o formato alfanumérico mantém as letras maiúsculas
+export const consultarCnpj = (cnpj: string) => api.get<DadosCnpj>(`/api/consultas/cnpj/${normalizarCnpj(cnpj)}`, TEMPO_LIMITE)
 
 export const consultarCep = (cep: string) => api.get<DadosCep>(`/api/consultas/cep/${somenteDigitos(cep)}`, TEMPO_LIMITE)
 
 // ---- Erros ------------------------------------------------------------------
 
-export type TipoErroConsulta = 'invalido' | 'naoEncontrado' | 'semInternet' | 'semServidor' | 'outro'
+/** `naoSuportado`: os serviços de consulta ainda não reconhecem o CNPJ alfanumérico (repetir não adianta). */
+export type TipoErroConsulta = 'invalido' | 'naoEncontrado' | 'naoSuportado' | 'semInternet' | 'semServidor' | 'outro'
 
 /** Classifica o erro de uma consulta e devolve uma mensagem amigável. */
 export function erroDeConsulta(e: unknown, oQue: 'CNPJ' | 'CEP'): { tipo: TipoErroConsulta; mensagem: string } {
@@ -58,7 +61,9 @@ export function erroDeConsulta(e: unknown, oQue: 'CNPJ' | 'CEP'): { tipo: TipoEr
     return { tipo: 'semServidor', mensagem: 'Sem conexão com o servidor. Verifique a rede e preencha os dados à mão.' }
   }
   if (e.status === 400) return { tipo: 'invalido', mensagem: e.message }
-  if (e.status === 404) return { tipo: 'naoEncontrado', mensagem: e.message }
+  if (e.status === 404) {
+    return { tipo: e.dados.motivo === 'cnpj_alfanumerico' ? 'naoSuportado' : 'naoEncontrado', mensagem: e.message }
+  }
   if (e.status === 503) {
     return {
       tipo: 'semInternet',
@@ -123,6 +128,23 @@ export function camposDoCnpj(d: DadosCnpj, agoraIso: string): Partial<ClienteInp
   }
 }
 
+/**
+ * Valores de um cliente já consultado que vieram da Receita (dados oficiais da empresa e endereço).
+ * Ao editar e trocar o CNPJ, eles são tratados como "da consulta anterior" e substituídos pelos do
+ * CNPJ novo, como acontece no cadastro novo. Nome, telefone e e-mail costumam ser ajustados à mão
+ * e ficam de fora (só são preenchidos se estiverem vazios).
+ */
+export function valoresDaConsultaAnterior(cliente?: Cliente): Partial<ClienteInput> {
+  if (!cliente || cliente.tipo !== 'PJ' || !cliente.consultadoEm) return {}
+  const campos = ['razaoSocial', 'cep', 'logradouro', 'numero', 'complemento', 'bairro', 'cidade', 'uf'] as const
+  return Object.fromEntries(campos.map((k) => [k, cliente[k]]))
+}
+
+/** Campos que vieram preenchidos na consulta, mas ficaram diferentes no formulário (o usuário já tinha digitado). */
+export function camposMantidos(form: ClienteInput, novos: Partial<ClienteInput>): Array<keyof ClienteInput> {
+  return (Object.keys(novos) as Array<keyof ClienteInput>).filter((k) => !!novos[k] && form[k] !== novos[k])
+}
+
 /** Campos que só a consulta preenche: sempre são atualizados. */
 const SEMPRE: Array<keyof ClienteInput> = ['situacaoCadastral', 'consultadoEm']
 
@@ -155,6 +177,77 @@ export function mesclarConsulta(
     aplicados[k] = novo as never
   }
   return { form, aplicados }
+}
+
+/**
+ * Aplica o endereço de um CEP. Rua e bairro vazios (CEP geral da cidade) só mantêm o que estava
+ * no formulário se for da mesma cidade e UF; de outra cidade, eles ficam em branco para preencher.
+ */
+export function mesclarCep<T extends Pick<ClienteInput, 'logradouro' | 'bairro' | 'cidade' | 'uf'>>(
+  atual: T,
+  r: Pick<DadosCep, 'logradouro' | 'bairro' | 'cidade' | 'uf'>,
+): T {
+  const mesmaCidade = !!atual.cidade.trim() && normalizar(atual.cidade) === normalizar(r.cidade) && atual.uf === r.uf
+  return {
+    ...atual,
+    logradouro: r.logradouro || (mesmaCidade ? atual.logradouro : ''),
+    bairro: r.bairro || (mesmaCidade ? atual.bairro : ''),
+    cidade: r.cidade || atual.cidade,
+    uf: r.uf || atual.uf,
+  }
+}
+
+// ---- Cadastro -------------------------------------------------------------------
+
+/**
+ * Troca o tipo do cliente no formulário, limpando o que deixa de aparecer na tela:
+ * um valor escondido (ex.: e-mail inválido de empresa num avulso) impediria salvar sem mostrar
+ * o motivo, ou seria gravado sem o usuário ver.
+ */
+export function trocarTipoCliente(atual: ClienteInput, tipo: TipoCliente): ClienteInput {
+  if (tipo === atual.tipo) return atual
+  const semDadosDeEmpresa = { razaoSocial: '', responsavel: '', situacaoCadastral: '', consultadoEm: '' }
+  if (tipo === 'AVULSO') {
+    return {
+      ...atual,
+      ...semDadosDeEmpresa,
+      tipo,
+      documento: '',
+      email: '',
+      cep: '',
+      logradouro: '',
+      numero: '',
+      complemento: '',
+      bairro: '',
+    }
+  }
+  if (tipo === 'PF') return { ...atual, ...semDadosDeEmpresa, tipo, documento: mascaraDocumento(atual.documento, 'PF') }
+  return { ...atual, tipo, documento: mascaraDocumento(atual.documento, 'PJ') }
+}
+
+/** Documento só com números e letras, para comparar CNPJ/CPF com ou sem máscara. */
+export const chaveDocumento = (documento: string) => normalizarCnpj(documento)
+
+/** Outro cliente com o mesmo CNPJ/CPF (o servidor recusa salvar um segundo). */
+export function acharDuplicado<C extends Pick<Cliente, 'id' | 'documento'>>(
+  clientes: C[],
+  documento: string,
+  idIgnorado?: string,
+): C | undefined {
+  const chave = chaveDocumento(documento)
+  if (!chave) return undefined
+  return clientes.find((c) => c.id !== idIgnorado && chaveDocumento(c.documento) === chave)
+}
+
+/**
+ * Cliente já cadastrado com o mesmo documento, quando o servidor recusou com 409 por duplicidade.
+ * O 409 de conflito de versão (outra pessoa salvou antes) vem com `atual` e devolve `null`.
+ */
+export function duplicadoDoErro(e: unknown): { id: string; nome: string } | null {
+  if (!(e instanceof ErroApi) || e.status !== 409) return null
+  const d = e.dados.duplicado as { id?: unknown; nome?: unknown } | undefined
+  if (!d || typeof d.id !== 'string') return null
+  return { id: d.id, nome: typeof d.nome === 'string' ? d.nome : '' }
 }
 
 // ---- Rótulos do cadastro -------------------------------------------------------
