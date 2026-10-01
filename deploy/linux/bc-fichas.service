@@ -1,0 +1,22 @@
+# Serviço systemd do BC Fichas Control.
+# Instalação (ajuste o caminho e o usuário):
+#   sudo cp deploy/linux/bc-fichas.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now bc-fichas
+#   journalctl -u bc-fichas -f      # acompanhar o registro
+
+[Unit]
+Description=BC Fichas Control
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bcfichas
+WorkingDirectory=/opt/bc-fichas
+ExecStart=/usr/bin/node server/iniciar.mjs
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target

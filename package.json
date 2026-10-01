@@ -13,9 +13,9 @@
   "scripts": {
     "dev": "concurrently -k -n servidor,web -c green,blue \"npm:dev:servidor\" \"npm:dev:web\"",
     "dev:web": "vite",
-    "dev:servidor": "node --watch --disable-warning=ExperimentalWarning server/index.ts",
+    "dev:servidor": "node --watch server/iniciar.mjs",
     "build": "tsc -b && vite build",
-    "start": "node --disable-warning=ExperimentalWarning server/index.ts",
+    "start": "node server/iniciar.mjs",
     "test": "vitest run",
     "lint": "oxlint",
     "format": "prettier --write src server shared"

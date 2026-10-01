@@ -27,3 +27,6 @@ dist-ssr
 dados/
 dados-dev/
 .env
+
+# Worktrees temporários de ferramentas
+.claude/worktrees/
