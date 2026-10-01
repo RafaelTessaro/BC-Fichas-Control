@@ -179,7 +179,13 @@ export async function gerarResumoPDF(evento: Evento, cliente: Cliente | undefine
     ? (doc.setFontSize(9.5), doc.splitTextToSize(txt(evento.observacoes), R - meio) as string[]).slice(0, 12)
     : []
   const alturaPagamento = 9 + 5.5 + Math.max(1, linhasObs.length) * 4.2
-  garantirEspaco(alturaPagamento + 16)
+  // Mensagem final (campo "RODAPÉ" da planilha): texto livre, pode quebrar em até 4 linhas
+  const rodape = (evento.rodape || config.rodapePadrao).trim()
+  doc.setFont('helvetica', 'bold').setFontSize(13)
+  const linhasRodape = rodape ? (doc.splitTextToSize(txt(rodape), W) as string[]).slice(0, 4) : []
+  const ENTRELINHA_RODAPE = 5.3
+  const alturaRodape = 10 + Math.max(0, linhasRodape.length - 1) * ENTRELINHA_RODAPE + 6
+  garantirEspaco(alturaPagamento + alturaRodape)
   y += 9
   doc
     .setFont('helvetica', 'bold')
@@ -208,21 +214,22 @@ export async function gerarResumoPDF(evento: Evento, cliente: Cliente | undefine
     doc.text(linhasObs, meio, y + 5.5)
   }
 
-  // Mensagem de rodapé (campo "RODAPÉ" da planilha)
-  const rodape = (evento.rodape || config.rodapePadrao).trim()
-  const yRodape = Math.min(Math.max(y + 5.5 + Math.max(1, linhasObs.length) * 4.2 + 10, 248), LIMITE - 6)
-  if (rodape) {
+  // Fica perto do fim da página (como no modelo), mas nunca abaixo do limite do timbrado
+  const fimPagamento = y + 5.5 + Math.max(1, linhasObs.length) * 4.2
+  const extraLinhas = Math.max(0, linhasRodape.length - 1) * ENTRELINHA_RODAPE
+  const yRodape = Math.max(fimPagamento + 10, Math.min(248, LIMITE - 6 - extraLinhas))
+  if (linhasRodape.length) {
     doc
       .setFont('helvetica', 'bold')
       .setFontSize(13)
       .setTextColor(...VERDE)
-    doc.text(txt(rodape), 105, yRodape, { align: 'center', maxWidth: W })
+    linhasRodape.forEach((linha, i) => doc.text(linha, 105, yRodape + i * ENTRELINHA_RODAPE, { align: 'center' }))
   }
   doc
     .setFont('helvetica', 'normal')
     .setFontSize(7.5)
     .setTextColor(...SECUNDARIO)
-  doc.text('Resumo gerado automaticamente a partir do controle interno de locação.', 105, yRodape + 6, {
+  doc.text('Resumo gerado automaticamente a partir do controle interno de locação.', 105, yRodape + extraLinhas + 6, {
     align: 'center',
   })
 

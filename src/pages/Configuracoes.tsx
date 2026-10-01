@@ -27,12 +27,15 @@ export function Configuracoes() {
   const arquivo = useRef<HTMLInputElement>(null)
 
   // Se a configuração mudar fora deste formulário (ex.: backup restaurado), recarrega os campos
-  // Só substitui os campos se o usuário não tiver alterações pendentes (uma recarga com os mesmos
-  // valores não pode apagar o que está sendo digitado)
+  // Quando a configuração muda no servidor (outro computador, recarga), os campos que o usuário
+  // não está editando acompanham o servidor; os que ele alterou continuam como estão.
   if (base !== config) {
-    const editando = JSON.stringify(f) !== JSON.stringify(base)
+    const mesclado = { ...f }
+    for (const k of Object.keys(config) as Array<keyof Config>) {
+      if (f[k] === base[k]) Object.assign(mesclado, { [k]: config[k] })
+    }
     setBase(config)
-    if (!editando) setF(config)
+    setF(mesclado)
   }
   const alterado = JSON.stringify(f) !== JSON.stringify(config)
 
@@ -54,7 +57,11 @@ export function Configuracoes() {
   const salvar = async () => {
     setSalvando(true)
     try {
-      await salvarConfig({ ...f, frotaMaquinas: Math.max(1, f.frotaMaquinas) })
+      // O servidor pode ajustar valores (ex.: espaços no fim do rodapé): o formulário passa a
+      // mostrar exatamente o que foi gravado
+      const salvo = await salvarConfig({ ...f, frotaMaquinas: Math.max(1, f.frotaMaquinas) })
+      setBase(salvo)
+      setF(salvo)
       toast.sucesso('Configurações salvas', 'Os novos valores valem para os próximos eventos, em todos os computadores.')
     } catch (e) {
       avisarErro('Não foi possível salvar', e)

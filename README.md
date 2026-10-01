@@ -59,7 +59,7 @@ rede (peça ao responsável pela rede para reservar o IP no roteador).
 
    ```powershell
    cd C:\BC-Fichas
-   Set-ExecutionPolicy -Scope Process Bypass
+   Set-ExecutionPolicy -Scope Process Bypass -Force
    npm ci
    npm run build
    .\deploy\windows\instalar-servico.ps1
@@ -69,7 +69,8 @@ rede (peça ao responsável pela rede para reservar o IP no roteador).
    - cria uma tarefa que **inicia o sistema junto com o Windows** (mesmo sem ninguém logado) e
      o **reinicia sozinho** se ele parar por qualquer motivo;
    - libera a porta no Firewall para a rede da empresa;
-   - deixa a pasta acessível só para Administradores (os dados e a chave do Google ficam protegidos);
+   - deixa a pasta do sistema e a pasta de dados acessíveis só para Administradores (o banco e a
+     chave do Google ficam protegidos, e ninguém sem permissão consegue alterar o que roda no servidor);
    - mostra o endereço de acesso, por exemplo `http://192.168.0.10:3000`.
 
    Se aparecer o aviso de que a rede está como **Pública**, os outros computadores não vão

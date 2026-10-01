@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 Confirmar-Administrador
 Exigir-Node
 $Arquivo = (Resolve-Path $Arquivo).Path
-$banco = Join-Path $script:Raiz 'dados\bc-fichas.db'
+$banco = Join-Path (Pasta-Dados) 'bc-fichas.db'
 
 Write-Host 'Parando o servidor...'
 Parar-Servidor

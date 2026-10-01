@@ -8,7 +8,8 @@ import { useDados } from '../../store/dados'
  * Aguarda alguns segundos antes de aparecer para não piscar em reconexões rápidas.
  */
 export function AvisoConexao() {
-  const conectado = useDados((s) => s.conectado)
+  // Sem tempo real OU a tela não conseguiu se atualizar com o servidor
+  const conectado = useDados((s) => s.conectado && !s.falhaRecarga)
   const [mostrar, setMostrar] = useState(false)
 
   useEffect(() => {

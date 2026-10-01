@@ -32,6 +32,8 @@ interface DadosState {
   erro: string
   /** Conexão de tempo real com o servidor ativa. */
   conectado: boolean
+  /** A última tentativa de atualizar a tela falhou (uma nova tentativa já está agendada). */
+  falhaRecarga: boolean
 
   /** Abre a conexão com o servidor e carrega os dados. Retorna a função de encerramento. */
   iniciar: () => () => void
@@ -83,7 +85,15 @@ function recarregarPagina() {
 
 export const useDados = create<DadosState>()((set, get) => {
   const aplicarCarga = (d: DadosCompletos) => {
-    set({ clientes: d.clientes, eventos: d.eventos, config: d.config, revisao: d.revisao, status: 'pronto', erro: '' })
+    set({
+      clientes: d.clientes,
+      eventos: d.eventos,
+      config: d.config,
+      revisao: d.revisao,
+      status: 'pronto',
+      erro: '',
+      falhaRecarga: false,
+    })
     // Mesma revisão também é reaplicada: o status do Google Agenda é republicado sem nova revisão
     const pendentes = fila.filter((m) => m.revisao >= d.revisao).sort((a, b) => a.revisao - b.revisao)
     fila = []
@@ -129,6 +139,7 @@ export const useDados = create<DadosState>()((set, get) => {
     status: 'carregando',
     erro: '',
     conectado: false,
+    falhaRecarga: false,
 
     iniciar() {
       let primeiraFalha = true
@@ -172,8 +183,9 @@ export const useDados = create<DadosState>()((set, get) => {
             set({ status: 'erro', erro: e.message })
             return
           }
-          // A tela já estava pronta: mostra o aviso de conexão e tenta de novo com espera crescente
-          set({ conectado: false })
+          // A tela já estava pronta: mostra o aviso e tenta de novo com espera crescente
+          // (o aviso some sozinho quando uma recarga der certo)
+          set({ falhaRecarga: true })
           const espera = Math.min(30_000, 2000 * 2 ** tentativasRecarga++)
           timerRecarga = setTimeout(() => void get().recarregar(), espera)
         })

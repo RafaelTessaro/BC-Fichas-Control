@@ -122,7 +122,9 @@ export class Repositorio {
       const atual = this.obterCliente(id)
       if (!atual) throw naoEncontrado('Cliente')
       this.verificarVersao(atual, versaoEsperada, 'cliente')
-      this.verificarDocumentoUnico(dados.documento, id)
+      // Só confere quando o documento muda: cadastros duplicados antigos (ex.: vindos de um
+      // backup de antes da regra) continuam editáveis
+      if (dados.documento !== atual.documento) this.verificarDocumentoUnico(dados.documento, id)
       const cliente: Cliente = { ...atual, ...dados, versao: atual.versao + 1, atualizadoEm: agora() }
       this.gravarCliente(cliente, false)
       return { cliente, anterior: atual, rev: this.incrementarRevisao() }

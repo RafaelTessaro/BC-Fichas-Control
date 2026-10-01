@@ -131,6 +131,29 @@ describe('API de dados', () => {
     await criarCliente({ tipo: 'AVULSO', nome: 'B' })
   })
 
+  it('cadastros duplicados antigos (de backup) continuam editáveis', async () => {
+    const backup = {
+      app: 'bc-fichas-control',
+      versao: 2,
+      clientes: [
+        { id: 'leg-1', tipo: 'PJ', nome: 'Legado 1', documento: '12.403.843/0001-18' },
+        { id: 'leg-2', tipo: 'PJ', nome: 'Legado 2', documento: '12.403.843/0001-18' },
+      ],
+      eventos: [],
+      config: {},
+      proximoCodigo: 1,
+    }
+    expect((await app.inject({ method: 'POST', url: '/api/backup/restaurar', headers: H, payload: backup })).statusCode).toBe(200)
+    const atual = (await app.inject({ url: '/api/dados' })).json().clientes.find((c: Cliente) => c.id === 'leg-1')
+    const r = await app.inject({
+      method: 'PUT',
+      url: '/api/clientes/leg-1',
+      headers: H,
+      payload: { ...atual, telefone: '(19) 3333-4444' },
+    })
+    expect(r.statusCode, r.body).toBe(200)
+  })
+
   it('detecta edição simultânea do mesmo cliente (409)', async () => {
     const c = await criarCliente()
     const r1 = await app.inject({

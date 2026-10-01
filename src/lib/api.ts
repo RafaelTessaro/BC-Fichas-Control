@@ -159,6 +159,8 @@ export function conectarTempoReal(handlers: {
 
   document.addEventListener('visibilitychange', aoMudarVisibilidade)
   abrir()
+  // Aba aberta em segundo plano (Ctrl+clique): também libera a conexão se continuar escondida
+  if (document.hidden) timerOculta = setTimeout(fechar, 30_000)
   return () => {
     clearTimeout(timerOculta)
     document.removeEventListener('visibilitychange', aoMudarVisibilidade)

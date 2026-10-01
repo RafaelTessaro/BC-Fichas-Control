@@ -4,7 +4,7 @@
 
   Como usar (PowerShell como Administrador):
     cd C:\BC-Fichas
-    Set-ExecutionPolicy -Scope Process Bypass
+    Set-ExecutionPolicy -Scope Process Bypass -Force
     npm ci
     npm run build
     .\deploy\windows\instalar-servico.ps1            # usa a PORTA do .env (ou 3000)
