@@ -2,13 +2,14 @@
   Instala o BC Fichas Control para iniciar sozinho com o Windows (antes mesmo de alguém fazer login),
   reiniciar se parar, e libera a porta no Firewall para os outros computadores da rede.
 
-  Como usar (PowerShell como Administrador):
-    cd C:\BC-Fichas
+  Pacote completo (já traz o Node.js, as dependências e a interface compilada): extraia em C:\ e dê
+  dois cliques em INSTALAR.bat. Não precisa de internet.
+
+  Pela linha de comando (PowerShell como Administrador, na pasta do sistema):
     Set-ExecutionPolicy -Scope Process Bypass -Force
-    npm ci
-    npm run build
     .\deploy\windows\instalar-servico.ps1            # usa a PORTA do .env (ou 3000)
     .\deploy\windows\instalar-servico.ps1 -Porta 8080  # grava PORTA=8080 no .env
+  Com o código-fonte (sem a pasta node_modules), o script roda npm ci e npm run build antes (precisa de internet).
 
   -IncluirRedePublica: libera a porta também quando o Windows classifica a rede como "Pública"
   (prefira marcar a rede da empresa como "Privada" — veja o aviso no final).
@@ -22,8 +23,14 @@ $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'comum.ps1')
 
 Confirmar-Administrador
+Exigir-PastaFixa
+$instalada = Pasta-Instalada
+if ($instalada -and -not (Mesma-Pasta $instalada $script:Raiz)) {
+  # Instalar de novo em outra pasta deixaria os dados para trás (eles ficam na pasta instalada)
+  throw "O sistema já está instalado em $instalada. Para passar para esta versão, use o ATUALIZAR.bat desta pasta (os dados são mantidos)."
+}
 Exigir-Node
-Write-Host "Node.js encontrado: $(node --version)"
+Write-Host "Node.js $(node --version) ($((Get-Command node).Source))"
 
 if ($Porta -gt 0) { Gravar-Porta $Porta } else { $Porta = Ler-Porta }
 

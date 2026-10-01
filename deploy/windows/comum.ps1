@@ -10,9 +10,25 @@ function Confirmar-Administrador {
   }
 }
 
+# Usa o Node.js que vem no pacote completo (pasta "node"); sem ela, o Node.js instalado no Windows.
 function Exigir-Node {
+  $embutido = Join-Path $script:Raiz 'node'
+  if (Test-Path (Join-Path $embutido 'node.exe')) { $env:Path = "$embutido;$env:Path" }
   if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    throw 'Node.js não encontrado. Instale a versão LTS em https://nodejs.org e rode novamente.'
+    throw 'Node.js não encontrado. Use o pacote completo (já traz o Node.js) ou instale a versão LTS em https://nodejs.org e rode novamente.'
+  }
+  & node -e "const [a, b] = process.versions.node.split('.').map(Number); process.exit(a > 22 || (a === 22 && b >= 18) ? 0 : 1)"
+  if ($LASTEXITCODE -ne 0) {
+    throw "O Node.js instalado ($(node --version)) é antigo demais. Instale a versão LTS em https://nodejs.org (precisa ser 22.18 ou mais nova)."
+  }
+}
+
+# Pastas de usuário (Downloads, Área de Trabalho, OneDrive) não servem para o sistema: podem ser
+# limpas ou sincronizadas, e a proteção da pasta tiraria o acesso do próprio usuário a elas.
+function Exigir-PastaFixa {
+  $usuarios = Join-Path $env:SystemDrive 'Users'
+  if ($script:Raiz.StartsWith("$usuarios\", [StringComparison]::OrdinalIgnoreCase)) {
+    throw "A pasta do sistema está em $($script:Raiz). Mova a pasta BC-Fichas-Control para C:\ (fica C:\BC-Fichas-Control) e rode de novo a partir de lá."
   }
 }
 
@@ -22,6 +38,20 @@ function Executar([string]$Descricao, [scriptblock]$Comando) {
   # Out-Host: a saída do comando vai para a tela, sem virar "valor de retorno" da função
   & $Comando | Out-Host
   if ($LASTEXITCODE -ne 0) { throw "$Descricao falhou (código $LASTEXITCODE). Nada foi alterado no serviço; corrija e rode de novo." }
+}
+
+# Pasta onde o sistema está instalado (a da tarefa agendada), ou $null se não estiver instalado.
+function Pasta-Instalada {
+  $tarefa = Get-ScheduledTask -TaskName $script:NomeTarefa -ErrorAction SilentlyContinue
+  if (-not $tarefa) { return $null }
+  $pasta = @($tarefa.Actions)[0].WorkingDirectory
+  if ([string]::IsNullOrWhiteSpace($pasta)) { return $null }
+  return $pasta.TrimEnd('\')
+}
+
+# Compara duas pastas do Windows (sem diferenciar maiúsculas nem a barra final).
+function Mesma-Pasta([string]$A, [string]$B) {
+  return [string]::Equals($A.TrimEnd('\'), $B.TrimEnd('\'), [StringComparison]::OrdinalIgnoreCase)
 }
 
 # Lê uma variável do .env exatamente como o servidor lê (o próprio Node interpreta o arquivo,

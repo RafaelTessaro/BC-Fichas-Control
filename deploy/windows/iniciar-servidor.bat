@@ -4,6 +4,8 @@ REM  - Com dois cliques: roda uma vez (bom para testar; feche a janela para para
 REM  - Pela tarefa agendada (argumento "servico"): se o servidor parar por qualquer motivo,
 REM    ele e iniciado de novo depois de 5 segundos.
 cd /d "%~dp0..\.."
+REM Pacote completo: usa o Node.js que vem na pasta "node" (dispensa instalar o Node.js no Windows)
+if exist "node\node.exe" set "PATH=%CD%\node;%PATH%"
 if not exist dados mkdir dados
 
 :inicio

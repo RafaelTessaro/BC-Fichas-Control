@@ -1,7 +1,7 @@
 ﻿<#
   Volta uma cópia do banco de dados (arquivo .db de dados\backups).
   PowerShell como Administrador:
-    powershell -ExecutionPolicy Bypass -File C:\BC-Fichas\deploy\windows\restaurar-copia.ps1 -Arquivo C:\BC-Fichas\dados\backups\bc-fichas_2026-10-01_08-00-00_diario.db
+    powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\restaurar-copia.ps1 -Arquivo C:\BC-Fichas-Control\dados\backups\bc-fichas_2026-10-01_08-00-00_diario.db
 
   O banco atual é guardado antes em dados\backups (motivo "antes-restaurar-copia").
 #>

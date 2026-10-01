@@ -23,15 +23,7 @@
   "dependencies": {
     "@fastify/static": "^10.1.5",
     "date-fns": "^4.4.0",
-    "fastify": "^5.12.5",
-    "jspdf": "^4.2.1",
-    "lucide-react": "^1.49.0",
-    "motion": "^13.5.0",
-    "react": "^19.2.8",
-    "react-dom": "^19.2.8",
-    "react-router-dom": "^7.18.4",
-    "recharts": "^3.10.1",
-    "zustand": "^5.0.15"
+    "fastify": "^5.12.5"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",
@@ -40,11 +32,19 @@
     "@types/react-dom": "^19.2.7",
     "@vitejs/plugin-react": "^6.1.1",
     "concurrently": "^10.0.5",
+    "jspdf": "^4.2.1",
+    "lucide-react": "^1.49.0",
+    "motion": "^13.5.0",
     "oxlint": "^1.81.0",
     "prettier": "^3.9.9",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "react-router-dom": "^7.18.4",
+    "recharts": "^3.10.1",
     "tailwindcss": "^4.3.3",
     "typescript": "~6.0.2",
     "vite": "^8.3.0",
-    "vitest": "^5.0.3"
+    "vitest": "^5.0.3",
+    "zustand": "^5.0.15"
   }
 }

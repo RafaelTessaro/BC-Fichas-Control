@@ -52,20 +52,17 @@ As regras ficam em [`shared/calc.ts`](shared/calc.ts), com testes em [`shared/ca
 Use um computador que fique ligado durante o expediente, de preferência com **IP fixo** na
 rede (peça ao responsável pela rede para reservar o IP no roteador).
 
-1. **Instale o Node.js** — baixe a versão **LTS** em <https://nodejs.org> (precisa ser 22.18 ou mais nova) e instale com as opções padrão.
-2. **Copie a pasta do sistema** para o servidor, por exemplo `C:\BC-Fichas`.
-3. Abra o **PowerShell como Administrador** (botão direito no menu Iniciar → *Terminal (Admin)* ou
-   *Windows PowerShell (Admin)*) e rode, nesta ordem:
+### Com o pacote completo (recomendado)
 
-   ```powershell
-   cd C:\BC-Fichas
-   Set-ExecutionPolicy -Scope Process Bypass -Force
-   npm ci
-   npm run build
-   .\deploy\windows\instalar-servico.ps1
-   ```
+O pacote `BC-Fichas-Control-<versão>-windows.zip` já traz o Node.js, as dependências e a interface
+compilada: **não precisa de internet nem de instalar nada antes**.
 
-   O script:
+1. Extraia o `.zip` direto no `C:\` (a pasta fica `C:\BC-Fichas-Control`). Não use Downloads nem
+   a Área de Trabalho: pastas de usuário podem ser limpas ou sincronizadas, e o instalador as recusa.
+2. Dê dois cliques em **`INSTALAR.bat`** e responda **Sim** quando o Windows pedir permissão de
+   administrador. Se aparecer *"O Windows protegeu o computador"*, clique em **Mais informações →
+   Executar assim mesmo**.
+3. O instalador:
    - cria uma tarefa que **inicia o sistema junto com o Windows** (mesmo sem ninguém logado) e
      o **reinicia sozinho** se ele parar por qualquer motivo;
    - libera a porta no Firewall para a rede da empresa;
@@ -80,18 +77,37 @@ rede (peça ao responsável pela rede para reservar o IP no roteador).
    ter um ícone na área de trabalho, no Chrome use **menu ⋮ → Transmitir, salvar e compartilhar →
    Criar atalho…** e marque **Abrir como janela**.
 
+**Para atualizar:** extraia o pacote novo em qualquer pasta (ex.: `C:\BC-Fichas-Control-novo`) e dê
+dois cliques no **`ATUALIZAR.bat` dessa pasta nova**. Ele encontra a instalação, faz uma cópia do
+banco, troca os arquivos do sistema (a pasta `dados` e o `.env` ficam como estão) e reinicia o
+servidor. Depois a pasta nova pode ser apagada.
+
+Para **gerar o pacote** a partir do código (Linux, macOS ou WSL, com Node.js, git, curl, zip e unzip):
+`scripts/empacotar-windows.sh` → `pacotes/BC-Fichas-Control-<versão>-windows.zip`. Ele empacota o
+último commit, com o Node.js para Windows conferido pela soma SHA-256 oficial.
+
+### A partir do código-fonte
+
+1. **Instale o Node.js** — baixe a versão **LTS** em <https://nodejs.org> (precisa ser 22.18 ou mais nova) e instale com as opções padrão.
+2. **Copie a pasta do sistema** para o servidor, por exemplo `C:\BC-Fichas-Control`.
+3. Abra o **PowerShell como Administrador** na pasta e rode
+   `Set-ExecutionPolicy -Scope Process Bypass -Force` e depois `.\deploy\windows\instalar-servico.ps1`
+   (sem a pasta `node_modules`, ele roda `npm ci` e `npm run build` antes, o que precisa de internet).
+
 Para testar antes de instalar como serviço: `npm start` (Ctrl+C encerra).
 
-Os comandos abaixo também são executados no **PowerShell como Administrador**:
+### Outros comandos
+
+Executados no **PowerShell como Administrador**:
 
 | Para… | Comando |
 | --- | --- |
-| Atualizar para uma nova versão (copie os arquivos novos por cima antes; a pasta `dados` é preservada) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas\deploy\windows\atualizar.ps1` |
-| Mudar a porta (padrão 3000) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas\deploy\windows\instalar-servico.ps1 -Porta 8080` |
-| Voltar uma cópia do banco | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas\deploy\windows\restaurar-copia.ps1 -Arquivo C:\BC-Fichas\dados\backups\<arquivo>.db` |
-| Remover o serviço (os dados não são apagados) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas\deploy\windows\desinstalar-servico.ps1` |
+| Atualizar na própria pasta (depois de copiar os arquivos novos por cima; a pasta `dados` é preservada) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\atualizar.ps1` |
+| Mudar a porta (padrão 3000) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\instalar-servico.ps1 -Porta 8080` |
+| Voltar uma cópia do banco | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\restaurar-copia.ps1 -Arquivo C:\BC-Fichas-Control\dados\backups\<arquivo>.db` |
+| Remover o serviço (os dados não são apagados) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\desinstalar-servico.ps1` |
 
-O registro (log) do servidor fica em `C:\BC-Fichas\dados\servidor.log`. Como a pasta é
+O registro (log) do servidor fica em `C:\BC-Fichas-Control\dados\servidor.log`. Como a pasta é
 restrita a Administradores, ao abri-la pelo Explorer o Windows pede confirmação.
 
 ### Linux

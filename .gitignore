@@ -31,3 +31,8 @@ dados-dev/
 # Worktrees temporários de ferramentas
 .claude/worktrees/
 __pycache__/
+
+# Pacotes gerados por scripts/empacotar-windows.sh (e o que só existe dentro deles)
+pacotes/
+/node/
+/pacote.json
