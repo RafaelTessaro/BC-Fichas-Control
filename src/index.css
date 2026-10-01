@@ -1,0 +1,202 @@
+@import 'tailwindcss';
+
+/* Inter (latin-ext) — apenas os alfabetos usados em português */
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('./assets/fonts/inter-latin-ext-wght-normal.woff2') format('woff2-variations');
+  unicode-range:
+    U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F,
+    U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* Inter (latin) — apenas os alfabetos usados em português */
+@font-face {
+  font-family: 'Inter Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('./assets/fonts/inter-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122,
+    U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
+
+/* ------------------------------------------------------------------------
+ * Tokens de cor — tema claro (padrão) e escuro.
+ * Toda a interface usa estes papéis; nunca cores soltas nos componentes.
+ * --------------------------------------------------------------------- */
+:root {
+  color-scheme: light;
+  --bg: #f5f6f7;
+  --surface: #ffffff;
+  --surface-2: #f4f5f7;
+  --surface-3: #eceef1;
+  --border: #e7e9ec;
+  --border-strong: #d5d9de;
+  --ink: #16181b;
+  --ink-2: #4b5059;
+  --muted: #858b94;
+
+  --brand: #0b9e4f;
+  --brand-hover: #098a45;
+  --brand-ink: #077a3c;
+  --brand-soft: #e7f6ee;
+  --ring: rgb(11 158 79 / 0.32);
+
+  --success: #0f8a47;
+  --success-soft: #e6f5ec;
+  --warning: #a86200;
+  --warning-dot: #f0a020;
+  --warning-soft: #fdf3e0;
+  --danger: #c93636;
+  --danger-soft: #fcecec;
+  --info: #2468c8;
+  --info-soft: #e9f1fc;
+  --neutral: #5d636c;
+  --neutral-soft: #eff1f3;
+
+  --series-1: #0b9e4f;
+  --series-2: #2a78d6;
+  --grid: #eceef1;
+  --axis: #c9cdd3;
+
+  --shadow-sm: 0 1px 2px rgb(16 24 40 / 0.04), 0 1px 3px rgb(16 24 40 / 0.04);
+  --shadow-md: 0 4px 12px -2px rgb(16 24 40 / 0.08), 0 2px 4px -2px rgb(16 24 40 / 0.04);
+  --shadow-lg: 0 24px 48px -12px rgb(16 24 40 / 0.18), 0 8px 16px -8px rgb(16 24 40 / 0.08);
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --bg: #0e1012;
+  --surface: #16181b;
+  --surface-2: #1c1f23;
+  --surface-3: #24282d;
+  --border: #262a2f;
+  --border-strong: #343940;
+  --ink: #f1f3f5;
+  --ink-2: #b3b9c2;
+  --muted: #7c838d;
+
+  --brand: #14b05c;
+  --brand-hover: #1cc068;
+  --brand-ink: #4fd18a;
+  --brand-soft: rgb(20 176 92 / 0.14);
+  --ring: rgb(20 176 92 / 0.4);
+
+  --success: #3ccf7f;
+  --success-soft: rgb(60 207 127 / 0.13);
+  --warning: #f2b64a;
+  --warning-dot: #f0a020;
+  --warning-soft: rgb(242 182 74 / 0.13);
+  --danger: #f07474;
+  --danger-soft: rgb(240 116 116 / 0.13);
+  --info: #6aa5f0;
+  --info-soft: rgb(106 165 240 / 0.13);
+  --neutral: #a2a8b1;
+  --neutral-soft: rgb(162 168 177 / 0.12);
+
+  --series-1: #14b05c;
+  --series-2: #3987e5;
+  --grid: #24282d;
+  --axis: #3a3f46;
+
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / 0.3);
+  --shadow-md: 0 6px 16px -4px rgb(0 0 0 / 0.45);
+  --shadow-lg: 0 24px 48px -12px rgb(0 0 0 / 0.6);
+}
+
+@theme inline {
+  --font-sans: 'Inter Variable', system-ui, -apple-system, 'Segoe UI', sans-serif;
+
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-muted: var(--muted);
+
+  --color-brand: var(--brand);
+  --color-brand-hover: var(--brand-hover);
+  --color-brand-ink: var(--brand-ink);
+  --color-brand-soft: var(--brand-soft);
+
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-dot: var(--warning-dot);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-info: var(--info);
+  --color-info-soft: var(--info-soft);
+  --color-neutral: var(--neutral);
+  --color-neutral-soft: var(--neutral-soft);
+
+  --shadow-xs: var(--shadow-sm);
+  --shadow-card: var(--shadow-md);
+  --shadow-float: var(--shadow-lg);
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv11', 'ss01';
+    transition:
+      background-color 0.3s ease,
+      color 0.3s ease;
+  }
+  ::selection {
+    background: var(--brand-soft);
+    color: var(--ink);
+  }
+  :focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+  input[type='date']::-webkit-calendar-picker-indicator {
+    opacity: 0.55;
+    cursor: pointer;
+  }
+  input[type='number']::-webkit-inner-spin-button,
+  input[type='number']::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  input[type='number'] {
+    -moz-appearance: textfield;
+  }
+}
+
+@layer components {
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+  .scroll-fino {
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-strong) transparent;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}
