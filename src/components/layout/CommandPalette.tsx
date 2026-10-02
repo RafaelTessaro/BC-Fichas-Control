@@ -106,7 +106,7 @@ function Paleta({ fechar }: { fechar: () => void }) {
       )
       out.push(
         ...eventos
-          .filter((e) => casa(`${e.nome} ${codigoEvento(e.codigo)} ${nomeCliente.get(e.clienteId) ?? ''} ${e.local}`))
+          .filter((e) => casa(`${e.nome} ${codigoEvento(e.codigo)} ${nomeCliente.get(e.clienteId) ?? ''} ${e.cabecalho}`))
           .sort((a, b) => b.codigo - a.codigo)
           .slice(0, 8)
           .map((e) => {

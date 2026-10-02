@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { CONFIG_PADRAO } from '#shared/dominio.ts'
+import { ordenarMaquinas } from '#shared/maquinas.ts'
 import type {
   Backup,
   Cliente,
@@ -9,12 +10,18 @@ import type {
   Evento,
   EventoInput,
   EventoPatch,
+  Maquina,
+  MaquinaInput,
   MensagemTempoReal,
+  OrdemServico,
+  OrdemServicoInput,
+  StatusMaquina,
+  TipoMaquina,
 } from '#shared/tipos.ts'
-import { api, conectarTempoReal } from '../lib/api'
+import { api, conectarTempoReal, type ResultadoAjuste } from '../lib/api'
 
 export { CONFIG_PADRAO }
-export type { ClienteInput, EventoInput }
+export type { ClienteInput, EventoInput, MaquinaInput, OrdemServicoInput, ResultadoAjuste }
 
 /** Registro que o usuário começou a editar (para detectar alterações de outra pessoa). */
 export interface Alvo {
@@ -25,6 +32,10 @@ export interface Alvo {
 interface DadosState {
   clientes: Cliente[]
   eventos: Evento[]
+  /** Máquinas cadastradas (P e G), em ordem natural de identificação. */
+  maquinas: Maquina[]
+  /** Ordens de serviço de manutenção, da mais recente para a mais antiga. */
+  ordens: OrdemServico[]
   config: Configuracoes
   /** Última revisão do servidor aplicada nesta tela. */
   revisao: number
@@ -45,11 +56,20 @@ interface DadosState {
   alterarEvento: (id: string, patch: EventoPatch) => Promise<Evento>
   duplicarEvento: (id: string) => Promise<Evento>
   excluirEvento: (id: string) => Promise<void>
+  salvarMaquina: (dados: MaquinaInput, alvo?: Alvo) => Promise<Maquina>
+  excluirMaquina: (id: string) => Promise<void>
+  /** Cadastra ou retira máquinas para o tipo ficar com `quantidade` (ver `planoAjuste`). */
+  ajustarQuantidade: (tipo: TipoMaquina, quantidade: number) => Promise<ResultadoAjuste>
+  /** `statusMaquina` muda a situação da máquina na mesma gravação. */
+  salvarOrdem: (dados: OrdemServicoInput, alvo?: Alvo, statusMaquina?: StatusMaquina) => Promise<OrdemServico>
+  excluirOrdem: (id: string) => Promise<void>
   salvarConfig: (config: Configuracoes) => Promise<Configuracoes>
   exportar: () => Promise<Backup>
-  importar: (dados: unknown) => Promise<{ clientes: number; eventos: number }>
+  importar: (dados: unknown) => Promise<{ clientes: number; eventos: number; maquinas: number }>
   /** Acrescenta dados (sem apagar os do servidor). */
-  mesclarDadosAntigos: (dados: unknown) => Promise<{ clientes: number; eventos: number; ignorados: number }>
+  mesclarDadosAntigos: (
+    dados: unknown,
+  ) => Promise<{ clientes: number; eventos: number; maquinas: number; ordens: number; ignorados: number }>
   carregarExemplo: () => Promise<void>
   limparTudo: () => Promise<void>
 }
@@ -63,6 +83,9 @@ function mesclar<T extends { id: string; versao: number }>(lista: T[], item: T):
   copia[i] = item
   return copia
 }
+
+const mesclarMaquina = (lista: Maquina[], m: Maquina) => ordenarMaquinas(mesclar(lista, m))
+const mesclarOrdem = (lista: OrdemServico[], o: OrdemServico) => mesclar(lista, o).sort((a, b) => b.numero - a.numero)
 
 let fila: MensagemTempoReal[] = []
 let carregamento: Promise<void> | null = null
@@ -88,6 +111,8 @@ export const useDados = create<DadosState>()((set, get) => {
     set({
       clientes: d.clientes,
       eventos: d.eventos,
+      maquinas: d.maquinas,
+      ordens: d.ordens,
       config: d.config,
       revisao: d.revisao,
       status: 'pronto',
@@ -121,6 +146,14 @@ export const useDados = create<DadosState>()((set, get) => {
       case 'evento':
         set({ eventos: msg.acao === 'salvo' ? mesclar(s.eventos, msg.dado) : s.eventos.filter((e) => e.id !== msg.id) })
         break
+      case 'maquina':
+        set({
+          maquinas: msg.acao === 'salvo' ? mesclarMaquina(s.maquinas, msg.dado) : s.maquinas.filter((m) => m.id !== msg.id),
+        })
+        break
+      case 'os':
+        set({ ordens: msg.acao === 'salvo' ? mesclarOrdem(s.ordens, msg.dado) : s.ordens.filter((o) => o.id !== msg.id) })
+        break
       case 'config':
         set({ config: msg.dado })
         break
@@ -134,6 +167,8 @@ export const useDados = create<DadosState>()((set, get) => {
   return {
     clientes: [],
     eventos: [],
+    maquinas: [],
+    ordens: [],
     config: CONFIG_PADRAO,
     revisao: 0,
     status: 'carregando',
@@ -230,6 +265,49 @@ export const useDados = create<DadosState>()((set, get) => {
     async excluirEvento(id) {
       await api.excluirEvento(id)
       set((s) => ({ eventos: s.eventos.filter((e) => e.id !== id) }))
+    },
+
+    async salvarMaquina(dados, alvo) {
+      const salva = alvo ? await api.atualizarMaquina(alvo.id, dados, alvo.versao) : await api.criarMaquina(dados)
+      set((s) => ({ maquinas: mesclarMaquina(s.maquinas, salva) }))
+      return salva
+    },
+
+    async excluirMaquina(id) {
+      await api.excluirMaquina(id)
+      set((s) => ({ maquinas: s.maquinas.filter((m) => m.id !== id) }))
+    },
+
+    async ajustarQuantidade(tipo, quantidade) {
+      const r = await api.ajustarQuantidade(tipo, quantidade)
+      set((s) => {
+        let maquinas = s.maquinas.filter((m) => !r.excluidas.includes(m.id))
+        for (const m of [...r.criadas, ...r.desativadas]) maquinas = mesclar(maquinas, m)
+        return { maquinas: ordenarMaquinas(maquinas) }
+      })
+      return r
+    },
+
+    async salvarOrdem(dados, alvo, statusMaquina) {
+      const salva = alvo
+        ? await api.atualizarOrdem(alvo.id, dados, alvo.versao, statusMaquina)
+        : await api.criarOrdem(dados, statusMaquina)
+      set((s) => ({
+        ordens: mesclarOrdem(s.ordens, salva),
+        // A situação da máquina chega pelo tempo real; aqui só antecipa para a tela não piscar
+        maquinas:
+          statusMaquina === undefined
+            ? s.maquinas
+            : s.maquinas.map((m) =>
+                m.id === dados.maquinaId && m.status !== statusMaquina ? { ...m, status: statusMaquina } : m,
+              ),
+      }))
+      return salva
+    },
+
+    async excluirOrdem(id) {
+      await api.excluirOrdem(id)
+      set((s) => ({ ordens: s.ordens.filter((o) => o.id !== id) }))
     },
 
     async salvarConfig(config) {

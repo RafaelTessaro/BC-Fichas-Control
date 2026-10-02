@@ -67,9 +67,10 @@ export function EventoForm() {
     return {
       clienteId: params.get('cliente') ?? '',
       nome: '',
-      local: '',
       cidade: '',
+      cabecalho: '',
       dias: [{ id: novoId(), data: params.get('data') ?? hojeISO(), maquinas: 1 }],
+      maquinasIds: [],
       valorDiaria: config.valorDiariaPadrao,
       valorBobina: config.valorBobinaPadrao,
       bobinasConsignadas: 0,
@@ -345,12 +346,12 @@ export function EventoForm() {
                   ))}
                 </Select>
               </Field>
-              <Field label="Local" htmlFor="ev-local">
+              <Field label="Cabeçalho das fichas" htmlFor="ev-cabecalho">
                 <Input
-                  id="ev-local"
-                  value={f.local}
-                  onChange={(e) => set('local', e.target.value)}
-                  placeholder="Ex.: Ginásio municipal"
+                  id="ev-cabecalho"
+                  value={f.cabecalho}
+                  onChange={(e) => set('cabecalho', e.target.value)}
+                  placeholder="Ex.: FESTA DA PRIMAVERA"
                 />
               </Field>
               <Field label="Cidade" htmlFor="ev-cidade">

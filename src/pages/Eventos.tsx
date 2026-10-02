@@ -49,7 +49,7 @@ export function Eventos() {
     return todos
       .filter(
         ({ evento: e, cliente }) =>
-          !q || normalizar(`${e.nome} ${codigoEvento(e.codigo)} ${cliente?.nome ?? ''} ${e.local} ${e.cidade}`).includes(q),
+          !q || normalizar(`${e.nome} ${codigoEvento(e.codigo)} ${cliente?.nome ?? ''} ${e.cabecalho} ${e.cidade}`).includes(q),
       )
       .filter(({ resumo: r }) => !iv || ((r.dataFim ?? '') >= iv[0] && (r.dataInicio ?? '') <= iv[1]))
       .filter(({ resumo: r }) => pagamento === 'todos' || (pagamento === 'pagos' ? r.pago : !r.pago))

@@ -20,13 +20,14 @@ const evento = (extra: Partial<Evento> = {}): Evento => ({
   codigo: 7,
   clienteId: 'c1',
   nome: 'Festa do Peão',
-  local: 'Parque de Exposições',
   cidade: 'Rio Claro',
+  cabecalho: '',
   dias: [
     { id: 'd3', data: '2026-08-05', maquinas: 4 },
     { id: 'd1', data: '2026-08-01', maquinas: 2 },
     { id: 'd2', data: '2026-08-02', maquinas: 3 },
   ],
+  maquinasIds: [],
   valorDiaria: 80,
   valorBobina: 6,
   bobinasConsignadas: 50,
@@ -99,7 +100,7 @@ describe('conteúdo enviado ao Google', () => {
     const [b1, b2] = montarEventosGoogle(evento(), cliente, { incluirValores: false })
     expect(b1).toMatchObject({
       summary: 'Festa do Peão — Padaria Ideal (2–3 máquinas)',
-      location: 'Parque de Exposições, Rio Claro',
+      location: 'Rio Claro',
       start: { date: '2026-08-01' },
       end: { date: '2026-08-03' },
       colorId: '9',

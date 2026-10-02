@@ -38,6 +38,24 @@ export async function rotasDados(app: FastifyInstance, { repo, tempoReal, backup
     return reply.code(204).send()
   })
 
+  // ---- Máquinas ----
+  app.post('/api/maquinas', async (req, reply) => reply.code(201).send(repo.criarMaquina(req.body)))
+  // Quantidade de um tipo (cadastra as que faltam, retira as que sobram)
+  app.post('/api/maquinas/quantidade', async (req) => repo.ajustarQuantidade(req.body))
+  app.put('/api/maquinas/:id', async (req: ComId) => repo.atualizarMaquina(req.params.id, req.body, versaoDo(req.body)))
+  app.delete('/api/maquinas/:id', async (req: ComId, reply) => {
+    repo.excluirMaquina(req.params.id)
+    return reply.code(204).send()
+  })
+
+  // ---- Ordens de serviço (manutenção) ----
+  app.post('/api/ordens', async (req, reply) => reply.code(201).send(repo.criarOrdem(req.body)))
+  app.put('/api/ordens/:id', async (req: ComId) => repo.atualizarOrdem(req.params.id, req.body, versaoDo(req.body)))
+  app.delete('/api/ordens/:id', async (req: ComId, reply) => {
+    repo.excluirOrdem(req.params.id)
+    return reply.code(204).send()
+  })
+
   // ---- Configurações ----
   app.put('/api/config', async (req) => repo.salvarConfig(req.body))
 

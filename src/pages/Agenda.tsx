@@ -318,7 +318,7 @@ export function Agenda() {
                   </div>
                   <div className="mt-2.5 flex items-center justify-between gap-2">
                     <StatusBadge status={item.evento.status} />
-                    {item.evento.local && <span className="truncate text-xs text-muted">{item.evento.local}</span>}
+                    {item.evento.cidade && <span className="truncate text-xs text-muted">{item.evento.cidade}</span>}
                   </div>
                 </Link>
               </motion.div>

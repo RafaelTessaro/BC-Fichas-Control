@@ -43,6 +43,8 @@ export interface DepsSincronizador {
   obterCliente: (id: string) => Cliente | undefined
   /** Todos os eventos do sistema (para conferir a agenda inteira). */
   listarEventos: () => Evento[]
+  /** Identificação de cada máquina (id → "P-01"); opcional nos testes. */
+  nomesMaquinas?: () => ReadonlyMap<string, string>
   /** Cliente do Google com as credenciais atuais (null se não houver). */
   clienteGoogle: () => ClienteGoogle | null
   /** Avisa que o status de sincronização de um evento mudou (reenviar aos navegadores). */
@@ -208,7 +210,10 @@ export class SincronizadorGoogle {
       // 2. Conteúdo desejado (nada, se o evento foi cancelado ou excluído)
       const evento = linha.excluido ? undefined : this.deps.obterEvento(id)
       const desejados = evento
-        ? montarEventosGoogle(evento, this.deps.obterCliente(evento.clienteId), { incluirValores: config.incluirValores })
+        ? montarEventosGoogle(evento, this.deps.obterCliente(evento.clienteId), {
+            incluirValores: config.incluirValores,
+            maquinas: this.deps.nomesMaquinas?.(),
+          })
         : []
       const hash = hashConteudo(agenda, desejados)
 
@@ -307,9 +312,11 @@ export class SincronizadorGoogle {
     }
 
     const eventos = this.deps.listarEventos()
+    const nomesMaquinas = this.deps.nomesMaquinas?.()
     for (const evento of eventos) {
       const desejados = montarEventosGoogle(evento, this.deps.obterCliente(evento.clienteId), {
         incluirValores: config.incluirValores,
+        maquinas: nomesMaquinas,
       })
       for (const g of desejados) conhecidos.add(g.id)
       const l = porEvento.get(evento.id)

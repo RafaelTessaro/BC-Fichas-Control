@@ -31,6 +31,29 @@ const MIGRACOES: string[] = [
   CREATE TABLE meta (chave TEXT PRIMARY KEY, valor TEXT NOT NULL);
   INSERT INTO meta (chave, valor) VALUES ('revisao', '0'), ('proximo_codigo', '1');
   `,
+  // Máquinas (P e G) e ordens de serviço de manutenção
+  `
+  CREATE TABLE maquinas (
+    id            TEXT PRIMARY KEY,
+    identificacao TEXT NOT NULL,
+    dados         TEXT NOT NULL,
+    versao        INTEGER NOT NULL,
+    criado_em     TEXT NOT NULL,
+    atualizado_em TEXT NOT NULL
+  );
+  CREATE UNIQUE INDEX maquinas_identificacao ON maquinas(identificacao COLLATE NOCASE);
+  CREATE TABLE ordens_servico (
+    id            TEXT PRIMARY KEY,
+    numero        INTEGER NOT NULL UNIQUE,
+    maquina_id    TEXT NOT NULL REFERENCES maquinas(id),
+    dados         TEXT NOT NULL,
+    versao        INTEGER NOT NULL,
+    criado_em     TEXT NOT NULL,
+    atualizado_em TEXT NOT NULL
+  );
+  CREATE INDEX ordens_maquina ON ordens_servico(maquina_id);
+  INSERT INTO meta (chave, valor) VALUES ('proxima_os', '1');
+  `,
 ]
 
 export function abrirBanco(arquivo: string): Banco {

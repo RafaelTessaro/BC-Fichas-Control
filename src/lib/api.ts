@@ -7,8 +7,22 @@ import type {
   Evento,
   EventoInput,
   EventoPatch,
+  Maquina,
+  MaquinaInput,
   MensagemTempoReal,
+  OrdemServico,
+  OrdemServicoInput,
+  StatusMaquina,
+  TipoMaquina,
 } from '#shared/tipos.ts'
+
+/** Resultado do ajuste da quantidade de máquinas de um tipo. */
+export interface ResultadoAjuste {
+  criadas: Maquina[]
+  /** Ids das máquinas apagadas (não tinham histórico). */
+  excluidas: string[]
+  desativadas: Maquina[]
+}
 
 /** Erro devolvido pelo servidor (ou falta de conexão, com `status` 0). */
 export class ErroApi extends Error {
@@ -78,18 +92,37 @@ export const api = {
   duplicarEvento: (id: string) => requisitar<Evento>('POST', `/api/eventos/${encodeURIComponent(id)}/duplicar`),
   excluirEvento: (id: string) => requisitar<void>('DELETE', `/api/eventos/${encodeURIComponent(id)}`),
 
+  criarMaquina: (dados: MaquinaInput) => requisitar<Maquina>('POST', '/api/maquinas', dados),
+  atualizarMaquina: (id: string, dados: MaquinaInput, versao?: number) =>
+    requisitar<Maquina>('PUT', `/api/maquinas/${encodeURIComponent(id)}`, { ...dados, versao }),
+  excluirMaquina: (id: string) => requisitar<void>('DELETE', `/api/maquinas/${encodeURIComponent(id)}`),
+  ajustarQuantidade: (tipo: TipoMaquina, quantidade: number) =>
+    requisitar<ResultadoAjuste>('POST', '/api/maquinas/quantidade', { tipo, quantidade }),
+
+  /** `statusMaquina` muda a situação da máquina junto (ex.: "Em manutenção" ao abrir a O.S.). */
+  criarOrdem: (dados: OrdemServicoInput, statusMaquina?: StatusMaquina) =>
+    requisitar<OrdemServico>('POST', '/api/ordens', { ...dados, statusMaquina }),
+  atualizarOrdem: (id: string, dados: OrdemServicoInput, versao?: number, statusMaquina?: StatusMaquina) =>
+    requisitar<OrdemServico>('PUT', `/api/ordens/${encodeURIComponent(id)}`, { ...dados, versao, statusMaquina }),
+  excluirOrdem: (id: string) => requisitar<void>('DELETE', `/api/ordens/${encodeURIComponent(id)}`),
+
   salvarConfig: (config: Configuracoes) => requisitar<Configuracoes>('PUT', '/api/config', config),
 
   backup: () => requisitar<Backup>('GET', '/api/backup'),
   restaurar: (dados: unknown) =>
-    requisitar<{ clientes: number; eventos: number }>('POST', '/api/backup/restaurar', dados, 120_000),
+    requisitar<{ clientes: number; eventos: number; maquinas: number }>('POST', '/api/backup/restaurar', dados, 120_000),
   backupsAutomaticos: () =>
     requisitar<{ backups: Array<{ arquivo: string; tamanho: number; criadoEm: string }> }>('GET', '/api/backups'),
   copiaAgora: () =>
     requisitar<{ backups: Array<{ arquivo: string; tamanho: number; criadoEm: string }> }>('POST', '/api/backups'),
   /** Acrescenta os dados de um backup sem apagar os do servidor. */
   mesclar: (dados: unknown) =>
-    requisitar<{ clientes: number; eventos: number; ignorados: number }>('POST', '/api/backup/mesclar', dados, 120_000),
+    requisitar<{ clientes: number; eventos: number; maquinas: number; ordens: number; ignorados: number }>(
+      'POST',
+      '/api/backup/mesclar',
+      dados,
+      120_000,
+    ),
   carregarExemplo: () => requisitar<{ ok: true }>('POST', '/api/exemplo'),
   limparTudo: () => requisitar<{ ok: true }>('POST', '/api/limpar', { confirmacao: 'APAGAR' }),
 

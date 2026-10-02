@@ -1,8 +1,9 @@
 import { addDays, format, subMonths } from 'date-fns'
-import { CLIENTE_VAZIO } from './dominio.ts'
+import { CLIENTE_VAZIO, MAQUINA_VAZIA } from './dominio.ts'
 import { completarCnpj, completarCpf, mascaraCnpj, mascaraCpf } from './documentos.ts'
 import { novoId } from './id.ts'
-import type { Cliente, Evento, FormaPagamento, StatusEvento } from './tipos.ts'
+import { identificacaoPadrao } from './maquinas.ts'
+import type { Cliente, Evento, FormaPagamento, Maquina, OrdemServico, StatusEvento, TipoMaquina } from './tipos.ts'
 
 /** Gerador pseudoaleatório determinístico para que o exemplo seja sempre igual. */
 function rng(semente: number) {
@@ -41,6 +42,14 @@ const EVENTOS = [
 ]
 
 const FORMAS: FormaPagamento[] = ['PIX', 'PIX', 'PIX', 'DINHEIRO', 'BOLETO', 'CREDITO', 'DEBITO']
+
+const PROBLEMAS = [
+  'Papel enroscando na impressora',
+  'Guilhotina não corta a ficha até o fim',
+  'Tela sem resposta ao toque em alguns pontos',
+  'Leitor de cartão sem comunicação',
+  'Bateria não segura carga',
+]
 
 export function gerarDadosExemplo(hoje: Date) {
   const r = rng(2026)
@@ -96,16 +105,18 @@ export function gerarDadosExemplo(hoje: Date) {
           ? 'CANCELADO'
           : 'PENDENTE'
     const cliente = pick(clientes)
+    const nome = pick(EVENTOS)
 
     eventos.push({
       id: novoId(),
       versao: 1,
       codigo: codigo++,
       clienteId: cliente.id,
-      nome: pick(EVENTOS),
-      local: pick(['Salão paroquial', 'Ginásio municipal', 'Sede social', 'Praça central', 'Quadra da escola']),
+      nome,
       cidade: cliente.cidade,
+      cabecalho: `${nome.toUpperCase()}\n${cliente.nome.toUpperCase()}`,
       dias,
+      maquinasIds: [],
       valorDiaria: 80,
       valorBobina: 6,
       bobinasConsignadas: consignadas,
@@ -121,5 +132,119 @@ export function gerarDadosExemplo(hoje: Date) {
     })
   }
 
-  return { clientes, eventos, proximoCodigo: codigo }
+  // Um evento acontecendo hoje, para o exemplo mostrar máquinas locadas
+  const clienteHoje = clientes[1]
+  eventos.push({
+    id: novoId(),
+    versao: 1,
+    codigo: codigo++,
+    clienteId: clienteHoje.id,
+    nome: 'Festa da Primavera',
+    cidade: clienteHoje.cidade,
+    cabecalho: `FESTA DA PRIMAVERA\n${clienteHoje.nome.toUpperCase()}`,
+    dias: [-1, 0, 1].map((d) => ({ id: novoId(), data: format(addDays(hoje, d), 'yyyy-MM-dd'), maquinas: 4 })),
+    maquinasIds: [],
+    valorDiaria: 80,
+    valorBobina: 6,
+    bobinasConsignadas: 120,
+    bobinasDevolvidas: null,
+    desconto: 0,
+    formaPagamento: 'NAO_PAGO',
+    dataPagamento: '',
+    status: 'EM_ABERTO',
+    rodape: 'AGRADECEMOS SUA PRESENÇA!',
+    observacoes: '',
+    criadoEm: ts,
+    atualizadoEm: ts,
+  })
+
+  // Máquinas: 12 pequenas e 6 grandes, uma grande em manutenção e uma pequena antiga desativada
+  const maquinas: Maquina[] = []
+  const criar = (tipo: TipoMaquina, n: number, extra: Partial<Maquina> = {}) =>
+    maquinas.push({
+      ...MAQUINA_VAZIA,
+      id: novoId(),
+      versao: 1,
+      tipo,
+      identificacao: identificacaoPadrao(tipo, n),
+      modelo: tipo === 'P' ? 'Compacta 2 vias' : 'Totem com tela 15"',
+      numeroSerie: `${tipo}${2024}${String(n * 37).padStart(4, '0')}`,
+      dataAquisicao: format(subMonths(hoje, 30 - n), 'yyyy-MM-dd'),
+      criadoEm: ts,
+      atualizadoEm: ts,
+      ...extra,
+    })
+  for (let n = 1; n <= 12; n++) criar('P', n)
+  for (let n = 1; n <= 6; n++) criar('G', n, n === 4 ? { status: 'MANUTENCAO' } : {})
+  criar('P', 13, { status: 'DESATIVADA', observacoes: 'Placa principal queimada; sem conserto.' })
+
+  // Máquinas enviadas: em cada evento, as livres naquelas datas (sem repetir entre eventos ao mesmo tempo)
+  const emUso = new Map<string, Set<string>>()
+  const operantes = maquinas.filter((m) => m.status === 'DISPONIVEL')
+  for (const e of eventos) {
+    const precisa = Math.max(...e.dias.map((d) => d.maquinas))
+    const ocupadas = new Set(e.dias.flatMap((d) => [...(emUso.get(d.data) ?? [])]))
+    const livres = operantes.filter((m) => !ocupadas.has(m.id))
+    const inicio = Math.floor(r() * livres.length)
+    e.maquinasIds = Array.from({ length: Math.min(precisa, livres.length) }, (_, i) => livres[(inicio + i) % livres.length].id)
+    for (const d of e.dias) emUso.set(d.data, new Set([...(emUso.get(d.data) ?? []), ...e.maquinasIds]))
+  }
+
+  // Histórico de manutenção: limpezas periódicas e alguns consertos
+  const ordens: OrdemServico[] = []
+  const novaOS = (o: Partial<OrdemServico> & Pick<OrdemServico, 'maquinaId' | 'abertura'>) =>
+    ordens.push({
+      id: novoId(),
+      versao: 1,
+      numero: ordens.length + 1,
+      tipo: 'PREVENTIVA',
+      status: 'CONCLUIDA',
+      conclusao: o.abertura,
+      servicos: [],
+      problema: '',
+      solucao: '',
+      pecas: '',
+      responsavel: 'Rafael',
+      custo: 0,
+      criadoEm: ts,
+      atualizadoEm: ts,
+      ...o,
+    })
+  for (let mes = 10; mes >= 1; mes -= 3) {
+    for (const m of operantes.filter((_, i) => i % 3 === mes % 3)) {
+      novaOS({
+        maquinaId: m.id,
+        abertura: format(subMonths(hoje, mes), 'yyyy-MM-dd'),
+        servicos: ['Limpeza completa', 'Higienização', 'Teste de funcionamento'],
+        solucao: 'Limpeza interna e externa, higienização da tela e teste de impressão.',
+      })
+    }
+  }
+  for (let i = 0; i < 4; i++) {
+    const m = operantes[(i * 5) % operantes.length]
+    const abertura = format(subMonths(hoje, 9 - i * 2), 'yyyy-MM-dd')
+    novaOS({
+      maquinaId: m.id,
+      tipo: 'CORRETIVA',
+      abertura,
+      conclusao: format(addDays(subMonths(hoje, 9 - i * 2), 2), 'yyyy-MM-dd'),
+      servicos: i % 2 ? ['Reparo elétrico'] : ['Reparo da impressora', 'Troca de peças'],
+      problema: PROBLEMAS[i],
+      solucao: i % 2 ? 'Conector de alimentação refeito e bateria testada.' : 'Rolete da impressora trocado e lâmina ajustada.',
+      pecas: i % 2 ? '' : 'Rolete de tração',
+      custo: i % 2 ? 60 : 145,
+    })
+  }
+  const emManutencao = maquinas.find((m) => m.status === 'MANUTENCAO')!
+  novaOS({
+    maquinaId: emManutencao.id,
+    tipo: 'CORRETIVA',
+    status: 'EM_ANDAMENTO',
+    abertura: format(addDays(hoje, -2), 'yyyy-MM-dd'),
+    conclusao: '',
+    servicos: ['Reparo da impressora'],
+    problema: PROBLEMAS[4],
+  })
+
+  return { clientes, eventos, maquinas, ordens, proximoCodigo: codigo, proximaOS: ordens.length + 1 }
 }

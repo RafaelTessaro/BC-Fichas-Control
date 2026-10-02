@@ -121,6 +121,7 @@ export function criarModuloGoogle(ctx: Contexto, opcoes: OpcoesModuloGoogle = {}
     obterEvento: (id) => ctx.repo.obterEventoBruto(id),
     obterCliente: (id) => ctx.repo.obterCliente(id),
     listarEventos: () => ctx.repo.listarEventosBrutos(),
+    nomesMaquinas: () => new Map(ctx.repo.listarMaquinas().map((m) => [m.id, m.identificacao])),
     clienteGoogle: () => cliente,
     aoMudarStatus: republicar,
     agora,

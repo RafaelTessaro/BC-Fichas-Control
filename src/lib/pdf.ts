@@ -88,7 +88,7 @@ export async function gerarResumoPDF(evento: Evento, cliente: Cliente | undefine
   const meio = L + W / 2 + 4
   let extra = Math.max(campo('Cliente', cliente?.nome ?? '—', L, W / 2 - 6), campo('Evento', evento.nome, meio, W / 2 - 4))
   y += 15 + extra
-  const local = [evento.local, evento.cidade].filter(Boolean).join(' • ')
+  const local = evento.cidade
   extra = Math.max(campo('Período', periodo(r.dataInicio, r.dataFim), L, W / 2 - 6), campo('Local', local, meio, W / 2 - 4))
   y += 15 + extra
 

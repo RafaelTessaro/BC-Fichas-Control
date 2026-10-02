@@ -122,10 +122,10 @@ export function EventoDetalhe() {
             )}
             <span className="text-line-strong">•</span>
             <span className="tnum">{periodo(r.dataInicio, r.dataFim)}</span>
-            {(evento.local || evento.cidade) && (
+            {evento.cidade && (
               <>
                 <span className="text-line-strong">•</span>
-                {[evento.local, evento.cidade].filter(Boolean).join(', ')}
+                {evento.cidade}
               </>
             )}
           </span>

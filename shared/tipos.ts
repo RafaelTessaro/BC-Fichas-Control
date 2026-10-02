@@ -62,9 +62,12 @@ export interface Evento {
   codigo: number
   clienteId: ID
   nome: string
-  local: string
   cidade: string
+  /** Texto programado no topo das fichas impressas pelas máquinas (pode ter várias linhas). */
+  cabecalho: string
   dias: DiaEvento[]
+  /** Máquinas enviadas para o evento (ids de `Maquina`). */
+  maquinasIds: ID[]
   valorDiaria: number
   valorBobina: number
   bobinasConsignadas: number
@@ -74,6 +77,7 @@ export interface Evento {
   formaPagamento: FormaPagamento
   dataPagamento: string
   status: StatusEvento
+  /** Texto programado no fim das fichas; também fecha o resumo em PDF entregue ao cliente. */
   rodape: string
   observacoes: string
   criadoEm: string
@@ -85,13 +89,73 @@ export interface Evento {
 export interface Configuracoes {
   valorDiariaPadrao: number
   valorBobinaPadrao: number
-  /** Quantidade total de máquinas disponíveis para locação. */
+  /**
+   * Quantidade de máquinas considerada enquanto nenhuma máquina estiver cadastrada
+   * (com máquinas cadastradas, vale a quantidade delas — ver `capacidade` em maquinas.ts).
+   */
   frotaMaquinas: number
   rodapePadrao: string
 }
 
+// ---- Máquinas e manutenção ---------------------------------------------------
+
+/** P = máquina pequena, G = máquina grande. */
+export type TipoMaquina = 'P' | 'G'
+
+/** Situação cadastrada. "Locada" não é cadastrada: vem dos eventos (ver `situacaoMaquina`). */
+export type StatusMaquina = 'DISPONIVEL' | 'MANUTENCAO' | 'DESATIVADA'
+
+export interface Maquina {
+  id: ID
+  versao: number
+  tipo: TipoMaquina
+  /** Identificação única, ex.: "P-01", "G-03" (sem diferenciar maiúsculas). */
+  identificacao: string
+  status: StatusMaquina
+  modelo: string
+  numeroSerie: string
+  /** Data de aquisição `yyyy-MM-dd`, ou vazio. */
+  dataAquisicao: string
+  observacoes: string
+  criadoEm: string
+  atualizadoEm: string
+}
+
+export type StatusOS = 'ABERTA' | 'EM_ANDAMENTO' | 'CONCLUIDA' | 'CANCELADA'
+export type TipoOS = 'PREVENTIVA' | 'CORRETIVA'
+
+/** Ordem de serviço interna de manutenção de uma máquina. */
+export interface OrdemServico {
+  id: ID
+  versao: number
+  /** Número sequencial da O.S. (exibido como "O.S. 0001"). */
+  numero: number
+  maquinaId: ID
+  tipo: TipoOS
+  status: StatusOS
+  /** Data de abertura `yyyy-MM-dd`. */
+  abertura: string
+  /** Data de conclusão `yyyy-MM-dd`; vazio enquanto não concluída. */
+  conclusao: string
+  /** Serviços feitos/pedidos, ex.: "Limpeza completa", "Higienização". */
+  servicos: string[]
+  /** Problema relatado ou motivo da manutenção. */
+  problema: string
+  /** O que foi feito. */
+  solucao: string
+  pecas: string
+  responsavel: string
+  custo: number
+  criadoEm: string
+  atualizadoEm: string
+}
+
 /** Campos editáveis de um cliente (o servidor controla id, versão e datas). */
 export type ClienteInput = Omit<Cliente, 'id' | 'versao' | 'criadoEm' | 'atualizadoEm'>
+/** Campos editáveis de uma máquina. */
+export type MaquinaInput = Omit<Maquina, 'id' | 'versao' | 'criadoEm' | 'atualizadoEm'>
+/** Campos editáveis de uma ordem de serviço (o servidor controla id, versão, número e datas). */
+export type OrdemServicoInput = Omit<OrdemServico, 'id' | 'versao' | 'numero' | 'criadoEm' | 'atualizadoEm'>
 /** Campos editáveis de um evento (o servidor controla id, versão, código e datas). */
 export type EventoInput = Omit<Evento, 'id' | 'versao' | 'codigo' | 'criadoEm' | 'atualizadoEm' | 'google'>
 /** Alterações rápidas permitidas sem reenviar o evento inteiro. */
@@ -102,6 +166,8 @@ export type EventoPatch = Partial<
 export interface DadosCompletos {
   clientes: Cliente[]
   eventos: Evento[]
+  maquinas: Maquina[]
+  ordens: OrdemServico[]
   config: Configuracoes
   /** Contador global de alterações; aumenta a cada gravação no servidor. */
   revisao: number
@@ -113,8 +179,11 @@ export interface Backup {
   exportadoEm: string
   clientes: Cliente[]
   eventos: Evento[]
+  maquinas: Maquina[]
+  ordens: OrdemServico[]
   config: Configuracoes
   proximoCodigo: number
+  proximaOS: number
 }
 
 /** Mensagem enviada pelo servidor (Server-Sent Events) a cada alteração. */
@@ -123,5 +192,9 @@ export type MensagemTempoReal =
   | { revisao: number; tipo: 'cliente'; acao: 'excluido'; id: ID }
   | { revisao: number; tipo: 'evento'; acao: 'salvo'; dado: Evento }
   | { revisao: number; tipo: 'evento'; acao: 'excluido'; id: ID }
+  | { revisao: number; tipo: 'maquina'; acao: 'salvo'; dado: Maquina }
+  | { revisao: number; tipo: 'maquina'; acao: 'excluido'; id: ID }
+  | { revisao: number; tipo: 'os'; acao: 'salvo'; dado: OrdemServico }
+  | { revisao: number; tipo: 'os'; acao: 'excluido'; id: ID }
   | { revisao: number; tipo: 'config'; acao: 'salvo'; dado: Configuracoes }
   | { revisao: number; tipo: 'tudo'; acao: 'recarregar' }

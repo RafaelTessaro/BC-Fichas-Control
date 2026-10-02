@@ -1,20 +1,44 @@
 import {
   CONFIG_PADRAO,
+  hojeLocalIso,
+  LIMITES,
+  MAQUINA_VAZIA,
   normalizarCliente,
   normalizarConfig,
   normalizarEvento,
+  normalizarMaquina,
+  normalizarOS,
   normalizarPatch,
   validarBackup,
 } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
+import { chaveIdentificacao, ordenarMaquinas, planoAjuste, STATUS_MAQUINA_LISTA, TIPOS_MAQUINA } from '#shared/maquinas.ts'
 import { gerarDadosExemplo } from '#shared/seed.ts'
-import type { Backup, Cliente, Configuracoes, DadosCompletos, Evento, MensagemTempoReal } from '#shared/tipos.ts'
+import type {
+  Backup,
+  Cliente,
+  Configuracoes,
+  DadosCompletos,
+  Evento,
+  Maquina,
+  MensagemTempoReal,
+  OrdemServico,
+  StatusMaquina,
+  TipoMaquina,
+} from '#shared/tipos.ts'
 import { gravarMeta, lerMeta, transacao, type Banco } from './db.ts'
 import { ErroApi, naoEncontrado } from './erros.ts'
 import type { ExtensaoRepositorio } from './extensoes.ts'
 
 type Linha = { id: string; dados: string; versao: number; criado_em: string; atualizado_em: string }
 type LinhaEvento = Linha & { codigo: number; cliente_id: string }
+type LinhaOS = Linha & { numero: number; maquina_id: string }
+
+/** Na O.S., pedido opcional para mudar a situação da máquina junto (ex.: "Em manutenção" ao abrir). */
+function statusMaquinaPedido(corpo: unknown): StatusMaquina | undefined {
+  const v = (corpo as { statusMaquina?: unknown } | null)?.statusMaquina
+  return STATUS_MAQUINA_LISTA.includes(v as StatusMaquina) ? (v as StatusMaquina) : undefined
+}
 
 const agora = () => new Date().toISOString()
 
@@ -82,10 +106,32 @@ export class Repositorio {
     return l ? normalizarConfig(JSON.parse(l.valor)).valor : { ...CONFIG_PADRAO }
   }
 
+  listarMaquinas(): Maquina[] {
+    const linhas = this.db.prepare('SELECT * FROM maquinas').all() as Linha[]
+    return ordenarMaquinas(linhas.map((l) => this.paraMaquina(l)))
+  }
+
+  obterMaquina(id: string): Maquina | undefined {
+    const l = this.db.prepare('SELECT * FROM maquinas WHERE id = ?').get(id) as Linha | undefined
+    return l && this.paraMaquina(l)
+  }
+
+  listarOrdens(): OrdemServico[] {
+    const linhas = this.db.prepare('SELECT * FROM ordens_servico ORDER BY numero DESC').all() as LinhaOS[]
+    return linhas.map((l) => this.paraOS(l))
+  }
+
+  obterOrdem(id: string): OrdemServico | undefined {
+    const l = this.db.prepare('SELECT * FROM ordens_servico WHERE id = ?').get(id) as LinhaOS | undefined
+    return l && this.paraOS(l)
+  }
+
   dadosCompletos(): DadosCompletos {
     return {
       clientes: this.listarClientes(),
       eventos: this.listarEventos(),
+      maquinas: this.listarMaquinas(),
+      ordens: this.listarOrdens(),
       config: this.obterConfig(),
       revisao: this.revisao(),
     }
@@ -153,6 +199,7 @@ export class Repositorio {
     const dados = validar(normalizarEvento(entrada))
     const { evento, rev } = transacao(this.db, () => {
       this.exigirCliente(dados.clienteId)
+      this.exigirMaquinas(dados.maquinasIds)
       const codigo = this.proximoCodigo()
       const ts = agora()
       const evento: Evento = { ...dados, id: novoId(), versao: 1, codigo, criadoEm: ts, atualizadoEm: ts }
@@ -169,6 +216,7 @@ export class Repositorio {
       if (!anterior) throw naoEncontrado('Evento')
       this.verificarVersao(anterior, versaoEsperada, 'evento')
       this.exigirCliente(dados.clienteId)
+      this.exigirMaquinas(dados.maquinasIds)
       const evento: Evento = { ...anterior, ...dados, versao: anterior.versao + 1, atualizadoEm: agora() }
       this.gravarEvento(evento, false)
       return { evento, anterior, rev: this.incrementarRevisao() }
@@ -196,6 +244,8 @@ export class Repositorio {
       ...origem,
       nome: `${origem.nome} (cópia)`,
       dias: origem.dias.map((d) => ({ ...d, id: novoId() })),
+      // As máquinas são escolhidas de novo (a cópia costuma ser para outra data)
+      maquinasIds: [],
       bobinasDevolvidas: null,
       formaPagamento: 'NAO_PAGO',
       dataPagamento: '',
@@ -228,17 +278,158 @@ export class Repositorio {
     return config
   }
 
+  // ---- Máquinas --------------------------------------------------------------
+
+  criarMaquina(entrada: unknown): Maquina {
+    const dados = validar(normalizarMaquina(entrada))
+    const ts = agora()
+    const maquina: Maquina = { ...dados, id: novoId(), versao: 1, criadoEm: ts, atualizadoEm: ts }
+    const rev = transacao(this.db, () => {
+      this.verificarIdentificacaoUnica(maquina.identificacao)
+      this.gravarMaquina(maquina, true)
+      return this.incrementarRevisao()
+    })
+    this.publicar({ revisao: rev, tipo: 'maquina', acao: 'salvo', dado: maquina })
+    return maquina
+  }
+
+  /** Atualiza a máquina. Com `versaoEsperada`, recusa (409) se outra pessoa já alterou. */
+  atualizarMaquina(id: string, entrada: unknown, versaoEsperada?: number): Maquina {
+    const dados = validar(normalizarMaquina(entrada))
+    const { maquina, rev } = transacao(this.db, () => {
+      const atual = this.obterMaquina(id)
+      if (!atual) throw naoEncontrado('Máquina')
+      this.verificarVersao(atual, versaoEsperada, 'maquina')
+      this.verificarIdentificacaoUnica(dados.identificacao, id)
+      const maquina: Maquina = { ...atual, ...dados, versao: atual.versao + 1, atualizadoEm: agora() }
+      this.gravarMaquina(maquina, false)
+      return { maquina, rev: this.incrementarRevisao() }
+    })
+    this.publicar({ revisao: rev, tipo: 'maquina', acao: 'salvo', dado: maquina })
+    return maquina
+  }
+
+  /** Só apaga máquinas sem histórico; as outras devem ser desativadas (o histórico fica). */
+  excluirMaquina(id: string) {
+    const rev = transacao(this.db, () => {
+      if (!this.obterMaquina(id)) throw naoEncontrado('Máquina')
+      const historico = this.historicoMaquina(id)
+      if (historico) throw new ErroApi(409, `Esta máquina tem histórico (${historico}). Desative-a em vez de excluir.`)
+      this.db.prepare('DELETE FROM maquinas WHERE id = ?').run(id)
+      return this.incrementarRevisao()
+    })
+    this.publicar({ revisao: rev, tipo: 'maquina', acao: 'excluido', id })
+  }
+
+  /**
+   * Faz o tipo passar a ter `quantidade` máquinas (não desativadas): cadastra as que faltam com a
+   * numeração seguinte; ao diminuir, apaga as sem histórico e desativa as demais (ver `planoAjuste`).
+   */
+  ajustarQuantidade(entrada: unknown) {
+    const r = (entrada ?? {}) as { tipo?: unknown; quantidade?: unknown }
+    const tipo = r.tipo as TipoMaquina
+    const quantidade = Number(r.quantidade)
+    if (!TIPOS_MAQUINA.includes(tipo)) throw new ErroApi(400, 'Tipo de máquina inválido.')
+    if (!Number.isInteger(quantidade) || quantidade < 0 || quantidade > LIMITES.maquinas) {
+      throw new ErroApi(400, 'Quantidade de máquinas inválida.')
+    }
+    const mensagens: MensagemTempoReal[] = []
+    const resultado = transacao(this.db, () => {
+      const maquinas = this.listarMaquinas()
+      const plano = planoAjuste(maquinas, this.listarEventosBrutos(), this.listarOrdens(), tipo, quantidade, hojeLocalIso())
+      if (plano.criar.length > LIMITES.lote) {
+        throw new ErroApi(400, `Cadastre no máximo ${LIMITES.lote} máquinas de uma vez.`)
+      }
+      if (plano.faltam) {
+        throw new ErroApi(
+          409,
+          `Não é possível retirar ${plano.faltam} máquina${plano.faltam > 1 ? 's' : ''}: as outras estão em manutenção ou têm eventos de hoje em diante.`,
+          { plano },
+        )
+      }
+      const ts = agora()
+      const criadas = plano.criar.map((identificacao) => {
+        const m: Maquina = { ...MAQUINA_VAZIA, tipo, identificacao, id: novoId(), versao: 1, criadoEm: ts, atualizadoEm: ts }
+        this.gravarMaquina(m, true)
+        mensagens.push({ revisao: this.incrementarRevisao(), tipo: 'maquina', acao: 'salvo', dado: m })
+        return m
+      })
+      for (const m of plano.excluir) {
+        this.db.prepare('DELETE FROM maquinas WHERE id = ?').run(m.id)
+        mensagens.push({ revisao: this.incrementarRevisao(), tipo: 'maquina', acao: 'excluido', id: m.id })
+      }
+      const desativadas = plano.desativar.map((atual) => {
+        const m: Maquina = { ...atual, status: 'DESATIVADA', versao: atual.versao + 1, atualizadoEm: ts }
+        this.gravarMaquina(m, false)
+        mensagens.push({ revisao: this.incrementarRevisao(), tipo: 'maquina', acao: 'salvo', dado: m })
+        return m
+      })
+      return { criadas, excluidas: plano.excluir.map((m) => m.id), desativadas }
+    })
+    for (const msg of mensagens) this.publicar(msg)
+    return resultado
+  }
+
+  // ---- Ordens de serviço -----------------------------------------------------
+
+  /** Cria a O.S.; `statusMaquina` no corpo muda a situação da máquina na mesma gravação. */
+  criarOrdem(entrada: unknown): OrdemServico {
+    const dados = validar(normalizarOS(entrada))
+    const statusMaquina = statusMaquinaPedido(entrada)
+    const { ordem, maquina, rev, revMaquina } = transacao(this.db, () => {
+      const ts = agora()
+      const ordem: OrdemServico = { ...dados, id: novoId(), versao: 1, numero: this.proximaOS(), criadoEm: ts, atualizadoEm: ts }
+      const maquina = this.mudarStatusMaquina(this.exigirMaquina(dados.maquinaId), statusMaquina)
+      this.gravarOS(ordem, true)
+      const rev = this.incrementarRevisao()
+      return { ordem, maquina, rev, revMaquina: maquina ? this.incrementarRevisao() : 0 }
+    })
+    this.publicar({ revisao: rev, tipo: 'os', acao: 'salvo', dado: ordem })
+    if (maquina) this.publicar({ revisao: revMaquina, tipo: 'maquina', acao: 'salvo', dado: maquina })
+    return ordem
+  }
+
+  atualizarOrdem(id: string, entrada: unknown, versaoEsperada?: number): OrdemServico {
+    const dados = validar(normalizarOS(entrada))
+    const statusMaquina = statusMaquinaPedido(entrada)
+    const { ordem, maquina, rev, revMaquina } = transacao(this.db, () => {
+      const atual = this.obterOrdem(id)
+      if (!atual) throw naoEncontrado('Ordem de serviço')
+      this.verificarVersao(atual, versaoEsperada, 'os')
+      const maquina = this.mudarStatusMaquina(this.exigirMaquina(dados.maquinaId), statusMaquina)
+      const ordem: OrdemServico = { ...atual, ...dados, versao: atual.versao + 1, atualizadoEm: agora() }
+      this.gravarOS(ordem, false)
+      const rev = this.incrementarRevisao()
+      return { ordem, maquina, rev, revMaquina: maquina ? this.incrementarRevisao() : 0 }
+    })
+    this.publicar({ revisao: rev, tipo: 'os', acao: 'salvo', dado: ordem })
+    if (maquina) this.publicar({ revisao: revMaquina, tipo: 'maquina', acao: 'salvo', dado: maquina })
+    return ordem
+  }
+
+  excluirOrdem(id: string) {
+    const rev = transacao(this.db, () => {
+      if (!this.obterOrdem(id)) throw naoEncontrado('Ordem de serviço')
+      this.db.prepare('DELETE FROM ordens_servico WHERE id = ?').run(id)
+      return this.incrementarRevisao()
+    })
+    this.publicar({ revisao: rev, tipo: 'os', acao: 'excluido', id })
+  }
+
   // ---- Backup, exemplo e limpeza ---------------------------------------------
 
   exportar(): Backup {
     return {
       app: 'bc-fichas-control',
-      versao: 2,
+      versao: 3,
       exportadoEm: agora(),
       clientes: this.listarClientes(),
       eventos: this.listarEventosBrutos(),
+      maquinas: this.listarMaquinas(),
+      ordens: this.listarOrdens(),
       config: this.obterConfig(),
       proximoCodigo: Number(lerMeta(this.db, 'proximo_codigo') ?? 1),
+      proximaOS: Number(lerMeta(this.db, 'proxima_os') ?? 1),
     }
   }
 
@@ -250,8 +441,8 @@ export class Repositorio {
     } catch (e) {
       throw new ErroApi(400, (e as Error).message)
     }
-    this.substituirTudo(backup.clientes, backup.eventos, backup.config, backup.proximoCodigo)
-    return { clientes: backup.clientes.length, eventos: backup.eventos.length }
+    this.substituirTudo(backup)
+    return { clientes: backup.clientes.length, eventos: backup.eventos.length, maquinas: backup.maquinas.length }
   }
 
   /**
@@ -259,6 +450,8 @@ export class Repositorio {
    * os dados que cada computador guardava no navegador na versão anterior).
    * - cliente com o mesmo id já existente é ignorado; com o mesmo CNPJ/CPF, reaproveita o existente;
    * - evento com o mesmo id é ignorado; código repetido ganha um novo número;
+   * - máquina com o mesmo id ou a mesma identificação (ex.: "P-01") é a mesma máquina;
+   * - O.S. com o mesmo id é ignorada; número repetido ganha um novo número;
    * - as configurações do servidor não mudam.
    */
   mesclar(entrada: unknown) {
@@ -268,7 +461,7 @@ export class Repositorio {
     } catch (e) {
       throw new ErroApi(400, (e as Error).message)
     }
-    const resultado = { clientes: 0, eventos: 0, ignorados: 0 }
+    const resultado = { clientes: 0, eventos: 0, maquinas: 0, ordens: 0, ignorados: 0 }
     const novosEventos: Evento[] = []
     const rev = transacao(this.db, () => {
       const existentes = this.listarClientes()
@@ -290,6 +483,39 @@ export class Repositorio {
           resultado.clientes++
         }
       }
+      // Máquinas: mesma identificação = mesma máquina física
+      const maquinasExistentes = this.listarMaquinas()
+      const maquinaPorId = new Set(maquinasExistentes.map((m) => m.id))
+      const maquinaPorIdent = new Map(maquinasExistentes.map((m) => [chaveIdentificacao(m.identificacao), m.id]))
+      const mapaMaquina = new Map<string, string>()
+      for (const m of backup.maquinas) {
+        const mesma = maquinaPorId.has(m.id) ? m.id : maquinaPorIdent.get(chaveIdentificacao(m.identificacao))
+        if (mesma) {
+          mapaMaquina.set(m.id, mesma)
+          resultado.ignorados++
+          continue
+        }
+        this.gravarMaquina(m, true)
+        maquinaPorId.add(m.id)
+        maquinaPorIdent.set(chaveIdentificacao(m.identificacao), m.id)
+        mapaMaquina.set(m.id, m.id)
+        resultado.maquinas++
+      }
+      const idsOS = new Set(this.listarOrdens().map((o) => o.id))
+      const numerosOS = new Set(this.listarOrdens().map((o) => o.numero))
+      for (const o of [...backup.ordens].sort((a, b) => a.numero - b.numero)) {
+        if (idsOS.has(o.id)) {
+          resultado.ignorados++
+          continue
+        }
+        const numero = numerosOS.has(o.numero) ? this.proximaOS() : o.numero
+        this.gravarOS({ ...o, numero, maquinaId: mapaMaquina.get(o.maquinaId) ?? o.maquinaId }, true)
+        numerosOS.add(numero)
+        resultado.ordens++
+      }
+      const maiorOS = Math.max(0, ...numerosOS)
+      if (Number(lerMeta(this.db, 'proxima_os') ?? 1) <= maiorOS) gravarMeta(this.db, 'proxima_os', maiorOS + 1)
+
       const idsEventos = new Set(this.listarEventosBrutos().map((e) => e.id))
       const codigos = new Set(
         (this.db.prepare('SELECT codigo FROM eventos').all() as Array<{ codigo: number }>).map((l) => l.codigo),
@@ -300,7 +526,12 @@ export class Repositorio {
           continue
         }
         const codigo = codigos.has(e.codigo) ? this.proximoCodigo() : e.codigo
-        const evento: Evento = { ...e, codigo, clienteId: mapaCliente.get(e.clienteId) ?? e.clienteId }
+        const evento: Evento = {
+          ...e,
+          codigo,
+          clienteId: mapaCliente.get(e.clienteId) ?? e.clienteId,
+          maquinasIds: [...new Set(e.maquinasIds.map((id) => mapaMaquina.get(id) ?? id))],
+        }
         this.gravarEvento(evento, true)
         codigos.add(codigo)
         novosEventos.push(evento)
@@ -316,31 +547,43 @@ export class Repositorio {
   }
 
   carregarExemplo() {
-    const { qtd } = this.db.prepare('SELECT (SELECT COUNT(*) FROM clientes) + (SELECT COUNT(*) FROM eventos) AS qtd').get() as {
-      qtd: number
-    }
+    const { qtd } = this.db
+      .prepare('SELECT (SELECT COUNT(*) FROM clientes) + (SELECT COUNT(*) FROM eventos) + (SELECT COUNT(*) FROM maquinas) AS qtd')
+      .get() as { qtd: number }
     if (qtd > 0) throw new ErroApi(409, 'Os dados de exemplo só podem ser carregados com o sistema vazio.')
-    const ex = gerarDadosExemplo(new Date())
-    this.substituirTudo(ex.clientes, ex.eventos, this.obterConfig(), ex.proximoCodigo)
+    this.substituirTudo({ ...gerarDadosExemplo(new Date()), config: this.obterConfig() })
   }
 
   limparTudo() {
-    this.substituirTudo([], [], this.obterConfig(), 1)
+    this.substituirTudo({
+      clientes: [],
+      eventos: [],
+      maquinas: [],
+      ordens: [],
+      config: this.obterConfig(),
+      proximoCodigo: 1,
+      proximaOS: 1,
+    })
   }
 
   // ---- Internos --------------------------------------------------------------
 
-  private substituirTudo(clientes: Cliente[], eventos: Evento[], config: Configuracoes, proximoCodigo: number) {
+  private substituirTudo(dados: Omit<Backup, 'app' | 'versao' | 'exportadoEm'>) {
+    const { clientes, eventos, maquinas, ordens, config } = dados
     const anteriores = this.listarEventosBrutos()
     const rev = transacao(this.db, () => {
-      this.db.exec('DELETE FROM eventos; DELETE FROM clientes;')
+      this.db.exec('DELETE FROM ordens_servico; DELETE FROM eventos; DELETE FROM maquinas; DELETE FROM clientes;')
       for (const c of clientes) this.gravarCliente(c, true)
+      for (const m of maquinas) this.gravarMaquina(m, true)
+      for (const o of ordens) this.gravarOS(o, true)
       for (const e of eventos) this.gravarEvento(e, true)
       this.db
         .prepare("INSERT INTO config (chave, valor) VALUES ('geral', ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor")
         .run(JSON.stringify(config))
       const maior = eventos.reduce((m, e) => Math.max(m, e.codigo), 0)
-      gravarMeta(this.db, 'proximo_codigo', Math.max(proximoCodigo, maior + 1))
+      gravarMeta(this.db, 'proximo_codigo', Math.max(dados.proximoCodigo, maior + 1))
+      const maiorOS = ordens.reduce((m, o) => Math.max(m, o.numero), 0)
+      gravarMeta(this.db, 'proxima_os', Math.max(dados.proximaOS, maiorOS + 1))
       return this.incrementarRevisao()
     })
     this.publicar({ revisao: rev, tipo: 'tudo', acao: 'recarregar' })
@@ -375,16 +618,61 @@ export class Repositorio {
     }, evento)
   }
 
-  private verificarVersao(atual: { versao: number }, esperada: number | undefined, tipo: 'cliente' | 'evento') {
+  private verificarVersao(
+    atual: { versao: number },
+    esperada: number | undefined,
+    tipo: 'cliente' | 'evento' | 'maquina' | 'os',
+  ) {
     if (esperada !== undefined && esperada !== atual.versao) {
-      throw new ErroApi(
-        409,
-        tipo === 'cliente'
-          ? 'Este cliente foi alterado por outra pessoa enquanto você editava.'
-          : 'Este evento foi alterado por outra pessoa enquanto você editava.',
-        { atual: tipo === 'evento' ? this.decorar(atual as Evento) : atual },
-      )
+      const qual = { cliente: 'Este cliente', evento: 'Este evento', maquina: 'Esta máquina', os: 'Esta O.S.' }[tipo]
+      const genero = tipo === 'cliente' || tipo === 'evento' ? 'alterado' : 'alterada'
+      throw new ErroApi(409, `${qual} foi ${genero} por outra pessoa enquanto você editava.`, {
+        atual: tipo === 'evento' ? this.decorar(atual as Evento) : atual,
+      })
     }
+  }
+
+  /** Impede duas máquinas com a mesma identificação (sem diferenciar maiúsculas). */
+  private verificarIdentificacaoUnica(identificacao: string, idIgnorado?: string) {
+    const chave = chaveIdentificacao(identificacao)
+    const outra = this.listarMaquinas().find((m) => m.id !== idIgnorado && chaveIdentificacao(m.identificacao) === chave)
+    if (outra) {
+      throw new ErroApi(409, `Já existe uma máquina com a identificação ${outra.identificacao}.`, {
+        duplicado: { id: outra.id, identificacao: outra.identificacao },
+      })
+    }
+  }
+
+  /** "2 O.S. e 3 eventos", ou vazio se a máquina nunca foi usada nem passou por manutenção. */
+  private historicoMaquina(id: string) {
+    const { os } = this.db.prepare('SELECT COUNT(*) AS os FROM ordens_servico WHERE maquina_id = ?').get(id) as { os: number }
+    const eventos = this.listarEventosBrutos().filter((e) => e.maquinasIds.includes(id)).length
+    const partes = []
+    if (os) partes.push(`${os} O.S.`)
+    if (eventos) partes.push(`${eventos} evento${eventos > 1 ? 's' : ''}`)
+    return partes.join(' e ')
+  }
+
+  private exigirMaquina(id: string): Maquina {
+    const m = this.obterMaquina(id)
+    if (!m) throw new ErroApi(400, 'A máquina selecionada não existe mais.')
+    return m
+  }
+
+  private exigirMaquinas(ids: string[]) {
+    if (!ids.length) return
+    const existentes = new Set(this.listarMaquinas().map((m) => m.id))
+    if (ids.some((id) => !existentes.has(id))) {
+      throw new ErroApi(400, 'Uma das máquinas selecionadas não existe mais. Confira a lista de máquinas enviadas.')
+    }
+  }
+
+  /** Grava a nova situação da máquina (dentro da transação de quem chama); `undefined` se nada mudou. */
+  private mudarStatusMaquina(maquina: Maquina, status: StatusMaquina | undefined): Maquina | undefined {
+    if (!status || status === maquina.status) return undefined
+    const nova: Maquina = { ...maquina, status, versao: maquina.versao + 1, atualizadoEm: agora() }
+    this.gravarMaquina(nova, false)
+    return nova
   }
 
   /** Impede dois clientes com o mesmo CNPJ/CPF (avulsos, sem documento, ficam de fora). */
@@ -406,6 +694,12 @@ export class Repositorio {
     const codigo = Number(lerMeta(this.db, 'proximo_codigo') ?? 1)
     gravarMeta(this.db, 'proximo_codigo', codigo + 1)
     return codigo
+  }
+
+  private proximaOS() {
+    const numero = Number(lerMeta(this.db, 'proxima_os') ?? 1)
+    gravarMeta(this.db, 'proxima_os', numero + 1)
+    return numero
   }
 
   private incrementarRevisao() {
@@ -442,13 +736,61 @@ export class Repositorio {
     }
   }
 
+  private gravarMaquina(m: Maquina, novo: boolean) {
+    const { id, versao, criadoEm, atualizadoEm, ...dados } = m
+    if (novo) {
+      this.db
+        .prepare('INSERT INTO maquinas (id, identificacao, dados, versao, criado_em, atualizado_em) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(id, m.identificacao, JSON.stringify(dados), versao, criadoEm, atualizadoEm)
+    } else {
+      this.db
+        .prepare('UPDATE maquinas SET identificacao = ?, dados = ?, versao = ?, atualizado_em = ? WHERE id = ?')
+        .run(m.identificacao, JSON.stringify(dados), versao, atualizadoEm, id)
+    }
+  }
+
+  private gravarOS(o: OrdemServico, novo: boolean) {
+    const { id, versao, numero, criadoEm, atualizadoEm, ...dados } = o
+    if (novo) {
+      this.db
+        .prepare(
+          'INSERT INTO ordens_servico (id, numero, maquina_id, dados, versao, criado_em, atualizado_em) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(id, numero, o.maquinaId, JSON.stringify(dados), versao, criadoEm, atualizadoEm)
+    } else {
+      this.db
+        .prepare('UPDATE ordens_servico SET maquina_id = ?, dados = ?, versao = ?, atualizado_em = ? WHERE id = ?')
+        .run(o.maquinaId, JSON.stringify(dados), versao, atualizadoEm, id)
+    }
+  }
+
+  private paraMaquina(l: Linha): Maquina {
+    return { ...JSON.parse(l.dados), id: l.id, versao: l.versao, criadoEm: l.criado_em, atualizadoEm: l.atualizado_em }
+  }
+
+  private paraOS(l: LinhaOS): OrdemServico {
+    return {
+      ...JSON.parse(l.dados),
+      id: l.id,
+      versao: l.versao,
+      numero: l.numero,
+      maquinaId: l.maquina_id,
+      criadoEm: l.criado_em,
+      atualizadoEm: l.atualizado_em,
+    }
+  }
+
   private paraCliente(l: Linha): Cliente {
     return { ...JSON.parse(l.dados), id: l.id, versao: l.versao, criadoEm: l.criado_em, atualizadoEm: l.atualizado_em }
   }
 
   private paraEvento(l: LinhaEvento): Evento {
+    // Eventos gravados antes do cabeçalho e das máquinas: valores padrão; o antigo "local" sai
+    const { local: _local, ...dados } = JSON.parse(l.dados)
     return {
-      ...JSON.parse(l.dados),
+      cabecalho: '',
+      maquinasIds: [],
+      ...dados,
       id: l.id,
       versao: l.versao,
       codigo: l.codigo,

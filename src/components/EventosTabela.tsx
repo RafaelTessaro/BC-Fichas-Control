@@ -85,9 +85,7 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
               <Td className="tnum text-xs font-medium text-muted">{codigoEvento(e.codigo)}</Td>
               <Td>
                 <p className="max-w-[260px] truncate font-medium text-ink">{e.nome}</p>
-                <p className="max-w-[260px] truncate text-xs text-muted">
-                  {[e.local, e.cidade].filter(Boolean).join(' • ') || (ocultarCliente ? '' : cliente?.nome)}
-                </p>
+                <p className="max-w-[260px] truncate text-xs text-muted">{e.cidade || (ocultarCliente ? '' : cliente?.nome)}</p>
               </Td>
               {!ocultarCliente && <Td className="max-w-[220px] truncate max-md:hidden">{cliente?.nome ?? '—'}</Td>}
               <Td className="tnum whitespace-nowrap">{periodo(r.dataInicio, r.dataFim)}</Td>

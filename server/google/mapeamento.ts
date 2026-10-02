@@ -109,6 +109,8 @@ function textoMaquinas(dias: BlocoDatas['dias']) {
 
 export interface OpcoesMapeamento {
   incluirValores: boolean
+  /** Identificação de cada máquina (id → "P-01"), para listar as máquinas enviadas. */
+  maquinas?: ReadonlyMap<string, string>
 }
 
 /** Descrição em texto do evento (igual em todos os blocos). */
@@ -116,8 +118,14 @@ export function descricaoEvento(evento: Evento, cliente: Cliente | undefined, op
   const linhas: string[] = [`Evento ${codigo(evento.codigo)}`]
   linhas.push(`Cliente: ${cliente?.nome || 'Cliente removido'}`)
   if (cliente?.telefone) linhas.push(`Telefone: ${cliente.telefone}`)
-  const local = [evento.local, evento.cidade].filter(Boolean).join(' — ')
-  if (local) linhas.push(`Local: ${local}`)
+  if (evento.cidade) linhas.push(`Cidade: ${evento.cidade}`)
+  const cabecalho = evento.cabecalho
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+  if (cabecalho.length) linhas.push(`Cabeçalho das fichas: ${cabecalho.join(' / ')}`)
+  const maquinas = evento.maquinasIds.map((id) => opcoes.maquinas?.get(id)).filter((m): m is string => !!m)
+  if (maquinas.length) linhas.push(`Máquinas enviadas: ${maquinas.join(', ')}`)
 
   const todos = blocosDeDatas(evento.dias).flatMap((b) => b.dias)
   if (todos.length) {
@@ -142,7 +150,7 @@ export function descricaoEvento(evento: Evento, cliente: Cliente | undefined, op
 export function montarEventosGoogle(evento: Evento, cliente: Cliente | undefined, opcoes: OpcoesMapeamento): EventoGoogle[] {
   if (evento.status === 'CANCELADO') return []
   const description = descricaoEvento(evento, cliente, opcoes)
-  const location = [evento.local, evento.cidade].filter(Boolean).join(', ')
+  const location = evento.cidade
   const nomeCliente = cliente?.nome || 'Cliente removido'
   return blocosDeDatas(evento.dias).map((bloco, i) => {
     const g: EventoGoogle = {
