@@ -8,8 +8,7 @@ import { LIMITES } from '#shared/dominio.ts'
 import {
   capacidade,
   ESTADO_MAQUINA,
-  localDaLocacao,
-  periodoEvento,
+  cabecalhoEmLinha,
   planoAjuste,
   TIPO_MAQUINA,
   TIPOS_MAQUINA,
@@ -20,7 +19,7 @@ import {
 } from '#shared/maquinas.ts'
 import type { Maquina, TipoMaquina } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
-import { dataCurta, hojeISO, numero } from '../lib/format'
+import { dataCurta, numero } from '../lib/format'
 import { useDados } from '../store/dados'
 import { toast } from '../store/ui'
 import { MaquinaChip, TipoMaquinaBadge, useSituacoes } from './Maquinas'
@@ -29,6 +28,7 @@ import { Card, CardHeader } from './ui/Card'
 import { confirmar } from './ui/Feedback'
 import { NumberInput } from './ui/Form'
 import { AnimatedNumber } from './ui/Misc'
+import { useHoje } from '../lib/hoje'
 
 /** Cor da bolinha da legenda, igual à do chip de cada situação. */
 const COR_LEGENDA: Record<EstadoMaquina, string> = {
@@ -58,11 +58,19 @@ function linhasDoPlano(p: PlanoAjuste): Array<{ tipo: TipoLinha; texto: string }
     return [{ tipo: 'erro', texto: `Dá para cadastrar no máximo ${LIMITES.lote} máquinas de uma vez.` }]
   }
   if (p.faltam) {
-    const motivo = p.faltam === 1 ? 'uma delas está' : `${p.faltam} delas estão`
+    const { manutencao, eventos } = p.presas
+    const motivo = [
+      manutencao.length &&
+        `${listar(manutencao.map((m) => m.identificacao))} ${manutencao.length === 1 ? 'está' : 'estão'} em manutenção`,
+      eventos.length &&
+        `${listar(eventos.map((m) => m.identificacao))} ${eventos.length === 1 ? 'tem' : 'têm'} eventos de hoje em diante`,
+    ]
+      .filter(Boolean)
+      .join(' e ')
     return [
       {
         tipo: 'erro',
-        texto: `Não dá para ficar com ${qtdTipo(p.alvo, p.tipo)}: ${motivo} em manutenção ou com eventos de hoje em diante. O mínimo agora é ${p.alvo + p.faltam}.`,
+        texto: `Não dá para ficar com ${qtdTipo(p.alvo, p.tipo)}: ${motivo}. O mínimo agora é ${p.alvo + p.faltam}.`,
       },
     ]
   }
@@ -95,9 +103,8 @@ function linhasDoPlano(p: PlanoAjuste): Array<{ tipo: TipoLinha; texto: string }
 /** Texto do balão de cada chip: situação, onde está e o próximo evento. */
 function tituloChip(m: Maquina, s: SituacaoMaquina) {
   let texto = `${m.identificacao} · ${ESTADO_MAQUINA[s.estado].label}`
-  if (s.estado === 'LOCADA' && s.evento) texto += ` em ${localDaLocacao(s.evento)}`
-  const inicio = s.proxima && periodoEvento(s.proxima)?.inicio
-  if (s.proxima && inicio) texto += ` · Próximo evento: ${s.proxima.nome}, ${dataCurta(inicio)}`
+  if (s.estado === 'LOCADA' && s.evento) texto += ` em ${cabecalhoEmLinha(s.evento)}`
+  if (s.proxima && s.dataProxima) texto += ` · Próximo evento: ${s.proxima.nome}, ${dataCurta(s.dataProxima)}`
   return texto
 }
 
@@ -118,12 +125,12 @@ export function DisponibilidadeMaquinas() {
   const mudou = (t: TipoMaquina) => rascunho[t] !== null && rascunho[t] !== cap[t]
   const total = alvo('P') + alvo('G')
 
+  const hoje = useHoje()
   const planos = useMemo(() => {
-    const hoje = hojeISO()
     return TIPOS_MAQUINA.filter((t) => rascunho[t] !== null && rascunho[t] !== cap[t]).map((t) =>
       planoAjuste(maquinas, eventos, ordens, t, rascunho[t]!, hoje),
     )
-  }, [rascunho, cap, maquinas, eventos, ordens])
+  }, [rascunho, cap, maquinas, eventos, ordens, hoje])
   const alterado = planos.length > 0
   const bloqueado = planos.some((p) => p.faltam > 0 || p.criar.length > LIMITES.lote)
 

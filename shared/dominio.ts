@@ -279,9 +279,20 @@ export function normalizarPatch(entrada: unknown, atual: Evento): Resultado<Even
   return { valor: final, erros }
 }
 
+/**
+ * Antes do cabeçalho das fichas, o evento tinha o campo "Local" (ex.: "Salão paroquial").
+ * Para não perder o que foi digitado, ele passa para o início das observações.
+ */
+export function observacoesComLocalAntigo(local: unknown, observacoes: string) {
+  const l = texto(local)
+  if (!l || observacoes.includes(l)) return observacoes
+  return texto([`Local: ${l}`, observacoes].filter(Boolean).join('\n'), LIMITES.textoLongo)
+}
+
 export function migrarEvento(entrada: unknown): Evento {
   const r = obj(entrada)
   const { valor } = normalizarEvento(r)
+  valor.observacoes = observacoesComLocalAntigo(r.local, valor.observacoes)
   const agora = new Date().toISOString()
   return {
     ...valor,
@@ -453,7 +464,7 @@ export function validarBackup(dados: unknown): Backup {
   const identificacoes = new Set<string>()
   for (const m of maquinas) {
     let ident = m.identificacao
-    for (let n = 2; identificacoes.has(chaveIdentificacao(ident)); n++) ident = `${m.identificacao} (${n})`
+    for (let n = 2; identificacoes.has(chaveIdentificacao(ident)); n++) ident = `${m.identificacao} (duplicada ${n})`
     m.identificacao = ident
     identificacoes.add(chaveIdentificacao(ident))
   }

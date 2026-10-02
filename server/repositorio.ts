@@ -9,6 +9,7 @@ import {
   normalizarMaquina,
   normalizarOS,
   normalizarPatch,
+  observacoesComLocalAntigo,
   validarBackup,
 } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
@@ -296,16 +297,17 @@ export class Repositorio {
   /** Atualiza a máquina. Com `versaoEsperada`, recusa (409) se outra pessoa já alterou. */
   atualizarMaquina(id: string, entrada: unknown, versaoEsperada?: number): Maquina {
     const dados = validar(normalizarMaquina(entrada))
-    const { maquina, rev } = transacao(this.db, () => {
+    const { maquina, anterior, rev } = transacao(this.db, () => {
       const atual = this.obterMaquina(id)
       if (!atual) throw naoEncontrado('Máquina')
       this.verificarVersao(atual, versaoEsperada, 'maquina')
       this.verificarIdentificacaoUnica(dados.identificacao, id)
       const maquina: Maquina = { ...atual, ...dados, versao: atual.versao + 1, atualizadoEm: agora() }
       this.gravarMaquina(maquina, false)
-      return { maquina, rev: this.incrementarRevisao() }
+      return { maquina, anterior: atual, rev: this.incrementarRevisao() }
     })
     this.publicar({ revisao: rev, tipo: 'maquina', acao: 'salvo', dado: maquina })
+    this.chamarExtensoes((x) => x.maquinaSalva?.(maquina, anterior))
     return maquina
   }
 
@@ -785,12 +787,14 @@ export class Repositorio {
   }
 
   private paraEvento(l: LinhaEvento): Evento {
-    // Eventos gravados antes do cabeçalho e das máquinas: valores padrão; o antigo "local" sai
-    const { local: _local, ...dados } = JSON.parse(l.dados)
+    // Eventos gravados antes do cabeçalho e das máquinas: valores padrão; o antigo "local" vai
+    // para as observações (e fica gravado assim na próxima alteração do evento)
+    const { local, ...dados } = JSON.parse(l.dados)
     return {
       cabecalho: '',
       maquinasIds: [],
       ...dados,
+      observacoes: observacoesComLocalAntigo(local, String(dados.observacoes ?? '')),
       id: l.id,
       versao: l.versao,
       codigo: l.codigo,

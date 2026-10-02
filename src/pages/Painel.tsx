@@ -27,12 +27,13 @@ import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { PageHeader, StatCard } from '../components/ui/Misc'
 import { cn } from '../lib/cn'
-import { codigoEvento, dataExtensa, hojeISO, moeda, numero, periodo } from '../lib/format'
+import { codigoEvento, dataExtensa, moeda, numero, periodo } from '../lib/format'
 import { useEventosCompletos, type EventoCompleto } from '../lib/hooks'
 import { agruparPorPeriodo, filtrarPeriodo, somar, totaisVazios } from '../lib/relatorio'
 import { useDados } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
 import { MigracaoNavegador } from '../components/MigracaoNavegador'
+import { useHoje } from '../lib/hoje'
 
 export function Painel() {
   const todos = useEventosCompletos()
@@ -41,7 +42,7 @@ export function Painel() {
   const config = useDados((s) => s.config)
   const carregarExemplo = useDados((s) => s.carregarExemplo)
   const navegar = useNavigate()
-  const hoje = hojeISO()
+  const hoje = useHoje()
   const cap = useMemo(() => capacidade(maquinas, config), [maquinas, config])
 
   const d = useMemo(() => {
@@ -64,10 +65,12 @@ export function Painel() {
       (s, x) => s + x.evento.dias.filter((dd) => dd.data === hoje).reduce((a, dd) => a + dd.maquinas, 0),
       0,
     )
-    // Máquinas com número já escolhido nos eventos de hoje (para avisar das reservas sem número)
-    const identificadasHoje = new Set(
-      ativos.filter((x) => x.evento.dias.some((dd) => dd.data === hoje)).flatMap((x) => x.evento.maquinasIds),
-    ).size
+    // Máquinas de hoje ainda sem número escolhido, evento por evento (reserva a mais num evento
+    // não cobre a falta em outro)
+    const semNumeroHoje = ativos.reduce((s, x) => {
+      const doDia = x.evento.dias.filter((dd) => dd.data === hoje).reduce((a, dd) => a + dd.maquinas, 0)
+      return s + (doDia ? Math.max(0, doDia - x.evento.maquinasIds.length) : 0)
+    }, 0)
 
     const proximos = ativos
       .filter((x) => (x.resumo.dataFim ?? '') >= hoje)
@@ -86,7 +89,7 @@ export function Painel() {
       baldes,
       aReceber,
       maquinasHoje,
-      identificadasHoje,
+      semNumeroHoje,
       proximos,
       semPagamento,
       semConferencia,
@@ -220,9 +223,7 @@ export function Painel() {
         />
       </div>
 
-      {(cap.cadastradas || !vazio) && (
-        <SituacaoMaquinas cap={cap} semNumero={Math.max(0, d.maquinasHoje - d.identificadasHoje)} />
-      )}
+      {(cap.cadastradas || !vazio) && <SituacaoMaquinas cap={cap} semNumero={d.semNumeroHoje} />}
 
       <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
         <Card className="xl:col-span-2">

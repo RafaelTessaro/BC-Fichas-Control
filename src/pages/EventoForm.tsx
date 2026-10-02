@@ -45,6 +45,7 @@ import { novoId } from '../lib/storage'
 import type { DiaEvento, Evento, FormaPagamento, StatusEvento } from '#shared/tipos.ts'
 import { useDados, type EventoInput } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
+import { useHoje } from '../lib/hoje'
 
 const ICONES_PAGAMENTO: Record<FormaPagamento, ReactNode> = {
   NAO_PAGO: <Clock className="h-4 w-4" />,
@@ -100,7 +101,11 @@ export function EventoForm() {
   const resumo = useMemo(() => calcularEvento(f), [f])
   const ocupacao = useMemo(() => ocupacaoPorDia(eventos, id), [eventos, id])
   // Máquinas que a empresa tem (sem as desativadas); sem cadastro, a quantidade das configurações
-  const totalMaquinas = useMemo(() => capacidade(maquinas, config).total, [maquinas, config])
+  const cap = useMemo(() => capacidade(maquinas, config), [maquinas, config])
+  const totalMaquinas = cap.total
+  // De hoje em diante, as máquinas em manutenção não estão livres (como no cartão de máquinas abaixo)
+  const hoje = useHoje()
+  const emManutencao = (data: string) => (data >= hoje ? cap.manutencao : 0)
   const cliente = clientes.find((c) => c.id === f.clienteId)
 
   // Vindo do detalhe por "Marcar máquinas": rola até o cartão das máquinas
@@ -513,7 +518,7 @@ export function EventoForm() {
                 <AnimatePresence initial={false}>
                   {f.dias.map((d) => {
                     const usadas = ocupacao.get(d.data) ?? 0
-                    const livres = totalMaquinas - usadas
+                    const livres = totalMaquinas - emManutencao(d.data) - usadas
                     const excede = d.maquinas > livres
                     const repetida = datasRepetidas.has(d.data)
                     return (
@@ -555,7 +560,14 @@ export function EventoForm() {
                                     {livres <= 0 ? 'Sem máquinas livres' : `Só ${livres} ${livres > 1 ? 'livres' : 'livre'}`}
                                   </span>
                                 ) : (
-                                  <span className="tnum shrink-0 whitespace-nowrap text-muted">
+                                  <span
+                                    className="tnum shrink-0 whitespace-nowrap text-muted"
+                                    title={
+                                      emManutencao(d.data)
+                                        ? `${emManutencao(d.data)} em manutenção não ${emManutencao(d.data) > 1 ? 'entram' : 'entra'} na conta`
+                                        : undefined
+                                    }
+                                  >
                                     {livres - d.maquinas} de {totalMaquinas} livres
                                   </span>
                                 )}

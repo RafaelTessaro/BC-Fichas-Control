@@ -635,6 +635,31 @@ describe('robustez (revisão)', () => {
     expect(String(g.description)).toContain('Telefone: 19911112222')
   })
 
+  it('renomear uma máquina reenvia os eventos para onde ela foi enviada', async () => {
+    const maquina = t.repo.criarMaquina({ tipo: 'P', identificacao: 'P-01' })
+    const outra = t.repo.criarMaquina({ tipo: 'P', identificacao: 'P-02' })
+    const e = t.criarEvento({ maquinasIds: [maquina.id] })
+    const semEla = t.criarEvento({ nome: 'Quermesse', maquinasIds: [outra.id] })
+    await t.ativar()
+    await t.modulo.sincronizarAgora()
+    expect(String(t.sim.eventos(AGENDA).find((g) => g.id === idGoogle(e.id, 0))?.description)).toContain(
+      'Máquinas enviadas: P-01',
+    )
+
+    // Mudar só o modelo não aparece no Google: nada a reenviar
+    t.repo.atualizarMaquina(maquina.id, { ...maquina, modelo: 'Compacta' })
+    expect(syncDe(e)?.status).toBe('ok')
+
+    const atual = t.repo.obterMaquina(maquina.id)!
+    t.repo.atualizarMaquina(maquina.id, { ...atual, identificacao: 'P-21' })
+    expect(syncDe(e)?.status).toBe('pendente')
+    expect(syncDe(semEla)?.status).toBe('ok')
+    await t.modulo.sincronizarAgora()
+    expect(String(t.sim.eventos(AGENDA).find((g) => g.id === idGoogle(e.id, 0))?.description)).toContain(
+      'Máquinas enviadas: P-21',
+    )
+  })
+
   it('cliente alterado com a integração desativada: não marca eventos que nunca foram ao Google', async () => {
     const e = t.criarEvento()
     t.repo.atualizarCliente(t.cliente.id, { ...t.cliente, nome: 'Padaria Nova' })

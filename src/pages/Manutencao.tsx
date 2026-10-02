@@ -20,7 +20,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   codigoOS,
   ESTADO_MAQUINA,
-  localDaLocacao,
+  cabecalhoEmLinha,
   osEmAberto,
   periodoEvento,
   TIPO_MAQUINA,
@@ -38,9 +38,10 @@ import { Card, CardHeader } from '../components/ui/Card'
 import { Select } from '../components/ui/Form'
 import { EmptyState, PageHeader, SearchInput, Segmented, StatCard } from '../components/ui/Misc'
 import { cn } from '../lib/cn'
-import { dataCurta, hojeISO, numero, periodo } from '../lib/format'
+import { dataCurta, numero, periodo } from '../lib/format'
 import { haQuantoTempo, indicesOrdens, maquinaCombina, nomeAlemDoLocal, ordenarOrdens } from '../lib/manutencao'
 import { useDados } from '../store/dados'
+import { useHoje } from '../lib/hoje'
 
 type FiltroSituacao = 'todas' | EstadoMaquina
 
@@ -55,6 +56,7 @@ export function Manutencao() {
   const situacoes = useSituacoes()
   const navegar = useNavigate()
   const [params, setParams] = useSearchParams()
+  const frotaAntiga = useDados((s) => s.config.frotaMaquinas)
 
   const [busca, setBusca] = useState('')
   const [tipo, setTipo] = useState<'todas' | TipoMaquina>('todas')
@@ -106,7 +108,7 @@ export function Manutencao() {
     return [...filtradas].sort((a, b) => Number(a.status === 'DESATIVADA') - Number(b.status === 'DESATIVADA'))
   }, [maquinas, situacoes, tipo, situacao, busca])
 
-  const hoje = hojeISO()
+  const hoje = useHoje()
   const maisAntiga = abertas[0]
   const filtrando = !!busca || tipo !== 'todas' || situacao !== 'todas'
   const limparFiltros = () => {
@@ -143,7 +145,7 @@ export function Manutencao() {
           <EmptyState
             icone={<Cpu className="h-6 w-6" />}
             titulo="Nenhuma máquina cadastrada"
-            descricao="Cadastre suas máquinas uma a uma aqui, com a identificação de cada uma (ex.: P-01), ou informe quantas Máquinas P e G você tem em Configurações › Disponibilidade de máquinas: elas são criadas já numeradas."
+            descricao={`Cadastre suas máquinas uma a uma aqui, com a identificação de cada uma (ex.: P-01), ou informe quantas Máquinas P e G você tem em Configurações › Disponibilidade de máquinas: elas são criadas já numeradas. Hoje a agenda considera ${numero(frotaAntiga)} máquinas; a partir da primeira máquina cadastrada, passa a contar só as cadastradas.`}
             acao={
               <div className="flex flex-wrap justify-center gap-2">
                 <Button icone={<Settings className="h-4 w-4" />} onClick={() => navegar('/configuracoes')}>
@@ -464,7 +466,7 @@ function CartaoMaquina({
 
 /** Onde a máquina está hoje (ou a próxima locação), em uma ou duas linhas. */
 function OndeEsta({ situacao }: { situacao: SituacaoMaquina }) {
-  const { estado, evento, proxima } = situacao
+  const { estado, evento, proxima, dataProxima } = situacao
   if (estado === 'DESATIVADA') {
     return <LinhaInfo icone={<Cpu className="h-3.5 w-3.5" />}>Fora de uso. O histórico continua guardado.</LinhaInfo>
   }
@@ -478,20 +480,19 @@ function OndeEsta({ situacao }: { situacao: SituacaoMaquina }) {
         detalhe={p && [periodo(p.inicio, p.fim), nomeAlemDoLocal(evento)].filter(Boolean).join(' · ')}
       >
         {emManutencao ? 'Em manutenção, mas marcada em ' : 'Locada · '}
-        <LinkEvento id={evento.id}>{localDaLocacao(evento)}</LinkEvento>
+        <LinkEvento id={evento.id}>{cabecalhoEmLinha(evento)}</LinkEvento>
       </LinhaInfo>
     )
   }
   if (proxima) {
-    const p = periodoEvento(proxima)
     return (
       <LinhaInfo
         icone={<CalendarClock className="h-3.5 w-3.5" />}
         tom={estado === 'MANUTENCAO' ? 'text-warning' : undefined}
         detalhe={nomeAlemDoLocal(proxima)}
       >
-        Próxima locação: {p ? dataCurta(p.inicio).slice(0, 5) : '—'} ·{' '}
-        <LinkEvento id={proxima.id}>{localDaLocacao(proxima)}</LinkEvento>
+        Próxima locação: {dataProxima ? dataCurta(dataProxima).slice(0, 5) : '—'} ·{' '}
+        <LinkEvento id={proxima.id}>{cabecalhoEmLinha(proxima)}</LinkEvento>
       </LinhaInfo>
     )
   }

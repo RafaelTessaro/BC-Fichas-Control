@@ -59,8 +59,17 @@ export const osEmAberto = (o: Pick<OrdemServico, 'status'>) => o.status === 'ABE
 /** Identificação sugerida para a n-ésima máquina do tipo: "P-01", "G-12". */
 export const identificacaoPadrao = (tipo: TipoMaquina, n: number) => `${tipo}-${String(n).padStart(2, '0')}`
 
-/** Chave para comparar identificações sem diferenciar maiúsculas e espaços nas pontas. */
-export const chaveIdentificacao = (s: string) => s.trim().toLocaleUpperCase('pt-BR')
+/**
+ * Chave para comparar identificações: sem diferenciar maiúsculas, acentos, espaços, hífens e
+ * zeros à esquerda ("P-01", "p01" e "P 1" são a mesma máquina; "Máquina 01" = "maquina 1").
+ */
+export const chaveIdentificacao = (s: string) =>
+  s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase()
+    .replace(/[^0-9A-Z]/g, '')
+    .replace(/(^|[^0-9])0+(?=[0-9])/g, '$1')
 
 /** Número de uma identificação no padrão do tipo ("P-07", "p7", "P 07" → 7); `null` se não seguir o padrão. */
 export function numeroDaIdentificacao(identificacao: string, tipo: TipoMaquina): number | null {
@@ -103,45 +112,60 @@ export function periodoEvento(e: EventoPeriodo): { inicio: string; fim: string }
   return datas.length ? { inicio: datas[0], fim: datas[datas.length - 1] } : null
 }
 
-/** Onde a máquina está quando locada: a primeira linha do cabeçalho das fichas, ou o nome do evento. */
-export function localDaLocacao(e: Pick<Evento, 'cabecalho' | 'nome'>) {
-  const linha = e.cabecalho
+const linhasDoCabecalho = (cabecalho: string) =>
+  cabecalho
     .split('\n')
     .map((l) => l.trim())
-    .find(Boolean)
-  return linha || e.nome
+    .filter(Boolean)
+
+/** Onde a máquina está quando locada: a primeira linha do cabeçalho das fichas, ou o nome do evento. */
+export function localDaLocacao(e: Pick<Evento, 'cabecalho' | 'nome'>) {
+  return linhasDoCabecalho(e.cabecalho)[0] || e.nome
+}
+
+/** O cabeçalho inteiro numa linha ("FESTA DA PRIMAVERA · CLUBE RECREATIVO"), ou o nome do evento. */
+export function cabecalhoEmLinha(e: Pick<Evento, 'cabecalho' | 'nome'>) {
+  return linhasDoCabecalho(e.cabecalho).join(' · ') || e.nome
 }
 
 export interface SituacaoMaquina {
   estado: EstadoMaquina
-  /** Evento em andamento hoje com esta máquina. */
+  /** Evento com esta máquina que tem hoje entre os seus dias. */
   evento?: Evento
-  /** Próximo evento (começa depois de hoje) com esta máquina. */
+  /** Próximo evento com esta máquina (o de próximo dia de uso depois de hoje). */
   proxima?: Evento
+  /** Próximo dia de uso (`yyyy-MM-dd`) em `proxima`. */
+  dataProxima?: string
 }
 
 /**
  * Situação da máquina em `hoje` (`yyyy-MM-dd`): desativada e em manutenção valem o cadastro;
- * fora disso, "Locada" quando está num evento não cancelado cujo período inclui hoje.
+ * fora disso, "Locada" quando hoje é um dos dias de um evento não cancelado com a máquina.
+ * Conta só os dias cadastrados (como a agenda e os conflitos): num evento de 27/09 e 04/10,
+ * a máquina fica livre no meio da semana.
  */
 export function situacaoMaquina(maquina: Pick<Maquina, 'id' | 'status'>, eventos: Evento[], hoje: string): SituacaoMaquina {
   if (maquina.status === 'DESATIVADA') return { estado: 'DESATIVADA' }
   let evento: Evento | undefined
   let inicioEvento = ''
   let proxima: Evento | undefined
-  let inicioProxima = ''
+  let dataProxima = ''
   for (const e of eventos) {
     if (e.status === 'CANCELADO' || !e.maquinasIds.includes(maquina.id)) continue
-    const p = periodoEvento(e)
-    if (!p) continue
-    if (p.inicio <= hoje && hoje <= p.fim) {
-      if (!evento || p.inicio < inicioEvento) [evento, inicioEvento] = [e, p.inicio]
-    } else if (p.inicio > hoje && (!proxima || p.inicio < inicioProxima)) {
-      ;[proxima, inicioProxima] = [e, p.inicio]
+    const datas = e.dias
+      .map((d) => d.data)
+      .filter(Boolean)
+      .sort()
+    if (datas.includes(hoje)) {
+      if (!evento || datas[0] < inicioEvento) [evento, inicioEvento] = [e, datas[0]]
+      continue
     }
+    const seguinte = datas.find((d) => d > hoje)
+    if (seguinte && (!dataProxima || seguinte < dataProxima)) [proxima, dataProxima] = [e, seguinte]
   }
-  if (maquina.status === 'MANUTENCAO') return { estado: 'MANUTENCAO', evento, proxima }
-  return evento ? { estado: 'LOCADA', evento, proxima } : { estado: 'DISPONIVEL', proxima }
+  const futuro = proxima ? { proxima, dataProxima } : {}
+  if (maquina.status === 'MANUTENCAO') return { estado: 'MANUTENCAO', evento, ...futuro }
+  return evento ? { estado: 'LOCADA', evento, ...futuro } : { estado: 'DISPONIVEL', ...futuro }
 }
 
 /**
@@ -211,6 +235,8 @@ export interface PlanoAjuste {
   desativar: Maquina[]
   /** Quantas não puderam ser retiradas (em manutenção, ou com eventos hoje ou no futuro). */
   faltam: number
+  /** Máquinas do tipo que não podem ser retiradas agora, e o motivo. */
+  presas: { manutencao: Maquina[]; eventos: Maquina[] }
 }
 
 /**
@@ -226,7 +252,16 @@ export function planoAjuste(
   hoje: string,
 ): PlanoAjuste {
   const ativas = maquinas.filter((m) => m.tipo === tipo && m.status !== 'DESATIVADA')
-  const plano: PlanoAjuste = { tipo, atual: ativas.length, alvo, criar: [], excluir: [], desativar: [], faltam: 0 }
+  const plano: PlanoAjuste = {
+    tipo,
+    atual: ativas.length,
+    alvo,
+    criar: [],
+    excluir: [],
+    desativar: [],
+    faltam: 0,
+    presas: { manutencao: [], eventos: [] },
+  }
   if (alvo > ativas.length) {
     plano.criar = proximasIdentificacoes(maquinas, tipo, alvo - ativas.length)
     return plano
@@ -242,9 +277,13 @@ export function planoAjuste(
       const p = periodoEvento(e)
       return !!p && p.fim >= hoje
     })
-  const candidatas = ativas
-    .filter((m) => m.status === 'DISPONIVEL' && !ocupadaDeHojeEmDiante(m.id))
-    .sort((a, b) => compararMaquinas(b, a))
+  const candidatas: Maquina[] = []
+  for (const m of ativas) {
+    if (m.status === 'MANUTENCAO') plano.presas.manutencao.push(m)
+    else if (ocupadaDeHojeEmDiante(m.id)) plano.presas.eventos.push(m)
+    else candidatas.push(m)
+  }
+  candidatas.sort((a, b) => compararMaquinas(b, a))
   for (const m of candidatas) {
     if (!sobrando) break
     if (usadas.has(m.id) || comOS.has(m.id)) plano.desativar.push(m)

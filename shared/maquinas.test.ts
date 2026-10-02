@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { normalizarEvento, normalizarOS, validarBackup } from './dominio.ts'
 import {
+  cabecalhoEmLinha,
   capacidade,
+  chaveIdentificacao,
   conflitosMaquinas,
   localDaLocacao,
   maquinasOcupadas,
@@ -54,6 +56,14 @@ const ev = (id: string, datas: string[], maquinasIds: string[], extra: Partial<E
 })
 
 describe('identificação das máquinas', () => {
+  it('trata como iguais as identificações escritas de jeitos diferentes', () => {
+    expect(chaveIdentificacao('P-01')).toBe(chaveIdentificacao('p 1'))
+    expect(chaveIdentificacao('P01')).toBe(chaveIdentificacao('P-1'))
+    expect(chaveIdentificacao('Máquina 01')).toBe(chaveIdentificacao('MAQUINA 1'))
+    expect(chaveIdentificacao('P-10')).not.toBe(chaveIdentificacao('P-1'))
+    expect(chaveIdentificacao('P-100')).toBe('P100')
+  })
+
   it('entende variações do padrão e ordena de forma natural', () => {
     expect(numeroDaIdentificacao('P-07', 'P')).toBe(7)
     expect(numeroDaIdentificacao(' p 12 ', 'P')).toBe(12)
@@ -74,7 +84,7 @@ describe('situação da máquina', () => {
   const hoje = '2026-10-02'
   const eventos = [
     ev('passado', ['2026-09-01'], ['P-01']),
-    ev('agora', ['2026-10-01', '2026-10-03'], ['P-01'], { cabecalho: '\n  FESTA DA PRIMAVERA \nESCOLA' }),
+    ev('agora', ['2026-10-01', '2026-10-02', '2026-10-03'], ['P-01'], { cabecalho: '\n  FESTA DA PRIMAVERA \nESCOLA' }),
     ev('depois', ['2026-10-20'], ['P-01', 'P-02']),
     ev('cancelado', ['2026-10-02'], ['P-02'], { status: 'CANCELADO' }),
   ]
@@ -85,7 +95,19 @@ describe('situação da máquina', () => {
     expect(s.evento?.id).toBe('agora')
     expect(s.proxima?.id).toBe('depois')
     expect(localDaLocacao(s.evento!)).toBe('FESTA DA PRIMAVERA')
+    expect(cabecalhoEmLinha(s.evento!)).toBe('FESTA DA PRIMAVERA · ESCOLA')
     expect(localDaLocacao(ev('x', [], [], { nome: 'Quermesse' }))).toBe('Quermesse')
+    expect(s.dataProxima).toBe('2026-10-20')
+  })
+
+  it('conta só os dias do evento: nos dias de intervalo a máquina está livre', () => {
+    const domingos = [ev('domingos', ['2026-09-27', '2026-10-04'], ['P-09'])]
+    expect(situacaoMaquina(maq('P-09'), domingos, '2026-10-01')).toMatchObject({
+      estado: 'DISPONIVEL',
+      proxima: { id: 'domingos' },
+      dataProxima: '2026-10-04',
+    })
+    expect(situacaoMaquina(maq('P-09'), domingos, '2026-10-04').estado).toBe('LOCADA')
   })
 
   it('eventos cancelados não contam; manutenção e desativada valem o cadastro', () => {
@@ -121,7 +143,10 @@ describe('capacidade e ajuste de quantidade', () => {
     expect(plano.desativar.map((m) => m.id)).toEqual(['P-04', 'P-03'])
     expect(plano.excluir.map((m) => m.id)).toEqual(['P-01'])
     expect(plano.faltam).toBe(0)
-    expect(planoAjuste(lista, eventos, ordens, 'P', 0, '2026-10-02').faltam).toBe(2)
+    const zero = planoAjuste(lista, eventos, ordens, 'P', 0, '2026-10-02')
+    expect(zero.faltam).toBe(2)
+    expect(zero.presas.manutencao.map((m) => m.id)).toEqual(['P-02'])
+    expect(zero.presas.eventos.map((m) => m.id)).toEqual(['P-05'])
     expect(planoAjuste(lista, eventos, ordens, 'P', 7, '2026-10-02').criar).toEqual(['P-06', 'P-07'])
   })
 })
@@ -152,7 +177,7 @@ describe('validação', () => {
         { id: 'o2', numero: 3, maquinaId: 'outra', problema: 'y' },
       ],
     })
-    expect(b.maquinas.map((m) => m.identificacao)).toEqual(['P-01', 'p-01 (2)'])
+    expect(b.maquinas.map((m) => m.identificacao)).toEqual(['P-01', 'p-01 (duplicada 2)'])
     expect(b.eventos[0].maquinasIds).toEqual(['P-01'])
     expect(b.ordens.map((o) => o.numero).sort()).toEqual([3, 4])
     expect(b.proximaOS).toBe(5)

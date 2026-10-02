@@ -6,6 +6,7 @@ import { parseISO } from 'date-fns'
 import { codigoEvento, dataCurta, hojeISO, moeda, numero, periodo } from './format'
 import { nomeArquivoSeguro } from './storage'
 import type { Cliente, Configuracoes, Evento, Maquina } from '#shared/tipos.ts'
+import { txt } from './pdfTexto'
 
 const VERDE: [number, number, number] = [11, 158, 79]
 const TINTA: [number, number, number] = [50, 52, 56]
@@ -28,8 +29,6 @@ function carregarTimbrado() {
 
 /** Fontes padrão do PDF usam WinAnsi: normaliza espaços especiais do Intl. */
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
-
-const txt = (s: string) => s.replace(/[\u00a0\u202f]/g, ' ').replace(/\u2212/g, '-')
 
 export async function gerarResumoPDF(
   evento: Evento,
@@ -252,7 +251,10 @@ export async function gerarResumoPDF(
   // Mensagem final (campo "RODAPÉ" da planilha): texto livre, pode quebrar em até 4 linhas
   const rodape = (evento.rodape || config.rodapePadrao).trim()
   doc.setFont('helvetica', 'bold').setFontSize(13)
-  const linhasRodape = rodape ? (doc.splitTextToSize(txt(rodape), W) as string[]).slice(0, 4) : []
+  // Até 4 linhas; o que passar disso termina em "…" (a ficha pode ter mais, o PDF resume)
+  const todasRodape = rodape ? (doc.splitTextToSize(txt(rodape), W) as string[]) : []
+  const linhasRodape =
+    todasRodape.length > 4 ? [...todasRodape.slice(0, 3), `${todasRodape[3].replace(/\s+$/, '')}…`] : todasRodape
   const ENTRELINHA_RODAPE = 5.3
   const alturaRodape = 8 + Math.max(0, linhasRodape.length - 1) * ENTRELINHA_RODAPE + 6
   garantirEspaco(alturaPagamento + alturaRodape)

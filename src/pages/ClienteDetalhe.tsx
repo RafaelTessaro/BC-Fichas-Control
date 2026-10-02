@@ -41,6 +41,7 @@ import { dataCurta, enderecoCompleto, moeda, numero } from '../lib/format'
 import { porDataDesc, useEventosCompletos } from '../lib/hooks'
 import { useDados } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
+import { hojeLocalIso } from '#shared/dominio.ts'
 
 export function ClienteDetalhe() {
   const { id } = useParams()
@@ -222,7 +223,7 @@ export function ClienteDetalhe() {
               </div>
             )}
             <div className="col-span-full flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted">
-              <span>Cliente desde {dataCurta(cliente.criadoEm.slice(0, 10))}</span>
+              <span>Cliente desde {dataCurta(hojeLocalIso(new Date(cliente.criadoEm)))}</span>
               {cliente.tipo === 'PJ' && cliente.consultadoEm && (
                 <span>Dados consultados na Receita em {dataCurta(cliente.consultadoEm)}</span>
               )}

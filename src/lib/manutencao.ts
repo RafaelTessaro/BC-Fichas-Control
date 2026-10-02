@@ -2,7 +2,7 @@
 // Funções puras (sem React), testadas em manutencao.test.ts.
 
 import { differenceInCalendarDays, parseISO } from 'date-fns'
-import { localDaLocacao, numeroDaIdentificacao, osEmAberto, periodoEvento } from '#shared/maquinas.ts'
+import { chaveIdentificacao, localDaLocacao, numeroDaIdentificacao, osEmAberto, periodoEvento } from '#shared/maquinas.ts'
 import type { Evento, Maquina, OrdemServico, StatusMaquina, StatusOS } from '#shared/tipos.ts'
 import { normalizar, periodo } from './format'
 
@@ -11,8 +11,12 @@ export function maquinaCombina(m: Pick<Maquina, 'tipo' | 'identificacao' | 'mode
   const termo = normalizar(busca)
   if (!termo) return true
   if (normalizar(`${m.identificacao} ${m.modelo} ${m.numeroSerie}`).includes(termo)) return true
+  if (chaveIdentificacao(m.identificacao) === chaveIdentificacao(busca)) return true
   const n = numeroDaIdentificacao(busca, m.tipo)
-  return n !== null && n === numeroDaIdentificacao(m.identificacao, m.tipo)
+  if (n !== null && n === numeroDaIdentificacao(m.identificacao, m.tipo)) return true
+  // "máquina 01" / "maq 1": o número vale para os dois tipos (P-01 e G-01)
+  const resto = /^\s*m[aá]q(?:uina)?\.?\s*(\d{1,6})\s*$/i.exec(busca)
+  return !!resto && Number(resto[1]) === numeroDaIdentificacao(m.identificacao, m.tipo)
 }
 
 /** Nome do evento, quando diz algo além do local (a 1ª linha do cabeçalho costuma ser o próprio nome). */
@@ -64,7 +68,7 @@ export interface ResumoMaquina {
   ultimaManutencao: string | null
   /** Eventos (não cancelados) para os quais a máquina foi enviada. */
   eventos: number
-  /** Dias desses eventos: cada dia com a máquina conta uma diária. */
+  /** Dias desses eventos até hoje: cada dia com a máquina conta uma diária (os futuros ficam de fora). */
   diarias: number
   /** Desses eventos, quantos ainda vão começar. */
   agendados: number
@@ -84,7 +88,7 @@ export function resumoMaquina(maquinaId: string, ordens: OrdemServico[], eventos
   for (const e of eventos) {
     if (e.status === 'CANCELADO' || !e.maquinasIds.includes(maquinaId)) continue
     r.eventos++
-    r.diarias += new Set(e.dias.map((d) => d.data).filter(Boolean)).size
+    r.diarias += new Set(e.dias.map((d) => d.data).filter((d) => d && d <= hoje)).size
     const p = periodoEvento(e)
     if (p && p.inicio > hoje) r.agendados++
   }

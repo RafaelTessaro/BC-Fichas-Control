@@ -13,7 +13,8 @@ import { rotasConsultas } from './rotas/consultas.ts'
 import { rotasDados } from './rotas/dados.ts'
 import { TempoReal } from './tempoReal.ts'
 
-export const VERSAO_APP = '2.0.0'
+/** Versão do sistema, lida do package.json (a mesma que vai no nome do pacote para Windows). */
+export const VERSAO_APP: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
 
 /** Cabeçalho exigido em toda gravação: bloqueia que sites externos alterem dados pela rede local (CSRF). */
 export const CABECALHO_APP = 'x-bc-fichas'

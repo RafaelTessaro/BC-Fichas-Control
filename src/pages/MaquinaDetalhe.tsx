@@ -45,7 +45,7 @@ import { confirmar } from '../components/ui/Feedback'
 import { EmptyState, PageHeader, Segmented, StatCard } from '../components/ui/Misc'
 import { ErroApi } from '../lib/api'
 import { cn } from '../lib/cn'
-import { codigoEvento, dataCurta, hojeISO, moeda, numero, periodo } from '../lib/format'
+import { codigoEvento, dataCurta, moeda, numero, periodo } from '../lib/format'
 import {
   avisoLocacoes,
   diasEntre,
@@ -60,6 +60,8 @@ import {
 } from '../lib/manutencao'
 import { useDados } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
+import { useHoje } from '../lib/hoje'
+import { hojeLocalIso } from '#shared/dominio.ts'
 
 type ModalOS = { ordem?: OrdemServico; concluir?: boolean }
 type Aba = 'manutencoes' | 'historico'
@@ -87,7 +89,7 @@ export function MaquinaDetalhe() {
   const [filtro, setFiltro] = useState<FiltroHistorico>('tudo')
   const [limite, setLimite] = useState(POR_PAGINA)
 
-  const hoje = hojeISO()
+  const hoje = useHoje()
   const ordens = useMemo(() => ordenarOrdens(todasOrdens.filter((o) => o.maquinaId === id)), [todasOrdens, id])
   const resumo = useMemo(() => resumoMaquina(id ?? '', todasOrdens, eventos, hoje), [id, todasOrdens, eventos, hoje])
   const historico = useMemo(() => historicoMaquina(id ?? '', todasOrdens, eventos, hoje), [id, todasOrdens, eventos, hoje])
@@ -328,7 +330,7 @@ export function MaquinaDetalhe() {
             <Dado rotulo="Modelo">{maquina.modelo}</Dado>
             <Dado rotulo="Nº de série">{maquina.numeroSerie}</Dado>
             <Dado rotulo="Aquisição">{maquina.dataAquisicao && dataCurta(maquina.dataAquisicao)}</Dado>
-            <Dado rotulo="Cadastrada em">{dataCurta(maquina.criadoEm.slice(0, 10))}</Dado>
+            <Dado rotulo="Cadastrada em">{dataCurta(hojeLocalIso(new Date(maquina.criadoEm)))}</Dado>
             {maquina.observacoes && (
               <div className="col-span-2">
                 <Dado rotulo="Observações">

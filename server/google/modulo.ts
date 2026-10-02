@@ -194,6 +194,22 @@ export function criarModuloGoogle(ctx: Contexto, opcoes: OpcoesModuloGoogle = {}
       if (marcados) sinc.agendar()
     },
 
+    maquinaSalva(maquina, anterior) {
+      // Só a identificação da máquina aparece nos eventos do Google ("Máquinas enviadas")
+      if (maquina.identificacao === anterior.identificacao) return
+      let marcados = 0
+      for (const e of ctx.repo.listarEventosBrutos()) {
+        if (!e.maquinasIds.includes(maquina.id)) continue
+        const linha = estado.obter(e.id)
+        if (!integracaoAtiva() && !linha) continue
+        if (e.status === 'CANCELADO' && (!linha || !temCopias(linha))) continue
+        estado.marcarPendente(e.id)
+        republicar(e.id)
+        marcados++
+      }
+      if (marcados) sinc.agendar()
+    },
+
     eventoExcluido(evento) {
       const linha = estado.obter(evento.id)
       if (!linha) return // nunca foi enviado

@@ -4,7 +4,7 @@ import { useMemo, type ReactNode } from 'react'
 import { ESTADO_MAQUINA, situacaoMaquina, STATUS_OS, type EstadoMaquina, type SituacaoMaquina } from '#shared/maquinas.ts'
 import type { Maquina, StatusOS, TipoMaquina } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
-import { hojeISO } from '../lib/format'
+import { useHoje } from '../lib/hoje'
 import { useDados } from '../store/dados'
 import { Badge } from './ui/Badge'
 
@@ -12,10 +12,8 @@ import { Badge } from './ui/Badge'
 export function useSituacoes(): Map<string, SituacaoMaquina> {
   const maquinas = useDados((s) => s.maquinas)
   const eventos = useDados((s) => s.eventos)
-  return useMemo(() => {
-    const hoje = hojeISO()
-    return new Map(maquinas.map((m) => [m.id, situacaoMaquina(m, eventos, hoje)]))
-  }, [maquinas, eventos])
+  const hoje = useHoje()
+  return useMemo(() => new Map(maquinas.map((m) => [m.id, situacaoMaquina(m, eventos, hoje)])), [maquinas, eventos, hoje])
 }
 
 export function SituacaoBadge({ estado, className }: { estado: EstadoMaquina; className?: string }) {

@@ -7,6 +7,7 @@ import { codigoOS, STATUS_OS, TIPO_MAQUINA, TIPO_OS } from '#shared/maquinas.ts'
 import type { Maquina, OrdemServico } from '#shared/tipos.ts'
 import { dataCurta, hojeISO, moeda } from './format'
 import { nomeArquivoSeguro } from './storage'
+import { txt } from './pdfTexto'
 
 // Mesmas cores do resumo do evento
 const VERDE: [number, number, number] = [11, 158, 79]
@@ -30,7 +31,6 @@ function carregarTimbrado() {
 }
 
 /** Fontes padrão do PDF usam WinAnsi: normaliza espaços especiais do Intl. */
-const txt = (s: string) => s.replace(/[  ]/g, ' ').replace(/−/g, '-')
 
 export async function gerarOSPDF(ordem: OrdemServico, maquina: Maquina | undefined) {
   const img = await carregarTimbrado()

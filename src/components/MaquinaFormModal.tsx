@@ -150,8 +150,10 @@ function FormularioMaquina({
         maquina ? 'Máquina atualizada' : 'Máquina cadastrada',
         `${salva.identificacao} · ${TIPO_MAQUINA[salva.tipo].label}`,
       )
-      aoSalvar?.(salva)
+      // Fecha antes de navegar: fechar limpa o "?nova=maquina" da busca global e, depois da
+      // navegação, trocaria a página da máquina recém-aberta de volta para a lista
       aoFechar()
+      aoSalvar?.(salva)
     } catch (err) {
       const duplicado =
         err instanceof ErroApi && err.status === 409

@@ -9,6 +9,7 @@ import {
   ESTADO_MAQUINA,
   maquinasOcupadas,
   ordenarMaquinas,
+  osEmAberto,
   periodoEvento,
   TIPO_MAQUINA,
   TIPOS_MAQUINA,
@@ -16,13 +17,14 @@ import {
 } from '#shared/maquinas.ts'
 import type { DiaEvento, Evento, Maquina } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
-import { codigoEvento, hojeISO } from '../lib/format'
+import { codigoEvento } from '../lib/format'
 import { useDados } from '../store/dados'
 import { toast } from '../store/ui'
 import { MaquinaChip, TipoMaquinaBadge, useSituacoes } from './Maquinas'
 import { Badge } from './ui/Badge'
 import { Button } from './ui/Button'
 import { Card, CardHeader } from './ui/Card'
+import { useHoje } from '../lib/hoje'
 
 // ---- Textos e contas ---------------------------------------------------------
 
@@ -176,8 +178,11 @@ export function SeletorMaquinas({
   const navegar = useNavigate()
   const maquinas = useDados((s) => s.maquinas)
   const eventos = useDados((s) => s.eventos)
+  const ordens = useDados((s) => s.ordens)
 
   const ordenadas = useMemo(() => ordenarMaquinas(maquinas), [maquinas])
+  // Máquinas com O.S. em aberto (às vezes ainda marcadas como disponíveis, enquanto voltam de um evento)
+  const comOS = useMemo(() => new Set(ordens.filter(osEmAberto).map((o) => o.maquinaId)), [ordens])
   const datas = useMemo(() => new Set(dias.map((d) => d.data).filter(Boolean)), [dias])
   const ocupadas = useMemo(() => maquinasOcupadas([...datas], eventos, eventoId), [datas, eventos, eventoId])
   const selecionadas = useMemo(() => new Set(maquinasIds), [maquinasIds])
@@ -186,7 +191,7 @@ export function SeletorMaquinas({
   const escolhidas = ordenadas.filter((m) => selecionadas.has(m.id))
   // Desativadas só aparecem se já estavam marcadas (para poder desmarcar)
   const visiveis = ordenadas.filter((m) => m.status !== 'DESATIVADA' || selecionadas.has(m.id))
-  const livre = (m: Maquina) => m.status === 'DISPONIVEL' && !ocupadas.has(m.id)
+  const livre = (m: Maquina) => m.status === 'DISPONIVEL' && !ocupadas.has(m.id) && !comOS.has(m.id)
   const estadoNasDatas = (m: Maquina): EstadoMaquina =>
     m.status !== 'DISPONIVEL' ? m.status : ocupadas.has(m.id) ? 'LOCADA' : 'DISPONIVEL'
 
@@ -209,7 +214,8 @@ export function SeletorMaquinas({
     const nomes = ordenarMaquinas(final)
       .map((m) => m.identificacao)
       .join(', ')
-    if (!final.length) toast.erro('Nenhuma máquina livre nessas datas', 'Todas estão em outros eventos ou em manutenção.')
+    if (!final.length)
+      toast.erro('Nenhuma máquina livre nessas datas', 'Todas estão em outros eventos, em manutenção ou com O.S. em aberto.')
     else if (final.length < precisa)
       toast.info(`Só ${plural(final.length, 'máquina livre', 'máquinas livres')} nessas datas`, nomes)
     else toast.sucesso(`${plural(final.length, 'máquina escolhida', 'máquinas escolhidas')}`, nomes)
@@ -266,6 +272,17 @@ export function SeletorMaquinas({
           </>
         ),
       })
+    } else if (comOS.has(m.id)) {
+      avisos.push({
+        chave: `os-${m.id}`,
+        tom: 'warning',
+        texto: (
+          <>
+            <b className="font-semibold text-ink">{m.identificacao}</b> tem uma O.S. em aberto. Confira se ela já está pronta para
+            o evento.
+          </>
+        ),
+      })
     } else if (m.status === 'DESATIVADA') {
       avisos.push({
         chave: `d-${m.id}`,
@@ -284,8 +301,9 @@ export function SeletorMaquinas({
     const outros = ocupadas.get(m.id)
     if (m.status === 'MANUTENCAO') partes.push('em manutenção')
     else if (m.status === 'DESATIVADA') partes.push('desativada')
+    else if (comOS.has(m.id)) partes.push('com O.S. em aberto')
     if (outros?.length) partes.push(`também no evento ${outros.map((e) => `${codigoEvento(e.codigo)} ${e.nome}`).join(', ')}`)
-    else if (m.status === 'DISPONIVEL') partes.push('livre nessas datas')
+    else if (m.status === 'DISPONIVEL' && !comOS.has(m.id)) partes.push('livre nessas datas')
     return partes.join(' · ')
   }
 
@@ -356,7 +374,7 @@ export function SeletorMaquinas({
                         maquina={m}
                         estado={estadoNasDatas(m)}
                         selecionada={selecionadas.has(m.id)}
-                        aviso={m.status === 'MANUTENCAO' || ocupadas.has(m.id)}
+                        aviso={m.status === 'MANUTENCAO' || ocupadas.has(m.id) || comOS.has(m.id)}
                         titulo={titulo(m)}
                         aoClicar={() => alternar(m)}
                         className="min-w-[60px] justify-center"
@@ -425,11 +443,12 @@ export function MaquinasEnviadas({ evento }: { evento: Evento }) {
     () => (cancelado ? new Map<string, Evento[]>() : conflitosMaquinas(evento, eventos)),
     [cancelado, evento, eventos],
   )
+  const hoje = useHoje()
   // Manutenção e desativação só importam enquanto o evento não terminou
   const pendente = useMemo(() => {
     const p = periodoEvento(evento)
-    return !cancelado && evento.status !== 'FINALIZADO' && !!p && p.fim >= hojeISO()
-  }, [cancelado, evento])
+    return !cancelado && evento.status !== 'FINALIZADO' && !!p && p.fim >= hoje
+  }, [cancelado, evento, hoje])
   const datas = useMemo(() => new Set(evento.dias.map((d) => d.data)), [evento.dias])
   const precisa = maiorUso(evento.dias)
 

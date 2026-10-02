@@ -28,6 +28,7 @@ import { cap, codigoEvento, dataExtensa, numero } from '../lib/format'
 import { useEventosCompletos, type EventoCompleto } from '../lib/hooks'
 import type { Maquina, StatusEvento } from '#shared/tipos.ts'
 import { useDados } from '../store/dados'
+import { useHoje } from '../lib/hoje'
 
 const COR_STATUS: Record<StatusEvento, string> = {
   EM_ABERTO: 'bg-info',
@@ -52,6 +53,9 @@ export function Agenda() {
   // Capacidade: máquinas P e G cadastradas (não desativadas) ou, sem cadastro, o número das configurações
   const capac = useMemo(() => capacidade(maquinas, config), [maquinas, config])
   const total = capac.total
+  // De hoje em diante, as máquinas em manutenção não estão livres
+  const hojeIso = useHoje()
+  const capacidadeDoDia = (iso: string) => (iso >= hojeIso ? total - capac.manutencao : total)
   const porId = useMemo(() => new Map(maquinas.map((m) => [m.id, m])), [maquinas])
 
   const porDia = useMemo(() => {
@@ -75,15 +79,16 @@ export function Agenda() {
     const evs = new Set<string>()
     for (const d of dias) {
       if (!isSameMonth(d, mes)) continue
-      const l = (porDia.get(format(d, 'yyyy-MM-dd')) ?? []).filter((x) => x.item.evento.status !== 'CANCELADO')
+      const iso = format(d, 'yyyy-MM-dd')
+      const l = (porDia.get(iso) ?? []).filter((x) => x.item.evento.status !== 'CANCELADO')
       const usadas = l.reduce((s, x) => s + x.maquinas, 0)
       l.forEach((x) => evs.add(x.item.evento.id))
       diarias += usadas
       pico = Math.max(pico, usadas)
-      if (usadas > total) diasExcedidos++
+      if (usadas > (iso >= hojeIso ? total - capac.manutencao : total)) diasExcedidos++
     }
     return { diarias, pico, diasExcedidos, eventos: evs.size }
-  }, [dias, mes, porDia, total])
+  }, [dias, mes, porDia, total, capac.manutencao, hojeIso])
 
   const mudarMes = (delta: number) => {
     setDirecao(delta)
@@ -92,6 +97,8 @@ export function Agenda() {
 
   const itensDiaAberto = diaAberto ? (porDia.get(diaAberto) ?? []) : []
   const usadasDiaAberto = itensDiaAberto.filter((x) => x.item.evento.status !== 'CANCELADO').reduce((s, x) => s + x.maquinas, 0)
+  const capDiaAberto = diaAberto ? capacidadeDoDia(diaAberto) : total
+  const livresDiaAberto = Math.max(0, capDiaAberto - usadasDiaAberto)
 
   return (
     <>
@@ -190,7 +197,8 @@ export function Agenda() {
                 const itens = porDia.get(iso) ?? []
                 const ativos = itens.filter((x) => x.item.evento.status !== 'CANCELADO')
                 const usadas = ativos.reduce((s, x) => s + x.maquinas, 0)
-                const pct = total > 0 ? usadas / total : 0
+                const capDia = capacidadeDoDia(iso)
+                const pct = capDia > 0 ? usadas / capDia : usadas > 0 ? 2 : 0
                 const doMes = isSameMonth(d, mes)
                 const hoje = isToday(d)
                 return (
@@ -305,7 +313,9 @@ export function Agenda() {
         titulo={diaAberto ? dataExtensa(diaAberto, "EEEE, d 'de' MMMM") : ''}
         descricao={
           diaAberto
-            ? `${usadasDiaAberto} de ${total} máquinas reservadas • ${Math.max(0, total - usadasDiaAberto)} ${total - usadasDiaAberto === 1 ? 'livre' : 'livres'}`
+            ? `${usadasDiaAberto} de ${total} máquinas reservadas • ${livresDiaAberto} ${livresDiaAberto === 1 ? 'livre' : 'livres'}${
+                diaAberto >= hojeIso && capac.manutencao ? ` (${capac.manutencao} em manutenção)` : ''
+              }`
             : ''
         }
       >
@@ -314,12 +324,12 @@ export function Agenda() {
             <div className="h-2 w-full overflow-hidden rounded-full bg-surface-3">
               <motion.div
                 initial={{ width: 0 }}
-                animate={{ width: `${Math.min(100, (usadasDiaAberto / Math.max(1, total)) * 100)}%` }}
+                animate={{ width: `${Math.min(100, (usadasDiaAberto / Math.max(1, capDiaAberto)) * 100)}%` }}
                 className={cn(
                   'h-full rounded-full',
-                  usadasDiaAberto > total
+                  usadasDiaAberto > capDiaAberto
                     ? 'bg-danger'
-                    : usadasDiaAberto / Math.max(1, total) >= 0.8
+                    : usadasDiaAberto / Math.max(1, capDiaAberto) >= 0.8
                       ? 'bg-warning-dot'
                       : 'bg-brand',
                 )}

@@ -100,9 +100,15 @@ export function Configuracoes() {
       toast.erro('Não foi possível restaurar', 'O arquivo não é um backup válido (JSON).')
       return
     }
+    // Backup de antes do cadastro de máquinas: as máquinas e O.S. atuais não voltam
+    const semMaquinas = !Array.isArray((dados as { maquinas?: unknown } | null)?.maquinas)
+    const aviso =
+      semMaquinas && maquinas.length
+        ? ` Atenção: este backup é de uma versão sem o cadastro de máquinas. As ${qtd(maquinas.length, 'máquina', 'máquinas')} e as ordens de serviço atuais serão apagadas e precisarão ser cadastradas de novo.`
+        : ''
     const ok = await confirmar({
       titulo: 'Restaurar backup?',
-      descricao: `Os dados atuais (${qtd(clientes.length, 'cliente', 'clientes')}, ${qtd(eventos.length, 'evento', 'eventos')} e ${qtd(maquinas.length, 'máquina', 'máquinas')}) serão substituídos pelos do arquivo “${file.name}” em todos os computadores. Antes disso, o servidor guarda uma cópia automática.`,
+      descricao: `Os dados atuais (${qtd(clientes.length, 'cliente', 'clientes')}, ${qtd(eventos.length, 'evento', 'eventos')} e ${qtd(maquinas.length, 'máquina', 'máquinas')}) serão substituídos pelos do arquivo “${file.name}” em todos os computadores. Antes disso, o servidor guarda uma cópia automática.${aviso}`,
       confirmar: 'Restaurar',
       perigo: true,
       digitar: 'RESTAURAR',

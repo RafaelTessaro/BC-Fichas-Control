@@ -151,8 +151,15 @@ describe('evento com cabeçalho e máquinas enviadas', () => {
     db.prepare('UPDATE eventos SET dados = ? WHERE id = ?').run(JSON.stringify({ ...antigo, local: 'Ginásio' }), e.id)
     db.close()
     const [lido] = (await dados()).eventos
-    expect(lido).toMatchObject({ cabecalho: '', maquinasIds: [] })
+    expect(lido).toMatchObject({ cabecalho: '', maquinasIds: [], observacoes: 'Local: Ginásio' })
     expect('local' in lido).toBe(false)
+    // Uma alteração rápida grava o evento já no formato novo, sem perder o local
+    await req('PATCH', `/api/eventos/${e.id}`, { status: 'PENDENTE' }, 200)
+    const db2 = new DatabaseSync(arquivo)
+    const gravado = JSON.parse((db2.prepare('SELECT dados FROM eventos WHERE id = ?').get(e.id) as { dados: string }).dados)
+    db2.close()
+    expect(gravado).toMatchObject({ observacoes: 'Local: Ginásio', cabecalho: '' })
+    expect('local' in gravado).toBe(false)
   })
 })
 
@@ -280,7 +287,7 @@ describe('backup com máquinas e O.S.', () => {
     }
     await req('POST', '/api/backup/restaurar', v2, 200)
     const d = await dados()
-    expect(d.eventos[0]).toMatchObject({ codigo: 5, cabecalho: '', maquinasIds: [] })
+    expect(d.eventos[0]).toMatchObject({ codigo: 5, cabecalho: '', maquinasIds: [], observacoes: 'Local: Ginásio' })
     expect(d.maquinas).toEqual([])
   })
 })

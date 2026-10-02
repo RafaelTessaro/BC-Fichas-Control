@@ -23,11 +23,12 @@ Google Agenda — se ela cair, essas duas funções esperam e voltam sozinhas.
 | Grupo | Página | O que faz |
 | --- | --- | --- |
 | Visão geral | **Painel** | Faturamento do mês, valores a receber, máquinas em uso hoje, próximos eventos, pagamentos pendentes e bobinas a conferir |
-| | **Agenda** | Calendário mensal com a ocupação da frota por dia; avisa quando passa de 80% ou estoura a frota |
+| | **Agenda** | Calendário mensal com a ocupação das máquinas por dia (e os números das máquinas de cada evento); avisa quando passa de 80% ou do total de máquinas |
 | Cadastros | **Clientes** | Empresa (CNPJ, com consulta automática na Receita), pessoa física (CPF) ou cliente avulso; histórico e total faturado |
-| | **Eventos** | Dias de uso com a quantidade de máquinas em cada dia, valores, bobinas consignadas/devolvidas, desconto, pagamento e PDF do cliente |
-| Gestão | **Relatórios** | Faturamento por mês/semana, recebido × a receber, ticket médio, formas de pagamento, ranking de clientes e CSV |
-| | **Configurações** | Valores padrão, frota, tema claro/escuro, backups e integração com o Google Agenda |
+| | **Eventos** | Dias de uso com a quantidade de máquinas em cada dia, cabeçalho e rodapé das fichas (com prévia), máquinas enviadas, valores, bobinas consignadas/devolvidas, desconto, pagamento e PDF do cliente |
+| Gestão | **Manutenção** | Máquinas P e G com identificação (P-01, G-03…), situação (disponível, locada, em manutenção, desativada) e onde cada uma está; ordens de serviço (O.S.) com serviços, problema, solução, peças e custo, histórico de cada máquina e O.S. impressa no timbrado |
+| | **Relatórios** | Faturamento por mês/semana, recebido × a receber, ticket médio, formas de pagamento, ranking de clientes e planilha (CSV) |
+| | **Configurações** | Disponibilidade de máquinas (quantas P e G), valores padrão, tema claro/escuro, backups e integração com o Google Agenda |
 
 Atalhos: **Ctrl/⌘ + K** abre a busca global e **Ctrl/⌘ + S** salva o evento.
 
@@ -162,6 +163,26 @@ sistema reconecta sozinho; quando o servidor é atualizado, as telas abertas rec
 
 O acesso não pede senha: qualquer computador da rede da empresa consegue abrir o sistema.
 Não exponha a porta do servidor para a internet.
+
+## Máquinas e manutenção
+
+- **Quantas máquinas a empresa tem:** em Configurações › Disponibilidade de máquinas, informe
+  quantas **Máquinas P** (pequenas) e **Máquinas G** (grandes) existem; o total é a soma. Ao
+  aumentar, as novas são cadastradas já numeradas (P-13, P-14…). Ao diminuir, as nunca usadas são
+  apagadas e as que têm histórico ficam **desativadas** (o histórico continua guardado); máquinas
+  em manutenção ou com eventos de hoje em diante não são retiradas. Também dá para cadastrar uma a
+  uma na aba Manutenção.
+- **Onde cada máquina está:** no evento, marque os números das máquinas enviadas. Nos dias do
+  evento a máquina aparece como **Locada**, com o cabeçalho da festa como local. O sistema avisa
+  quando a mesma máquina está em outro evento nas mesmas datas, em manutenção ou com O.S. em aberto.
+- **Cabeçalho e rodapé das fichas:** no evento, os textos que são programados nas máquinas e
+  saem impressos em cada ficha. O rodapé também fecha o resumo em PDF do cliente. Eventos
+  cadastrados antes desta versão tinham o campo "Local": o texto dele foi guardado no início das
+  observações do evento.
+- **Ordens de serviço:** cada manutenção (limpeza completa, higienização, revisão, conserto…)
+  vira uma O.S. numerada na ficha da máquina, preventiva ou corretiva. Ao abrir a O.S., a máquina
+  pode ir para "Em manutenção"; ao concluir, volta para "Disponível". O histórico da máquina junta
+  as O.S. e as locações, para consultar problemas antigos e revisões.
 
 ## Cadastro de clientes: empresa, pessoa física ou avulso
 

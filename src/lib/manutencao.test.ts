@@ -141,7 +141,7 @@ describe('resumo da máquina', () => {
       gasto: 170.5,
       ultimaManutencao: '2026-07-20',
       eventos: 2,
-      diarias: 3,
+      diarias: 2, // o dia de e2 ainda não chegou
       agendados: 1,
     })
   })

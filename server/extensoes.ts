@@ -1,4 +1,4 @@
-import type { Cliente, Evento } from '#shared/tipos.ts'
+import type { Cliente, Evento, Maquina } from '#shared/tipos.ts'
 
 /**
  * Pontos de extensão do repositório, usados por módulos opcionais
@@ -12,6 +12,8 @@ export interface ExtensaoRepositorio {
   eventoSalvo?(evento: Evento, anterior: Evento | undefined): void
   /** Cliente alterado (nome, telefone etc. aparecem no conteúdo dos eventos dele). */
   clienteSalvo?(cliente: Cliente, anterior: Cliente): void
+  /** Máquina alterada (a identificação aparece nos eventos para onde ela foi enviada). */
+  maquinaSalva?(maquina: Maquina, anterior: Maquina): void
   /** Evento excluído definitivamente. */
   eventoExcluido?(evento: Evento): void
   /** Todos os dados foram substituídos (restauração de backup, exemplo ou limpeza). */

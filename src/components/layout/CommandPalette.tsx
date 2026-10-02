@@ -5,7 +5,7 @@ import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { create } from 'zustand'
 import { calcularEvento } from '#shared/calc.ts'
-import { ESTADO_MAQUINA, localDaLocacao } from '#shared/maquinas.ts'
+import { cabecalhoEmLinha, ESTADO_MAQUINA } from '#shared/maquinas.ts'
 import { cn } from '../../lib/cn'
 import { codigoEvento, normalizar, periodo } from '../../lib/format'
 import { maquinaCombina } from '../../lib/manutencao'
@@ -152,7 +152,7 @@ function Paleta({ fechar }: { fechar: () => void }) {
           .slice(0, 6)
           .map((m) => {
             const sit = situacoes.get(m.id)
-            const onde = sit?.evento && sit.estado === 'LOCADA' ? ` · ${localDaLocacao(sit.evento)}` : ''
+            const onde = sit?.evento && sit.estado === 'LOCADA' ? ` · ${cabecalhoEmLinha(sit.evento)}` : ''
             return {
               id: `m-${m.id}`,
               grupo: 'Máquinas',
