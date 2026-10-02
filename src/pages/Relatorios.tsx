@@ -125,6 +125,7 @@ export function Relatorios() {
   const t = dados?.totais ?? totaisVazios()
   const variacao = dados && dados.anterior.total > 0 ? (t.total - dados.anterior.total) / dados.anterior.total : null
   const ticket = t.eventos ? t.total / t.eventos : 0
+  const semPagamento = dados?.itens.filter((x) => !x.resumo.pago).length ?? 0
 
   return (
     <>
@@ -132,8 +133,13 @@ export function Relatorios() {
         titulo="Relatórios"
         descricao="Faturamento e indicadores por período. Eventos cancelados não entram nos valores."
         acoes={
-          <Button icone={<Download className="h-4 w-4" />} onClick={exportar} disabled={!dados?.itens.length}>
-            Exportar CSV
+          <Button
+            icone={<Download className="h-4 w-4" />}
+            onClick={exportar}
+            disabled={!dados?.itens.length}
+            title="Baixa uma planilha (CSV) que abre no Excel"
+          >
+            Exportar planilha
           </Button>
         }
       />
@@ -189,7 +195,7 @@ export function Relatorios() {
           <EmptyState
             icone={<ChartColumn className="h-6 w-6" />}
             titulo="Período inválido"
-            descricao="A data inicial deve ser anterior à final."
+            descricao="A data inicial deve ser igual ou anterior à data final."
           />
         </Card>
       ) : (
@@ -229,7 +235,7 @@ export function Relatorios() {
               valor={t.aReceber}
               formatar={moeda}
               icone={<Clock className="h-4 w-4" />}
-              detalhe={`${dados?.itens.filter((x) => !x.resumo.pago).length ?? 0} eventos sem pagamento`}
+              detalhe={`${numero(semPagamento)} ${semPagamento === 1 ? 'evento sem pagamento' : 'eventos sem pagamento'}`}
               delay={0.08}
             />
             <StatCard
@@ -288,7 +294,7 @@ export function Relatorios() {
                     <tbody>
                       {dados?.baldes.map((b) => (
                         <tr key={b.chave}>
-                          <Td className="text-ink">{b.rotuloLongo}</Td>
+                          <Td className="whitespace-nowrap text-ink">{b.rotuloLongo}</Td>
                           <Td alinhar="right">{b.eventos}</Td>
                           <Td alinhar="right">{moeda(b.valorDiarias)}</Td>
                           <Td alinhar="right">{moeda(b.valorBobinas)}</Td>
@@ -367,8 +373,9 @@ export function Relatorios() {
                   icone={<Download className="h-3.5 w-3.5" />}
                   onClick={exportar}
                   disabled={!dados?.itens.length}
+                  title="Baixa uma planilha (CSV) que abre no Excel"
                 >
-                  CSV
+                  Planilha
                 </Button>
               }
             />
@@ -400,7 +407,7 @@ export function Relatorios() {
                 <tbody>
                   {dados?.baldes.map((b) => (
                     <tr key={b.chave} className={cn(b.eventos === 0 && 'opacity-60')}>
-                      <Td className="text-ink">{b.rotuloLongo}</Td>
+                      <Td className="whitespace-nowrap text-ink">{b.rotuloLongo}</Td>
                       <Td alinhar="right">{b.eventos}</Td>
                       <Td alinhar="right">{numero(b.diarias)}</Td>
                       <Td alinhar="right" className="max-md:hidden">

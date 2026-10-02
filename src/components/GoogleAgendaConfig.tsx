@@ -332,8 +332,8 @@ export function GoogleAgendaConfig() {
                     ))}
                   </ol>
                   <p className="mx-4 mb-4 rounded-lg bg-surface px-3 py-2 text-xs text-muted ring-1 ring-line">
-                    O envio é de mão única: o sistema é a fonte oficial e mudanças feitas direto no Google Agenda são substituídas
-                    na próxima sincronização.
+                    O envio vai só do sistema para o Google: o que for mudado direto no Google Agenda é substituído na próxima
+                    sincronização. Faça as alterações sempre aqui no sistema.
                   </p>
                 </motion.div>
               )}
@@ -358,7 +358,7 @@ export function GoogleAgendaConfig() {
                         {status.contaServico}
                       </p>
                       <p className="truncate text-xs text-muted">
-                        {status.projeto ? `Projeto ${status.projeto} • ` : ''}compartilhe a agenda com este e-mail
+                        Compartilhe a agenda com este e-mail{status.projeto ? ` • Projeto ${status.projeto}` : ''}
                       </p>
                     </div>
                     <Button
@@ -553,10 +553,17 @@ export function GoogleAgendaConfig() {
 
             {/* ---- Situação ---- */}
             <div className="flex flex-col gap-3">
+              <p className="text-[13px] font-medium text-ink-2">Eventos no Google Agenda</p>
               <div className="grid grid-cols-3 gap-2">
-                <Contador rotulo="Sincronizados" valor={r.ok} tom="success" />
-                <Contador rotulo="Pendentes" valor={r.pendentes} tom="info" animar={status.ativo && r.pendentes > 0} />
-                <Contador rotulo="Com erro" valor={r.erros} tom="danger" />
+                <Contador rotulo="Enviados" dica="Eventos já enviados ao Google Agenda" valor={r.ok} tom="success" />
+                <Contador
+                  rotulo="Na fila"
+                  dica="Eventos aguardando envio ao Google Agenda"
+                  valor={r.pendentes}
+                  tom="info"
+                  animar={status.ativo && r.pendentes > 0}
+                />
+                <Contador rotulo="Com erro" dica="Eventos que não puderam ser enviados" valor={r.erros} tom="danger" />
               </div>
               <p className="text-xs text-muted">
                 {status.ultimaSincronizacao
@@ -596,21 +603,24 @@ export function GoogleAgendaConfig() {
 
 function Contador({
   rotulo,
+  dica,
   valor,
   tom,
   animar,
 }: {
   rotulo: string
+  /** Explicação mostrada ao passar o mouse. */
+  dica: string
   valor: number
   tom: 'success' | 'info' | 'danger'
   animar?: boolean
 }) {
   const cor = { success: 'bg-success', info: 'bg-info', danger: 'bg-danger' }[tom]
   return (
-    <div className="rounded-xl bg-surface-2 px-3 py-2.5">
-      <p className="flex items-center gap-1.5 text-[11.5px] text-muted">
-        <span className={cn('h-1.5 w-1.5 rounded-full', cor, animar && 'animate-pulse')} />
-        {rotulo}
+    <div className="min-w-0 rounded-xl bg-surface-2 px-2.5 py-2.5 sm:px-3" title={dica}>
+      <p className="flex min-w-0 items-center gap-1.5 text-xs leading-tight text-muted">
+        <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', cor, animar && 'animate-pulse')} />
+        <span className="min-w-0 break-words">{rotulo}</span>
       </p>
       <motion.p
         key={valor}

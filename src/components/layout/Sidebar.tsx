@@ -83,7 +83,8 @@ export function SeletorTema({ compacto }: { compacto?: boolean }) {
       <button
         type="button"
         onClick={() => definirTema(prox.valor)}
-        title={`Tema: ${TEMAS[atual]?.label}. Clique para ${prox.label.toLowerCase()}`}
+        title={`Tema: ${TEMAS[atual]?.label}. Clique para mudar para ${prox.label.toLowerCase()}`}
+        aria-label={`Tema: ${TEMAS[atual]?.label}. Mudar para ${prox.label.toLowerCase()}`}
         className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-xl text-muted transition-colors hover:bg-surface-3/60 hover:text-ink"
       >
         <Icone className="h-[18px] w-[18px]" />
@@ -99,7 +100,8 @@ export function SeletorTema({ compacto }: { compacto?: boolean }) {
             type="button"
             key={t.valor}
             onClick={() => definirTema(t.valor)}
-            title={t.label}
+            title={`Tema ${t.label.toLowerCase()}`}
+            aria-label={`Tema ${t.label.toLowerCase()}`}
             aria-pressed={ativo}
             className={cn(
               'relative flex h-7 flex-1 cursor-pointer items-center justify-center rounded-lg transition-colors',
@@ -181,6 +183,7 @@ export function Sidebar({ mobile, aoNavegar }: { mobile?: boolean; aoNavegar?: (
               type="button"
               onClick={alternarSidebar}
               title={recolhida ? 'Expandir menu' : 'Recolher menu'}
+              aria-label={recolhida ? 'Expandir menu' : 'Recolher menu'}
               className="flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-xl text-muted transition-colors hover:bg-surface-3/60 hover:text-ink"
             >
               {recolhida ? <PanelLeftOpen className="h-[18px] w-[18px]" /> : <PanelLeftClose className="h-[18px] w-[18px]" />}

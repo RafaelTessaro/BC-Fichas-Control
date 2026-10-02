@@ -22,10 +22,11 @@ import { Card } from '../components/ui/Card'
 import { Drawer } from '../components/ui/Modal'
 import { PageHeader } from '../components/ui/Misc'
 import { STATUS_EVENTO } from '#shared/calc.ts'
+import { capacidade, ordenarMaquinas } from '#shared/maquinas.ts'
 import { cn } from '../lib/cn'
-import { cap, codigoEvento, dataExtensa } from '../lib/format'
+import { cap, codigoEvento, dataExtensa, numero } from '../lib/format'
 import { useEventosCompletos, type EventoCompleto } from '../lib/hooks'
-import type { StatusEvento } from '#shared/tipos.ts'
+import type { Maquina, StatusEvento } from '#shared/tipos.ts'
 import { useDados } from '../store/dados'
 
 const COR_STATUS: Record<StatusEvento, string> = {
@@ -44,9 +45,14 @@ export function Agenda() {
   const [mes, setMes] = useState(() => startOfMonth(new Date()))
   const [direcao, setDirecao] = useState(0)
   const [diaAberto, setDiaAberto] = useState<string | null>(null)
-  const frota = useDados((s) => s.config.frotaMaquinas)
+  const maquinas = useDados((s) => s.maquinas)
+  const config = useDados((s) => s.config)
   const eventos = useEventosCompletos()
   const navegar = useNavigate()
+  // Capacidade: máquinas P e G cadastradas (não desativadas) ou, sem cadastro, o número das configurações
+  const capac = useMemo(() => capacidade(maquinas, config), [maquinas, config])
+  const total = capac.total
+  const porId = useMemo(() => new Map(maquinas.map((m) => [m.id, m])), [maquinas])
 
   const porDia = useMemo(() => {
     const m = new Map<string, ItemDia[]>()
@@ -74,10 +80,10 @@ export function Agenda() {
       l.forEach((x) => evs.add(x.item.evento.id))
       diarias += usadas
       pico = Math.max(pico, usadas)
-      if (usadas > frota) diasExcedidos++
+      if (usadas > total) diasExcedidos++
     }
     return { diarias, pico, diasExcedidos, eventos: evs.size }
-  }, [dias, mes, porDia, frota])
+  }, [dias, mes, porDia, total])
 
   const mudarMes = (delta: number) => {
     setDirecao(delta)
@@ -91,7 +97,22 @@ export function Agenda() {
     <>
       <PageHeader
         titulo="Agenda"
-        descricao={`Ocupação diária da frota de ${frota} máquinas.`}
+        descricao={
+          capac.cadastradas ? (
+            <>
+              Ocupação diária das {numero(total)} máquinas ({numero(capac.P)} P e {numero(capac.G)} G).
+              {capac.manutencao > 0 &&
+                (capac.manutencao === 1 ? ' 1 está em manutenção agora.' : ` ${capac.manutencao} estão em manutenção agora.`)}
+            </>
+          ) : (
+            <>
+              Ocupação diária considerando {numero(total)} máquinas.{' '}
+              <Link to="/configuracoes" className="font-medium text-brand-ink hover:underline">
+                Informe quantas máquinas P e G a empresa tem
+              </Link>
+            </>
+          )
+        }
         acoes={
           <Button variante="primary" icone={<CalendarPlus className="h-4 w-4" />} onClick={() => navegar('/eventos/novo')}>
             Novo evento
@@ -130,16 +151,16 @@ export function Agenda() {
             <span>
               Diárias <b className="tnum font-semibold text-ink">{resumoMes.diarias}</b>
             </span>
-            <span>
+            <span title="Maior número de máquinas reservadas num mesmo dia do mês">
               Pico{' '}
               <b className="tnum font-semibold text-ink">
-                {resumoMes.pico}/{frota}
+                {resumoMes.pico}/{total}
               </b>
             </span>
             {resumoMes.diasExcedidos > 0 && (
               <span className="inline-flex items-center gap-1 font-medium text-danger">
                 <TriangleAlert className="h-3.5 w-3.5" />
-                {resumoMes.diasExcedidos} {resumoMes.diasExcedidos === 1 ? 'dia acima' : 'dias acima'} da frota
+                {resumoMes.diasExcedidos} {resumoMes.diasExcedidos === 1 ? 'dia acima' : 'dias acima'} do total de máquinas
               </span>
             )}
           </div>
@@ -169,7 +190,7 @@ export function Agenda() {
                 const itens = porDia.get(iso) ?? []
                 const ativos = itens.filter((x) => x.item.evento.status !== 'CANCELADO')
                 const usadas = ativos.reduce((s, x) => s + x.maquinas, 0)
-                const pct = frota > 0 ? usadas / frota : 0
+                const pct = total > 0 ? usadas / total : 0
                 const doMes = isSameMonth(d, mes)
                 const hoje = isToday(d)
                 return (
@@ -197,15 +218,15 @@ export function Agenda() {
                             'tnum hidden text-[11px] font-medium sm:block',
                             pct > 1 ? 'text-danger' : pct >= 0.8 ? 'text-warning' : 'text-muted',
                           )}
-                          title={`${usadas} de ${frota} máquinas reservadas`}
+                          title={`${usadas} de ${total} máquinas reservadas`}
                         >
-                          {usadas}/{frota}
+                          {usadas}/{total}
                         </span>
                       )}
                     </div>
 
                     <div className="hidden min-w-0 flex-col gap-1 sm:flex">
-                      {itens.slice(0, 2).map(({ item, maquinas }) => (
+                      {itens.slice(0, 2).map(({ item, maquinas: qtd }) => (
                         <span
                           key={item.evento.id}
                           className={cn(
@@ -215,7 +236,12 @@ export function Agenda() {
                         >
                           <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', COR_STATUS[item.evento.status])} />
                           <span className="truncate">{item.evento.nome}</span>
-                          <span className="tnum ml-auto shrink-0 text-muted">{maquinas}</span>
+                          <span
+                            className="tnum ml-auto shrink-0 text-muted"
+                            title={`${qtd} ${qtd === 1 ? 'máquina' : 'máquinas'}`}
+                          >
+                            {qtd}
+                          </span>
                         </span>
                       ))}
                       {itens.length > 2 && (
@@ -261,13 +287,13 @@ export function Agenda() {
           ))}
           <span className="flex flex-wrap items-center gap-x-4 gap-y-1 sm:ml-auto">
             <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-              <span className="h-1 w-5 rounded-full bg-brand" /> Ocupação da frota
+              <span className="h-1 w-5 rounded-full bg-brand" /> Ocupação das máquinas
             </span>
             <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-              <span className="h-1 w-5 rounded-full bg-warning-dot" /> ≥ 80%
+              <span className="h-1 w-5 rounded-full bg-warning-dot" /> 80% ou mais
             </span>
             <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-              <span className="h-1 w-5 rounded-full bg-danger" /> Acima da frota
+              <span className="h-1 w-5 rounded-full bg-danger" /> Acima do total
             </span>
           </span>
         </div>
@@ -278,7 +304,9 @@ export function Agenda() {
         aoFechar={() => setDiaAberto(null)}
         titulo={diaAberto ? dataExtensa(diaAberto, "EEEE, d 'de' MMMM") : ''}
         descricao={
-          diaAberto ? `${usadasDiaAberto} de ${frota} máquinas reservadas • ${Math.max(0, frota - usadasDiaAberto)} livres` : ''
+          diaAberto
+            ? `${usadasDiaAberto} de ${total} máquinas reservadas • ${Math.max(0, total - usadasDiaAberto)} ${total - usadasDiaAberto === 1 ? 'livre' : 'livres'}`
+            : ''
         }
       >
         {diaAberto && (
@@ -286,15 +314,19 @@ export function Agenda() {
             <div className="h-2 w-full overflow-hidden rounded-full bg-surface-3">
               <motion.div
                 initial={{ width: 0 }}
-                animate={{ width: `${Math.min(100, (usadasDiaAberto / Math.max(1, frota)) * 100)}%` }}
+                animate={{ width: `${Math.min(100, (usadasDiaAberto / Math.max(1, total)) * 100)}%` }}
                 className={cn(
                   'h-full rounded-full',
-                  usadasDiaAberto > frota ? 'bg-danger' : usadasDiaAberto / frota >= 0.8 ? 'bg-warning-dot' : 'bg-brand',
+                  usadasDiaAberto > total
+                    ? 'bg-danger'
+                    : usadasDiaAberto / Math.max(1, total) >= 0.8
+                      ? 'bg-warning-dot'
+                      : 'bg-brand',
                 )}
               />
             </div>
             {itensDiaAberto.length === 0 && <p className="py-8 text-center text-sm text-muted">Nenhum evento neste dia.</p>}
-            {itensDiaAberto.map(({ item, maquinas }, i) => (
+            {itensDiaAberto.map(({ item, maquinas: qtd }, i) => (
               <motion.div
                 key={item.evento.id}
                 initial={{ opacity: 0, y: 6 }}
@@ -313,9 +345,14 @@ export function Agenda() {
                       </p>
                     </div>
                     <span className="tnum shrink-0 rounded-lg bg-brand-soft px-2 py-1 text-xs font-semibold text-brand-ink">
-                      {maquinas} máq.
+                      {qtd} {qtd === 1 ? 'máquina' : 'máquinas'}
                     </span>
                   </div>
+                  <MaquinasDoEvento
+                    ids={item.evento.maquinasIds}
+                    porId={porId}
+                    avisarVazio={capac.cadastradas && item.evento.status !== 'CANCELADO'}
+                  />
                   <div className="mt-2.5 flex items-center justify-between gap-2">
                     <StatusBadge status={item.evento.status} />
                     {item.evento.cidade && <span className="truncate text-xs text-muted">{item.evento.cidade}</span>}
@@ -335,5 +372,28 @@ export function Agenda() {
         )}
       </Drawer>
     </>
+  )
+}
+
+/** Números das máquinas enviadas ao evento (ex.: P-01, G-03), para saber onde cada uma está. */
+function MaquinasDoEvento({ ids, porId, avisarVazio }: { ids: string[]; porId: Map<string, Maquina>; avisarVazio: boolean }) {
+  const lista = ordenarMaquinas(ids.map((id) => porId.get(id)).filter((m): m is Maquina => !!m))
+  if (!lista.length) {
+    return avisarVazio ? <p className="mt-2 text-xs text-muted">Números das máquinas ainda não escolhidos.</p> : null
+  }
+  const max = 12
+  return (
+    <div className="mt-2 flex flex-wrap gap-1">
+      <span className="sr-only">Máquinas enviadas:</span>
+      {lista.slice(0, max).map((m) => (
+        <span
+          key={m.id}
+          className="tnum rounded-md bg-surface-2 px-1.5 py-0.5 text-[11px] leading-4 font-semibold text-ink-2 ring-1 ring-line"
+        >
+          {m.identificacao}
+        </span>
+      ))}
+      {lista.length > max && <span className="px-1 text-[11px] leading-5 text-muted">+{lista.length - max}</span>}
+    </div>
   )
 }

@@ -7,6 +7,9 @@ import { avisarErro, toast } from '../store/ui'
 import { Button } from './ui/Button'
 import { Card } from './ui/Card'
 
+/** "1 cliente", "3 clientes". */
+const qtd = (n: number, um: string, varios: string) => `${n} ${n === 1 ? um : varios}`
+
 /** Oferece enviar ao servidor os dados que a versão anterior guardou neste navegador. */
 export function MigracaoNavegador() {
   const mesclarDadosAntigos = useDados((s) => s.mesclarDadosAntigos)
@@ -23,7 +26,7 @@ export function MigracaoNavegador() {
       setLocais(null)
       toast.sucesso(
         'Dados enviados ao servidor',
-        `${r.clientes} clientes e ${r.eventos} eventos acrescentados${r.ignorados ? ` (${r.ignorados} já estavam no servidor)` : ''}.`,
+        `${qtd(r.clientes, 'cliente', 'clientes')} e ${qtd(r.eventos, 'evento', 'eventos')} acrescentados${r.ignorados ? ` (${r.ignorados} já estavam no servidor)` : ''}.`,
       )
     } catch (e) {
       avisarErro('Não foi possível enviar os dados', e)
@@ -41,8 +44,8 @@ export function MigracaoNavegador() {
         <div className="min-w-0 flex-1">
           <p className="font-semibold text-ink">Encontramos dados da versão anterior neste navegador</p>
           <p className="mt-0.5 text-sm text-muted">
-            {locais.clientes.length} clientes e {locais.eventos.length} eventos. Envie para o servidor para usá-los em todos os
-            computadores — eles serão acrescentados aos que já estão lá, sem apagar nada.
+            {qtd(locais.clientes.length, 'cliente', 'clientes')} e {qtd(locais.eventos.length, 'evento', 'eventos')}. Envie para o
+            servidor para usá-los em todos os computadores: eles serão acrescentados aos que já estão lá, sem apagar nada.
           </p>
         </div>
         <Button variante="primary" onClick={enviar} disabled={enviando}>

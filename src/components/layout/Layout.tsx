@@ -63,6 +63,7 @@ export function Layout({ children }: { children: ReactNode }) {
           <button
             type="button"
             onClick={abrirPaleta}
+            aria-label="Buscar"
             className="group ml-auto flex h-10 w-10 cursor-pointer items-center gap-2.5 rounded-xl border border-line bg-surface px-3 text-sm text-muted shadow-xs transition-colors hover:border-line-strong hover:text-ink-2 sm:w-72 lg:mr-auto lg:ml-0"
           >
             <Search className="h-4 w-4 shrink-0" />
@@ -79,6 +80,7 @@ export function Layout({ children }: { children: ReactNode }) {
             variante="primary"
             icone={<Plus className="h-4 w-4" />}
             onClick={() => navegar('/eventos/novo')}
+            aria-label="Novo evento"
             className="max-sm:w-10 max-sm:px-0"
           >
             <span className="max-sm:hidden">Novo evento</span>

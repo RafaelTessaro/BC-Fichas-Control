@@ -145,8 +145,13 @@ export function Clientes() {
         descricao={`${numero(clientes.length)} ${clientes.length === 1 ? 'cliente cadastrado' : 'clientes cadastrados'}`}
         acoes={
           <>
-            <Button icone={<Download className="h-4 w-4" />} onClick={exportar} disabled={!lista.length}>
-              Exportar
+            <Button
+              icone={<Download className="h-4 w-4" />}
+              onClick={exportar}
+              disabled={!lista.length}
+              title="Baixa uma planilha (CSV) que abre no Excel"
+            >
+              Exportar planilha
             </Button>
             <Button variante="primary" icone={<Plus className="h-4 w-4" />} onClick={() => setModal({ aberto: true })}>
               Novo cliente
@@ -157,12 +162,7 @@ export function Clientes() {
 
       <Card className="overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-line p-4 md:flex-row md:items-center">
-          <SearchInput
-            valor={busca}
-            aoMudar={setBusca}
-            placeholder="Buscar por nome, razão social, CNPJ/CPF…"
-            className="md:w-80"
-          />
+          <SearchInput valor={busca} aoMudar={setBusca} placeholder="Buscar por nome, CNPJ ou CPF…" className="md:w-80" />
           <Segmented
             valor={tipo}
             aoMudar={setTipo}
@@ -206,7 +206,9 @@ export function Clientes() {
                 <Th>Cliente</Th>
                 <Th className="max-md:hidden">Contato</Th>
                 <Th className="max-lg:hidden">Cidade</Th>
-                <Th alinhar="right">Eventos</Th>
+                <Th alinhar="right" className="max-sm:hidden">
+                  Eventos
+                </Th>
                 <Th alinhar="right">Faturado</Th>
                 <Th className="max-sm:hidden">Último evento</Th>
                 <Th className="w-12" />
@@ -216,7 +218,8 @@ export function Clientes() {
               {lista.map(({ c, s }, i) => (
                 <Linha key={c.id} indice={i} aoClicar={() => navegar(`/clientes/${c.id}`)}>
                   <Td>
-                    <div className="flex items-center gap-3">
+                    {/* No celular o nome é encurtado para o valor faturado caber na tela */}
+                    <div className="flex items-center gap-3 max-sm:max-w-[200px]">
                       <Avatar nome={c.nome} />
                       <div className="min-w-0">
                         <div className="flex min-w-0 items-center gap-2">
@@ -239,8 +242,10 @@ export function Clientes() {
                     <p className="truncate text-ink-2">{c.responsavel || '—'}</p>
                     <p className="truncate text-xs text-muted">{c.telefone}</p>
                   </Td>
-                  <Td className="max-lg:hidden">{c.cidade ? `${c.cidade}${c.uf ? ` / ${c.uf}` : ''}` : '—'}</Td>
-                  <Td alinhar="right">{s.qtd}</Td>
+                  <Td className="whitespace-nowrap max-lg:hidden">{c.cidade ? `${c.cidade}${c.uf ? ` / ${c.uf}` : ''}` : '—'}</Td>
+                  <Td alinhar="right" className="max-sm:hidden">
+                    {s.qtd}
+                  </Td>
                   <Td alinhar="right" className="font-medium text-ink">
                     {moeda(s.faturado)}
                   </Td>

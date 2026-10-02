@@ -18,8 +18,11 @@ import {
 import { motion } from 'motion/react'
 import { useMemo, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
+import { capacidade, osEmAberto, type Capacidade, type EstadoMaquina } from '#shared/maquinas.ts'
 import { StatusBadge } from '../components/Badges'
 import { GraficoFaturamento, Legenda } from '../components/charts/Charts'
+import { useSituacoes } from '../components/Maquinas'
+import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { PageHeader, StatCard } from '../components/ui/Misc'
@@ -34,10 +37,12 @@ import { MigracaoNavegador } from '../components/MigracaoNavegador'
 export function Painel() {
   const todos = useEventosCompletos()
   const clientes = useDados((s) => s.clientes)
-  const frota = useDados((s) => s.config.frotaMaquinas)
+  const maquinas = useDados((s) => s.maquinas)
+  const config = useDados((s) => s.config)
   const carregarExemplo = useDados((s) => s.carregarExemplo)
   const navegar = useNavigate()
   const hoje = hojeISO()
+  const cap = useMemo(() => capacidade(maquinas, config), [maquinas, config])
 
   const d = useMemo(() => {
     const f = (x: Date) => format(x, 'yyyy-MM-dd')
@@ -59,6 +64,10 @@ export function Painel() {
       (s, x) => s + x.evento.dias.filter((dd) => dd.data === hoje).reduce((a, dd) => a + dd.maquinas, 0),
       0,
     )
+    // Máquinas com número já escolhido nos eventos de hoje (para avisar das reservas sem número)
+    const identificadasHoje = new Set(
+      ativos.filter((x) => x.evento.dias.some((dd) => dd.data === hoje)).flatMap((x) => x.evento.maquinasIds),
+    ).size
 
     const proximos = ativos
       .filter((x) => (x.resumo.dataFim ?? '') >= hoje)
@@ -77,6 +86,7 @@ export function Painel() {
       baldes,
       aReceber,
       maquinasHoje,
+      identificadasHoje,
       proximos,
       semPagamento,
       semConferencia,
@@ -121,8 +131,8 @@ export function Painel() {
                 <Passo
                   n={1}
                   icone={<Settings className="h-4 w-4" />}
-                  titulo="Ajuste os valores padrão"
-                  texto="Valor da diária, da bobina e tamanho da frota."
+                  titulo="Ajuste as configurações"
+                  texto="Quantas máquinas P e G você tem e os valores da diária e da bobina."
                   to="/configuracoes"
                 />
                 <Passo
@@ -136,25 +146,28 @@ export function Painel() {
                   n={3}
                   icone={<Ticket className="h-4 w-4" />}
                   titulo="Lance o primeiro evento"
-                  texto="Dias de uso, máquinas e bobinas."
+                  texto="Datas, máquinas enviadas e o cabeçalho e o rodapé das fichas."
                   to="/eventos/novo"
                 />
               </div>
               <div className="mt-6 flex flex-wrap items-center gap-3">
-                <Button
-                  variante="soft"
-                  icone={<Database className="h-4 w-4" />}
-                  onClick={async () => {
-                    try {
-                      await carregarExemplo()
-                      toast.sucesso('Dados de exemplo carregados', 'Você pode apagá-los em Configurações.')
-                    } catch (e) {
-                      avisarErro('Não foi possível carregar o exemplo', e)
-                    }
-                  }}
-                >
-                  Explorar com dados de exemplo
-                </Button>
+                {/* O servidor só carrega o exemplo com o sistema vazio (sem máquinas também) */}
+                {maquinas.length === 0 && (
+                  <Button
+                    variante="soft"
+                    icone={<Database className="h-4 w-4" />}
+                    onClick={async () => {
+                      try {
+                        await carregarExemplo()
+                        toast.sucesso('Dados de exemplo carregados', 'Você pode apagá-los em Configurações.')
+                      } catch (e) {
+                        avisarErro('Não foi possível carregar o exemplo', e)
+                      }
+                    }}
+                  >
+                    Explorar com dados de exemplo
+                  </Button>
+                )}
                 <span className="text-xs text-muted">
                   Os dados ficam no servidor e aparecem em todos os computadores da rede.
                 </span>
@@ -173,7 +186,7 @@ export function Painel() {
           icone={<CircleDollarSign className="h-4 w-4" />}
           detalhe={
             variacao === null
-              ? `${numero(d.mes.eventos)} eventos no mês`
+              ? `${numero(d.mes.eventos)} ${d.mes.eventos === 1 ? 'evento' : 'eventos'} no mês`
               : `${variacao >= 0 ? '+' : ''}${(variacao * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% vs. mês anterior`
           }
         />
@@ -196,16 +209,20 @@ export function Painel() {
         <StatCard
           rotulo="Máquinas hoje"
           valor={d.maquinasHoje}
-          formatar={(v) => `${Math.round(v)} / ${frota}`}
+          formatar={(v) => `${Math.round(v)} / ${cap.total}`}
           icone={<Cpu className="h-4 w-4" />}
           detalhe={
             d.eventosHoje
-              ? `${d.eventosHoje} ${d.eventosHoje === 1 ? 'evento acontecendo' : 'eventos acontecendo'}`
+              ? `Em ${d.eventosHoje} ${d.eventosHoje === 1 ? 'evento acontecendo' : 'eventos acontecendo'}`
               : 'Nenhum evento hoje'
           }
           delay={0.12}
         />
       </div>
+
+      {(cap.cadastradas || !vazio) && (
+        <SituacaoMaquinas cap={cap} semNumero={Math.max(0, d.maquinasHoje - d.identificadasHoje)} />
+      )}
 
       <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
         <Card className="xl:col-span-2">
@@ -274,11 +291,121 @@ export function Painel() {
           titulo="Bobinas a conferir"
           descricao="Eventos encerrados sem devolução registrada."
           itens={d.semConferencia}
-          valor={(x) => `${numero(x.evento.bobinasConsignadas)} consig.`}
+          valor={(x) => `${numero(x.evento.bobinasConsignadas)} ${x.evento.bobinasConsignadas === 1 ? 'bobina' : 'bobinas'}`}
           vazio="Nenhuma conferência pendente."
         />
       </div>
     </>
+  )
+}
+
+const COR_ESTADO: Record<Exclude<EstadoMaquina, 'DESATIVADA'>, string> = {
+  LOCADA: 'bg-info',
+  MANUTENCAO: 'bg-warning-dot',
+  DISPONIVEL: 'bg-success',
+}
+
+/** Faixa compacta com a situação das máquinas agora: locadas, em manutenção, disponíveis e O.S. em aberto. */
+function SituacaoMaquinas({ cap, semNumero }: { cap: Capacidade; semNumero: number }) {
+  const maquinas = useDados((s) => s.maquinas)
+  const ordens = useDados((s) => s.ordens)
+  const situacoes = useSituacoes()
+  const os = useMemo(() => ordens.filter(osEmAberto).length, [ordens])
+  const partes = useMemo(() => {
+    const c = { LOCADA: 0, MANUTENCAO: 0, DISPONIVEL: 0 }
+    for (const m of maquinas) {
+      const e = situacoes.get(m.id)?.estado
+      if (e && e !== 'DESATIVADA') c[e]++
+    }
+    return [
+      { estado: 'LOCADA' as const, qtd: c.LOCADA, rotulo: c.LOCADA === 1 ? 'locada' : 'locadas' },
+      { estado: 'MANUTENCAO' as const, qtd: c.MANUTENCAO, rotulo: 'em manutenção' },
+      { estado: 'DISPONIVEL' as const, qtd: c.DISPONIVEL, rotulo: c.DISPONIVEL === 1 ? 'disponível' : 'disponíveis' },
+    ]
+  }, [maquinas, situacoes])
+  const soma = partes.reduce((s, p) => s + p.qtd, 0)
+
+  const link = (to: string, texto: string) => (
+    <Link
+      to={to}
+      className="inline-flex shrink-0 items-center gap-1 text-[13px] font-medium whitespace-nowrap text-brand-ink hover:underline"
+    >
+      {texto} <ArrowRight className="h-3.5 w-3.5" />
+    </Link>
+  )
+
+  return (
+    <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16, duration: 0.4 }}>
+      <Card className="mb-6 flex flex-col gap-4 p-4 sm:px-5 lg:flex-row lg:items-center lg:gap-6">
+        <div className="flex min-w-0 items-center gap-3 lg:w-56 lg:shrink-0">
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-ink-2">
+            <Cpu className="h-4 w-4" />
+          </div>
+          <div className="min-w-0">
+            <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">Situação das máquinas</h3>
+            <p className="text-[13px] text-muted">
+              {cap.cadastradas ? `Agora · ${numero(cap.P)} P e ${numero(cap.G)} G` : 'Ainda não informadas'}
+            </p>
+          </div>
+        </div>
+
+        {cap.cadastradas ? (
+          <>
+            <div className="min-w-0 flex-1">
+              <div
+                className="flex h-2 w-full gap-0.5 overflow-hidden rounded-full bg-surface-3"
+                role="img"
+                aria-label={partes.map((p) => `${p.qtd} ${p.rotulo}`).join(', ')}
+              >
+                {partes.map(
+                  (p) =>
+                    p.qtd > 0 && (
+                      <motion.div
+                        key={p.estado}
+                        initial={{ width: 0 }}
+                        animate={{ width: `${(p.qtd / Math.max(1, soma)) * 100}%` }}
+                        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+                        className={cn('h-full first:rounded-l-full last:rounded-r-full', COR_ESTADO[p.estado])}
+                      />
+                    ),
+                )}
+              </div>
+              <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-muted">
+                {partes.map((p) => (
+                  <li key={p.estado} className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                    <span className={cn('h-2 w-2 rounded-full', COR_ESTADO[p.estado])} />
+                    <b className="tnum font-semibold text-ink">{numero(p.qtd)}</b> {p.rotulo}
+                  </li>
+                ))}
+              </ul>
+              {semNumero > 0 && (
+                <p className="mt-1 text-xs text-warning">
+                  {semNumero === 1
+                    ? '1 máquina reservada para hoje ainda está sem número escolhido no evento.'
+                    : `${semNumero} máquinas reservadas para hoje ainda estão sem número escolhido no evento.`}
+                </p>
+              )}
+            </div>
+            <div className="flex items-center justify-between gap-3 lg:shrink-0 lg:justify-end">
+              {os > 0 ? (
+                <Badge tom="warning">{os === 1 ? '1 O.S. em aberto' : `${os} O.S. em aberto`}</Badge>
+              ) : (
+                <Badge tom="success">Nenhuma O.S. em aberto</Badge>
+              )}
+              {link('/manutencao', 'Manutenção')}
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="min-w-0 flex-1 text-[13px] text-ink-2">
+              Informe quantas máquinas P e G a empresa tem para acompanhar aqui quantas estão locadas, em manutenção e
+              disponíveis.
+            </p>
+            {link('/configuracoes', 'Informar máquinas')}
+          </>
+        )}
+      </Card>
+    </motion.div>
   )
 }
 
@@ -325,7 +452,9 @@ function ItemEvento({ x, i, hoje }: { x: EventoCompleto; i: number; hoje: string
             {x.cliente?.nome ?? '—'} • {acontecendo ? 'Acontecendo agora' : periodo(x.resumo.dataInicio, x.resumo.dataFim)}
           </p>
         </div>
-        <span className="tnum shrink-0 text-xs font-medium text-ink-2">{numero(x.resumo.totalDiarias)} diárias</span>
+        <span className="tnum shrink-0 text-xs font-medium text-ink-2">
+          {numero(x.resumo.totalDiarias)} {x.resumo.totalDiarias === 1 ? 'diária' : 'diárias'}
+        </span>
       </Link>
     </motion.div>
   )

@@ -1,11 +1,11 @@
 import { format } from 'date-fns'
-import { Cpu, Database, Download, Monitor, Moon, Palette, Receipt, RotateCcw, Save, Sun, Trash2, Upload } from 'lucide-react'
-import { motion } from 'motion/react'
+import { Database, Download, Monitor, Moon, Palette, Receipt, RotateCcw, Save, Sun, Trash2, Upload } from 'lucide-react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { DisponibilidadeMaquinas } from '../components/DisponibilidadeMaquinas'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { confirmar } from '../components/ui/Feedback'
-import { CurrencyInput, Field, Input, NumberInput } from '../components/ui/Form'
+import { CurrencyInput, Field, Input } from '../components/ui/Form'
 import { PageHeader } from '../components/ui/Misc'
 import { cn } from '../lib/cn'
 import { numero } from '../lib/format'
@@ -19,16 +19,18 @@ import { GoogleAgendaConfig } from '../components/GoogleAgendaConfig'
 type CopiaServidor = { arquivo: string; tamanho: number; criadoEm: string }
 const dataHora = (iso: string) => format(new Date(iso), "dd/MM/yyyy 'às' HH:mm")
 
+/** "1 cliente", "9 clientes". */
+const qtd = (n: number, um: string, varios: string) => `${numero(n)} ${n === 1 ? um : varios}`
+
 export function Configuracoes() {
-  const { config, salvarConfig, clientes, eventos, exportar, importar, carregarExemplo, limparTudo } = useDados()
+  const { config, salvarConfig, clientes, eventos, maquinas, exportar, importar, carregarExemplo, limparTudo } = useDados()
   const { tema, definirTema } = useUI()
   const [f, setF] = useState<Config>(config)
   const [base, setBase] = useState(config)
   const arquivo = useRef<HTMLInputElement>(null)
 
-  // Se a configuração mudar fora deste formulário (ex.: backup restaurado), recarrega os campos
-  // Quando a configuração muda no servidor (outro computador, recarga), os campos que o usuário
-  // não está editando acompanham o servidor; os que ele alterou continuam como estão.
+  // Quando a configuração muda no servidor (outro computador, backup restaurado), os campos que o
+  // usuário não está editando acompanham o servidor; os que ele alterou continuam como estão.
   if (base !== config) {
     const mesclado = { ...f }
     for (const k of Object.keys(config) as Array<keyof Config>) {
@@ -100,7 +102,7 @@ export function Configuracoes() {
     }
     const ok = await confirmar({
       titulo: 'Restaurar backup?',
-      descricao: `Os dados atuais (${clientes.length} clientes e ${eventos.length} eventos) serão substituídos pelos do arquivo “${file.name}” em todos os computadores. O servidor guarda uma cópia automática antes.`,
+      descricao: `Os dados atuais (${qtd(clientes.length, 'cliente', 'clientes')}, ${qtd(eventos.length, 'evento', 'eventos')} e ${qtd(maquinas.length, 'máquina', 'máquinas')}) serão substituídos pelos do arquivo “${file.name}” em todos os computadores. Antes disso, o servidor guarda uma cópia automática.`,
       confirmar: 'Restaurar',
       perigo: true,
       digitar: 'RESTAURAR',
@@ -109,7 +111,10 @@ export function Configuracoes() {
     setOcupado(true)
     try {
       const r = await importar(dados)
-      toast.sucesso('Backup restaurado', `${r.clientes} clientes e ${r.eventos} eventos.`)
+      toast.sucesso(
+        'Backup restaurado',
+        `${qtd(r.clientes, 'cliente', 'clientes')}, ${qtd(r.eventos, 'evento', 'eventos')} e ${qtd(r.maquinas, 'máquina', 'máquinas')}.`,
+      )
     } catch (e) {
       avisarErro('Não foi possível restaurar', e)
     } finally {
@@ -121,97 +126,73 @@ export function Configuracoes() {
     <>
       <PageHeader
         titulo="Configurações"
-        descricao="Valores padrão, frota, aparência e backup dos dados."
+        descricao="Máquinas, valores padrão, aparência e backup dos dados."
         acoes={
-          <Button variante="primary" icone={<Save className="h-4 w-4" />} onClick={salvar} disabled={!alterado || salvando}>
-            {salvando ? 'Salvando…' : 'Salvar alterações'}
-          </Button>
+          <>
+            {alterado && (
+              <Button variante="ghost" icone={<RotateCcw className="h-4 w-4" />} onClick={() => setF(config)} disabled={salvando}>
+                Descartar
+              </Button>
+            )}
+            <Button variante="primary" icone={<Save className="h-4 w-4" />} onClick={salvar} disabled={!alterado || salvando}>
+              {salvando ? 'Salvando…' : 'Salvar alterações'}
+            </Button>
+          </>
         }
       />
 
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <Card>
-          <CardHeader
-            icone={<Receipt className="h-4 w-4" />}
-            titulo="Valores padrão"
-            descricao="Preenchidos automaticamente em cada novo evento."
-          />
-          <div className="grid grid-cols-1 gap-4 px-5 pb-5 sm:grid-cols-2">
-            <Field label="Valor da diária" htmlFor="cfg-vd" hint="Por máquina, por dia">
-              <CurrencyInput id="cfg-vd" valor={f.valorDiariaPadrao} aoMudar={(v) => setF({ ...f, valorDiariaPadrao: v })} />
-            </Field>
-            <Field label="Valor de cada bobina" htmlFor="cfg-vb" hint="Cobrado por bobina utilizada">
-              <CurrencyInput id="cfg-vb" valor={f.valorBobinaPadrao} aoMudar={(v) => setF({ ...f, valorBobinaPadrao: v })} />
-            </Field>
-            <Field label="Mensagem de rodapé do PDF" htmlFor="cfg-rod" className="sm:col-span-2">
-              <Input id="cfg-rod" value={f.rodapePadrao} onChange={(e) => setF({ ...f, rodapePadrao: e.target.value })} />
-            </Field>
-          </div>
-        </Card>
+      <DisponibilidadeMaquinas />
 
-        <Card>
-          <CardHeader
-            icone={<Cpu className="h-4 w-4" />}
-            titulo="Frota de máquinas"
-            descricao="Usada para mostrar a disponibilidade na agenda e nos eventos."
-          />
-          <div className="flex flex-col gap-4 px-5 pb-5">
-            <Field label="Quantidade de máquinas disponíveis" htmlFor="cfg-frota">
-              <NumberInput
-                id="cfg-frota"
-                valor={f.frotaMaquinas}
-                min={1}
-                max={9999}
-                aoMudar={(v) => setF({ ...f, frotaMaquinas: v ?? 1 })}
-                className="sm:w-48"
-              />
-            </Field>
-            <div className="flex flex-wrap gap-1.5">
-              {Array.from({ length: Math.min(f.frotaMaquinas, 40) }, (_, i) => (
-                <motion.span
-                  key={i}
-                  initial={{ opacity: 0, scale: 0.6 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  transition={{ delay: i * 0.012 }}
-                  className="flex h-7 w-7 items-center justify-center rounded-lg bg-brand-soft text-brand-ink"
-                >
-                  <Cpu className="h-3.5 w-3.5" />
-                </motion.span>
-              ))}
-              {f.frotaMaquinas > 40 && <span className="self-center text-xs text-muted">+{f.frotaMaquinas - 40}</span>}
-            </div>
-            {alterado && (
-              <Button
-                tamanho="sm"
-                variante="ghost"
-                icone={<RotateCcw className="h-3.5 w-3.5" />}
-                className="self-start"
-                onClick={() => setF(config)}
-              >
-                Descartar alterações
-              </Button>
-            )}
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader
-            icone={<Palette className="h-4 w-4" />}
-            titulo="Aparência"
-            descricao="Escolha como o sistema deve ser exibido."
-          />
-          <div className="grid grid-cols-3 gap-3 px-5 pb-5">
-            <OpcaoTema valor="light" atual={tema} aoEscolher={definirTema} icone={<Sun className="h-4 w-4" />} label="Claro" />
-            <OpcaoTema valor="dark" atual={tema} aoEscolher={definirTema} icone={<Moon className="h-4 w-4" />} label="Escuro" />
-            <OpcaoTema
-              valor="system"
-              atual={tema}
-              aoEscolher={definirTema}
-              icone={<Monitor className="h-4 w-4" />}
-              label="Sistema"
+      <div className="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+        <div className="flex flex-col gap-6">
+          <Card>
+            <CardHeader
+              icone={<Receipt className="h-4 w-4" />}
+              titulo="Valores padrão"
+              descricao="Vêm preenchidos em cada novo evento. Salve com o botão “Salvar alterações”."
             />
-          </div>
-        </Card>
+            <div className="grid grid-cols-1 gap-4 px-5 pb-5 sm:grid-cols-2">
+              <Field label="Valor da diária" htmlFor="cfg-vd" hint="Por máquina, por dia">
+                <CurrencyInput id="cfg-vd" valor={f.valorDiariaPadrao} aoMudar={(v) => setF({ ...f, valorDiariaPadrao: v })} />
+              </Field>
+              <Field label="Valor de cada bobina" htmlFor="cfg-vb" hint="Cobrado por bobina utilizada">
+                <CurrencyInput id="cfg-vb" valor={f.valorBobinaPadrao} aoMudar={(v) => setF({ ...f, valorBobinaPadrao: v })} />
+              </Field>
+              <Field
+                label="Rodapé padrão das fichas"
+                htmlFor="cfg-rod"
+                className="sm:col-span-2"
+                hint="Texto impresso no fim de cada ficha. Também fecha o resumo em PDF entregue ao cliente."
+              >
+                <Input
+                  id="cfg-rod"
+                  value={f.rodapePadrao}
+                  onChange={(e) => setF({ ...f, rodapePadrao: e.target.value })}
+                  placeholder="Ex.: AGRADECEMOS SUA PRESENÇA!"
+                />
+              </Field>
+            </div>
+          </Card>
+
+          <Card>
+            <CardHeader
+              icone={<Palette className="h-4 w-4" />}
+              titulo="Aparência"
+              descricao="Escolha como o sistema deve ser exibido neste computador."
+            />
+            <div className="grid grid-cols-3 gap-3 px-5 pb-5">
+              <OpcaoTema valor="light" atual={tema} aoEscolher={definirTema} icone={<Sun className="h-4 w-4" />} label="Claro" />
+              <OpcaoTema valor="dark" atual={tema} aoEscolher={definirTema} icone={<Moon className="h-4 w-4" />} label="Escuro" />
+              <OpcaoTema
+                valor="system"
+                atual={tema}
+                aoEscolher={definirTema}
+                icone={<Monitor className="h-4 w-4" />}
+                label="Sistema"
+              />
+            </div>
+          </Card>
+        </div>
 
         <Card>
           <CardHeader
@@ -220,15 +201,17 @@ export function Configuracoes() {
             descricao="Os dados ficam no servidor da empresa e são copiados automaticamente todos os dias."
           />
           <div className="flex flex-col gap-4 px-5 pb-5">
-            <div className="grid grid-cols-2 gap-2">
-              <div className="rounded-xl bg-surface-2 px-3.5 py-3">
-                <p className="text-xs text-muted">Clientes</p>
-                <p className="tnum text-lg font-semibold text-ink">{numero(clientes.length)}</p>
-              </div>
-              <div className="rounded-xl bg-surface-2 px-3.5 py-3">
-                <p className="text-xs text-muted">Eventos</p>
-                <p className="tnum text-lg font-semibold text-ink">{numero(eventos.length)}</p>
-              </div>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { rotulo: 'Clientes', valor: clientes.length },
+                { rotulo: 'Eventos', valor: eventos.length },
+                { rotulo: 'Máquinas', valor: maquinas.length },
+              ].map((x) => (
+                <div key={x.rotulo} className="min-w-0 rounded-xl bg-surface-2 px-3.5 py-3">
+                  <p className="truncate text-xs text-muted">{x.rotulo}</p>
+                  <p className="tnum text-lg font-semibold text-ink">{numero(x.valor)}</p>
+                </div>
+              ))}
             </div>
             <div className="flex flex-wrap gap-2">
               <Button icone={<Download className="h-4 w-4" />} onClick={fazerBackup}>
@@ -274,7 +257,8 @@ export function Configuracoes() {
               )}
             </div>
             <div className="flex flex-wrap gap-2 border-t border-line pt-4">
-              {clientes.length + eventos.length === 0 && (
+              {/* O servidor só carrega o exemplo com o sistema vazio (sem clientes, eventos nem máquinas) */}
+              {clientes.length + eventos.length + maquinas.length === 0 && (
                 <Button
                   tamanho="sm"
                   variante="ghost"
@@ -300,7 +284,7 @@ export function Configuracoes() {
                   const ok = await confirmar({
                     titulo: 'Apagar todos os dados?',
                     descricao:
-                      'Todos os clientes e eventos serão removidos do servidor, para todos os computadores. O servidor guarda uma cópia automática antes de apagar.',
+                      'Todos os clientes, eventos, máquinas e ordens de serviço serão removidos do servidor, em todos os computadores. Antes de apagar, o servidor guarda uma cópia automática.',
                     confirmar: 'Apagar tudo',
                     perigo: true,
                     digitar: 'APAGAR',

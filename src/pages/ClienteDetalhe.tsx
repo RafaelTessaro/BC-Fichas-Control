@@ -163,7 +163,7 @@ export function ClienteDetalhe() {
         }
       />
 
-      <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatCard
           rotulo="Total faturado"
           valor={t.faturado}
@@ -339,7 +339,10 @@ function ConferenciaReceita({ cliente, dados, aoFechar }: { cliente: Cliente; da
         if (mudancas.some((m) => m.campo === campo)) (dadosNovos as unknown as Record<string, unknown>)[campo] = novos[campo]
       }
       await salvarCliente(dadosNovos, { id, versao })
-      toast.sucesso('Dados atualizados com a Receita', marcados.size ? `${marcados.size} campo(s) alterado(s).` : undefined)
+      toast.sucesso(
+        'Dados atualizados com a Receita',
+        marcados.size ? `${marcados.size} ${marcados.size === 1 ? 'campo alterado' : 'campos alterados'}.` : undefined,
+      )
       aoFechar()
     } catch (e) {
       avisarErro('Não foi possível salvar', e)
