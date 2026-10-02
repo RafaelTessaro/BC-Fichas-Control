@@ -7,7 +7,6 @@ import { Link, useNavigate } from 'react-router-dom'
 import {
   conflitosMaquinas,
   ESTADO_MAQUINA,
-  maquinasOcupadas,
   ordenarMaquinas,
   osEmAberto,
   periodoEvento,
@@ -16,6 +15,7 @@ import {
   type EstadoMaquina,
 } from '#shared/maquinas.ts'
 import type { DiaEvento, Evento, Maquina } from '#shared/tipos.ts'
+import { agruparBloqueios, agruparTrocas, bloqueiosMaquinas, juntarNomes, maquinasParaTrocar } from '../lib/bloqueioMaquinas'
 import { cn } from '../lib/cn'
 import { codigoEvento } from '../lib/format'
 import { useDados } from '../store/dados'
@@ -159,13 +159,15 @@ function PontoAtencao() {
 
 /**
  * Cartão "Máquinas enviadas" do formulário: as máquinas P e G como chips que se marcam com um toque.
- * A situação de cada uma considera as datas do evento (não o dia de hoje).
+ * A situação de cada uma considera as datas do evento (não o dia de hoje). Máquina em manutenção ou
+ * já em outro evento nas mesmas datas não pode ser marcada; se já estava marcada, só pode ser desmarcada.
  */
 export function SeletorMaquinas({
   maquinasIds,
   aoMudar,
   dias,
   eventoId,
+  cancelado,
   id,
 }: {
   maquinasIds: string[]
@@ -173,27 +175,42 @@ export function SeletorMaquinas({
   dias: DiaEvento[]
   /** Evento em edição (não conta como conflito com ele mesmo). */
   eventoId?: string
+  /** Evento cancelado não prende máquina nenhuma (como no servidor). */
+  cancelado?: boolean
   id?: string
 }) {
   const navegar = useNavigate()
   const maquinas = useDados((s) => s.maquinas)
   const eventos = useDados((s) => s.eventos)
+  const clientes = useDados((s) => s.clientes)
   const ordens = useDados((s) => s.ordens)
+  const hoje = useHoje()
 
   const ordenadas = useMemo(() => ordenarMaquinas(maquinas), [maquinas])
   // Máquinas com O.S. em aberto (às vezes ainda marcadas como disponíveis, enquanto voltam de um evento)
   const comOS = useMemo(() => new Set(ordens.filter(osEmAberto).map((o) => o.maquinaId)), [ordens])
-  const datas = useMemo(() => new Set(dias.map((d) => d.data).filter(Boolean)), [dias])
-  const ocupadas = useMemo(() => maquinasOcupadas([...datas], eventos, eventoId), [datas, eventos, eventoId])
   const selecionadas = useMemo(() => new Set(maquinasIds), [maquinasIds])
+  const bloqueios = useMemo(
+    () => bloqueiosMaquinas({ maquinas, eventos, clientes, dias, eventoId, cancelado, hoje }),
+    [maquinas, eventos, clientes, dias, eventoId, cancelado, hoje],
+  )
+  // Marcadas que não podem ir (o salvar não deixa passar enquanto não forem trocadas)
+  const trocar = useMemo(() => {
+    const salvo = eventoId ? eventos.find((e) => e.id === eventoId) : undefined
+    return new Set(maquinasParaTrocar({ selecionadas: maquinasIds, bloqueios, dias, salvo, hoje }))
+  }, [eventos, eventoId, maquinasIds, bloqueios, dias, hoje])
   const precisa = maiorUso(dias)
 
   const escolhidas = ordenadas.filter((m) => selecionadas.has(m.id))
   // Desativadas só aparecem se já estavam marcadas (para poder desmarcar)
   const visiveis = ordenadas.filter((m) => m.status !== 'DESATIVADA' || selecionadas.has(m.id))
-  const livre = (m: Maquina) => m.status === 'DISPONIVEL' && !ocupadas.has(m.id) && !comOS.has(m.id)
-  const estadoNasDatas = (m: Maquina): EstadoMaquina =>
-    m.status !== 'DISPONIVEL' ? m.status : ocupadas.has(m.id) ? 'LOCADA' : 'DISPONIVEL'
+  const livre = (m: Maquina) => m.status === 'DISPONIVEL' && !bloqueios.has(m.id) && !comOS.has(m.id)
+  /** Cor do chip: a do motivo do bloqueio; sem bloqueio, livre (a manutenção só conta de hoje em diante). */
+  const estadoNasDatas = (m: Maquina): EstadoMaquina => {
+    const b = bloqueios.get(m.id)
+    if (b) return b.motivo === 'OCUPADA' ? 'LOCADA' : b.motivo
+    return m.status === 'DESATIVADA' ? 'DESATIVADA' : 'DISPONIVEL'
+  }
 
   /** Grava sempre na ordem natural (P-01, P-02… G-01) e só com máquinas que ainda existem. */
   const gravar = (ids: Set<string>) => aoMudar(ordenadas.filter((m) => ids.has(m.id)).map((m) => m.id))
@@ -201,6 +218,8 @@ export function SeletorMaquinas({
   const alternar = (m: Maquina) => {
     const novos = new Set(selecionadas)
     if (novos.has(m.id)) novos.delete(m.id)
+    else if (bloqueios.has(m.id))
+      return // indisponível: só pode ser desmarcada
     else novos.add(m.id)
     gravar(novos)
   }
@@ -223,16 +242,56 @@ export function SeletorMaquinas({
 
   const n = escolhidas.length
   const resumo = n ? `${plural(n, 'selecionada', 'selecionadas')} (${contagemTipos(escolhidas)})` : 'Nenhuma selecionada'
-  const situacao =
-    !precisa || !visiveis.length ? null : n < precisa ? (
-      <Badge tom="warning">Faltam {precisa - n}</Badge>
-    ) : n > precisa ? (
-      <Badge tom="info">{n - precisa} a mais</Badge>
-    ) : (
-      <Badge tom="success">Completo</Badge>
-    )
+  const situacao = trocar.size ? (
+    <Badge tom="danger">Trocar {trocar.size}</Badge>
+  ) : !precisa || !visiveis.length ? null : n < precisa ? (
+    <Badge tom="warning">Faltam {precisa - n}</Badge>
+  ) : n > precisa ? (
+    <Badge tom="info">{n - precisa} a mais</Badge>
+  ) : (
+    <Badge tom="success">Completo</Badge>
+  )
 
   const avisos: ItemAviso[] = []
+  // Marcadas que precisam ser trocadas: um aviso por motivo ("P-01 e P-02 já estão no evento …")
+  const paraTrocar = escolhidas.filter((m) => trocar.has(m.id))
+  for (const g of agruparTrocas(paraTrocar.map((m) => ({ identificacao: m.identificacao, bloqueio: bloqueios.get(m.id)! })))) {
+    const varias = g.maquinas.length > 1
+    avisos.push({
+      chave: `t-${g.chave}`,
+      tom: 'danger',
+      texto: (
+        <>
+          <b className="font-semibold text-ink">{juntarNomes(g.maquinas)}</b> {g.frase}. Toque {varias ? 'nelas' : 'nela'} para
+          desmarcar e escolha {varias ? 'outras' : 'outra'}
+          {g.motivo === 'MANUTENCAO' ? ' (ou conclua a manutenção antes)' : ''}.
+        </>
+      ),
+    })
+  }
+  for (const m of escolhidas) {
+    const b = bloqueios.get(m.id)
+    if (trocar.has(m.id)) continue
+    if (b?.motivo === 'OCUPADA') {
+      // Evento que já passou: o que estava gravado fica, só avisa
+      avisos.push({
+        chave: `c-${m.id}`,
+        tom: 'warning',
+        texto: <TextoConflito maquina={m} outros={b.eventos} datas={new Set(dias.map((d) => d.data))} />,
+      })
+    } else if (!b && comOS.has(m.id)) {
+      avisos.push({
+        chave: `os-${m.id}`,
+        tom: 'warning',
+        texto: (
+          <>
+            <b className="font-semibold text-ink">{m.identificacao}</b> tem uma O.S. em aberto. Confira se ela já está pronta para
+            o evento.
+          </>
+        ),
+      })
+    }
+  }
   if (precisa && n && n < precisa) {
     const livresRestantes = visiveis.filter((m) => !selecionadas.has(m.id) && livre(m)).length
     const faltam = precisa - n
@@ -244,8 +303,8 @@ export function SeletorMaquinas({
           {faltam === 1 ? 'Falta 1 máquina' : `Faltam ${faltam} máquinas`}: o dia de maior uso tem {precisa}.
           {livresRestantes < faltam &&
             (livresRestantes
-              ? ` Só ${plural(livresRestantes, 'outra está livre', 'outras estão livres')} nessas datas.`
-              : ' Nenhuma outra está livre nessas datas.')}
+              ? ` Só ${plural(livresRestantes, 'outra está livre', 'outras estão livres')} nestas datas.`
+              : ' Nenhuma outra está livre nestas datas.')}
         </>
       ),
     })
@@ -257,54 +316,25 @@ export function SeletorMaquinas({
       texto: `${plural(n - precisa, 'máquina', 'máquinas')} a mais do que o dia de maior uso (${precisa}). Se for reserva, tudo bem.`,
     })
   }
-  for (const m of escolhidas) {
-    const outros = ocupadas.get(m.id)
-    if (outros?.length) {
-      avisos.push({ chave: `c-${m.id}`, tom: 'warning', texto: <TextoConflito maquina={m} outros={outros} datas={datas} /> })
-    }
-    if (m.status === 'MANUTENCAO') {
-      avisos.push({
-        chave: `m-${m.id}`,
-        tom: 'warning',
-        texto: (
-          <>
-            <b className="font-semibold text-ink">{m.identificacao}</b> está em manutenção.
-          </>
-        ),
-      })
-    } else if (comOS.has(m.id)) {
-      avisos.push({
-        chave: `os-${m.id}`,
-        tom: 'warning',
-        texto: (
-          <>
-            <b className="font-semibold text-ink">{m.identificacao}</b> tem uma O.S. em aberto. Confira se ela já está pronta para
-            o evento.
-          </>
-        ),
-      })
-    } else if (m.status === 'DESATIVADA') {
-      avisos.push({
-        chave: `d-${m.id}`,
-        tom: 'danger',
-        texto: (
-          <>
-            <b className="font-semibold text-ink">{m.identificacao}</b> está desativada. Desmarque-a e escolha outra.
-          </>
-        ),
-      })
-    }
-  }
+
+  // Por que as apagadas não podem ser marcadas (agrupado por evento, e as em manutenção)
+  const grupos = agruparBloqueios(
+    visiveis.filter((m) => !selecionadas.has(m.id)),
+    bloqueios,
+    clientes,
+    dias,
+  )
+  const gruposEventos = grupos.filter((g) => g.motivo === 'OCUPADA')
+  const emManutencao = grupos.find((g) => g.motivo === 'MANUTENCAO')
 
   const titulo = (m: Maquina) => {
-    const partes = [`${m.identificacao} (${TIPO_MAQUINA[m.tipo].descricao.toLowerCase()})`]
-    const outros = ocupadas.get(m.id)
-    if (m.status === 'MANUTENCAO') partes.push('em manutenção')
-    else if (m.status === 'DESATIVADA') partes.push('desativada')
-    else if (comOS.has(m.id)) partes.push('com O.S. em aberto')
-    if (outros?.length) partes.push(`também no evento ${outros.map((e) => `${codigoEvento(e.codigo)} ${e.nome}`).join(', ')}`)
-    else if (m.status === 'DISPONIVEL' && !comOS.has(m.id)) partes.push('livre nessas datas')
-    return partes.join(' · ')
+    const nome = `${m.identificacao} (${TIPO_MAQUINA[m.tipo].descricao.toLowerCase()})`
+    const b = bloqueios.get(m.id)
+    if (b && trocar.has(m.id)) return `${nome} · ${b.texto}. Clique para desmarcar e escolha outra.`
+    if (b && !selecionadas.has(m.id)) return `${nome} · Indisponível: ${b.texto}`
+    if (b) return `${nome} · ${b.texto}`
+    if (comOS.has(m.id)) return `${nome} · Com O.S. em aberto: confira se já está pronta`
+    return `${nome} · Livre nestas datas`
   }
 
   return (
@@ -368,18 +398,26 @@ export function SeletorMaquinas({
                     </span>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    {lista.map((m) => (
-                      <MaquinaChip
-                        key={m.id}
-                        maquina={m}
-                        estado={estadoNasDatas(m)}
-                        selecionada={selecionadas.has(m.id)}
-                        aviso={m.status === 'MANUTENCAO' || ocupadas.has(m.id) || comOS.has(m.id)}
-                        titulo={titulo(m)}
-                        aoClicar={() => alternar(m)}
-                        className="min-w-[60px] justify-center"
-                      />
-                    ))}
+                    {lista.map((m) => {
+                      const marcada = selecionadas.has(m.id)
+                      const bloqueada = bloqueios.has(m.id)
+                      return (
+                        <MaquinaChip
+                          key={m.id}
+                          maquina={m}
+                          estado={estadoNasDatas(m)}
+                          selecionada={marcada}
+                          desabilitado={bloqueada && !marcada}
+                          aviso={marcada ? bloqueada || comOS.has(m.id) : !bloqueada && comOS.has(m.id)}
+                          titulo={titulo(m)}
+                          aoClicar={() => alternar(m)}
+                          className={cn(
+                            'min-w-[60px] justify-center',
+                            trocar.has(m.id) && 'ring-2 ring-danger ring-offset-2 ring-offset-surface',
+                          )}
+                        />
+                      )
+                    })}
                   </div>
                 </div>
               )
@@ -387,15 +425,56 @@ export function SeletorMaquinas({
           </div>
 
           <div className="mt-4 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-muted">
-            <ItemLegenda cor={COR_LEGENDA.DISPONIVEL}>Livre nessas datas</ItemLegenda>
-            <ItemLegenda cor={COR_LEGENDA.LOCADA}>Em outro evento</ItemLegenda>
-            <ItemLegenda cor={COR_LEGENDA.MANUTENCAO}>Em manutenção</ItemLegenda>
+            <ItemLegenda cor={COR_LEGENDA.DISPONIVEL}>Livre nestas datas</ItemLegenda>
             <ItemLegenda cor={COR_LEGENDA.SELECIONADA}>Selecionada</ItemLegenda>
+            <span className="inline-flex items-center gap-1.5">
+              <span aria-hidden className="inline-flex gap-0.5 opacity-70 saturate-50">
+                <span className={cn('h-3 w-3 shrink-0 rounded-[4px] border', COR_LEGENDA.LOCADA)} />
+                <span className={cn('h-3 w-3 shrink-0 rounded-[4px] border', COR_LEGENDA.MANUTENCAO)} />
+              </span>
+              Indisponível
+            </span>
             <span className="inline-flex items-center gap-1.5">
               <PontoAtencao />
               Atenção
             </span>
           </div>
+
+          {/* Motivo das indisponíveis, de forma compacta */}
+          <AnimatePresence initial={false}>
+            {grupos.length > 0 && (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                className="overflow-hidden"
+              >
+                <div className="mt-3 flex flex-col gap-1 rounded-xl bg-surface-2 px-3 py-2.5 text-xs leading-relaxed text-ink-2">
+                  {gruposEventos.length > 0 && (
+                    <p>
+                      <span className="font-medium text-ink">Em outro evento nestas datas:</span>{' '}
+                      {gruposEventos.map((g, i) => (
+                        <span key={g.chave}>
+                          {i > 0 && <span className="text-muted"> · </span>}
+                          <b className="tnum font-semibold text-ink">{g.maquinas.map((m) => m.identificacao).join(', ')}</b>{' '}
+                          <span className="tnum">({g.titulo})</span>
+                        </span>
+                      ))}
+                    </p>
+                  )}
+                  {emManutencao && (
+                    <p>
+                      <span className="font-medium text-ink">Em manutenção:</span>{' '}
+                      <b className="tnum font-semibold text-ink">
+                        {emManutencao.maquinas.map((m) => m.identificacao).join(', ')}
+                      </b>
+                    </p>
+                  )}
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
 
           <Avisos itens={avisos} className="mt-1" />
 
@@ -406,7 +485,7 @@ export function SeletorMaquinas({
               icone={<Sparkles className="h-4 w-4" />}
               onClick={escolherAutomaticamente}
               disabled={!precisa}
-              title="Marca as máquinas livres nessas datas (sem outro evento e fora de manutenção), pequenas primeiro"
+              title="Marca as máquinas livres nestas datas (sem outro evento, fora de manutenção e sem O.S. em aberto), pequenas primeiro"
             >
               Escolher automaticamente
             </Button>

@@ -1,7 +1,9 @@
-import { Copy, Ellipsis, FileDown, Pencil, Trash2 } from 'lucide-react'
+import { Copy, Ellipsis, FileDown, Pencil, ReceiptText, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
+import { calcularEvento, FORMAS_PAGAMENTO } from '#shared/calc.ts'
 import { codigoEvento, moeda, numero, periodo } from '../lib/format'
 import type { EventoCompleto } from '../lib/hooks'
+import { podeGerarRecibo } from '../lib/recibo'
 import { useDados } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
 import { PagamentoBadge, StatusBadge } from './Badges'
@@ -37,6 +39,30 @@ export function useAcoesEvento() {
         toast.sucesso('PDF gerado', nome)
       } catch (e) {
         toast.erro('Não foi possível gerar o PDF', (e as Error).message)
+      }
+    },
+    /** Recibo do pagamento em PIX ou dinheiro, no papel timbrado. */
+    recibo: async ({ evento, cliente }: Pick<EventoCompleto, 'evento' | 'cliente'>) => {
+      const r = calcularEvento(evento)
+      if (r.total <= 0) {
+        toast.erro('Recibo sem valor', 'O total deste evento está zerado.')
+        return
+      }
+      // Bobinas ainda não conferidas: o recibo sai só com o que já está calculado
+      if (evento.bobinasConsignadas > 0 && r.conferencia !== 'CONFERIDO') {
+        const ok = await confirmar({
+          titulo: 'Bobinas ainda não conferidas',
+          descricao: `O recibo vai sair só com o que já está calculado (${moeda(r.total)}), sem o valor das bobinas. Para incluí-las, use “Registrar devolução” antes.`,
+          confirmar: 'Gerar assim mesmo',
+        })
+        if (!ok) return
+      }
+      try {
+        const { baixarReciboPDF } = await import('../lib/pdfRecibo')
+        const nome = await baixarReciboPDF(evento, cliente, config)
+        toast.sucesso('Recibo gerado', `${FORMAS_PAGAMENTO[evento.formaPagamento].label} • ${moeda(r.total)} • ${nome}`)
+      } catch (e) {
+        toast.erro('Não foi possível gerar o recibo', (e as Error).message)
       }
     },
     excluir: async ({ evento }: EventoCompleto, depois?: () => void) => {
@@ -122,6 +148,9 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
                   itens={[
                     { label: 'Editar', icone: <Pencil className="h-4 w-4" />, aoClicar: () => acoes.editar(e.id) },
                     { label: 'Gerar PDF', icone: <FileDown className="h-4 w-4" />, aoClicar: () => acoes.pdf(it) },
+                    ...(podeGerarRecibo(e)
+                      ? [{ label: 'Gerar recibo', icone: <ReceiptText className="h-4 w-4" />, aoClicar: () => acoes.recibo(it) }]
+                      : []),
                     { label: 'Duplicar', icone: <Copy className="h-4 w-4" />, aoClicar: () => acoes.duplicar(e.id) },
                     'sep',
                     { label: 'Excluir', icone: <Trash2 className="h-4 w-4" />, aoClicar: () => acoes.excluir(it), perigo: true },

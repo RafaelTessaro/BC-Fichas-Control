@@ -1,71 +1,11 @@
-// Prévia da ficha impressa pelas máquinas (cabeçalho no topo, rodapé no fim) e
-// blocos de texto com botão de copiar, usados no formulário e no detalhe do evento.
+// Texto programado nas máquinas (cabeçalho ou rodapé das fichas), com botão de copiar.
+// Cada máquina tem o seu próprio layout de ficha, então aqui não há prévia: só o texto.
 
 import { Check, Copy } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
-import { cn } from '../lib/cn'
-import { dataCurta } from '../lib/format'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from '../store/ui'
 import { Button } from './ui/Button'
-
-/** Bordas serrilhadas em cima e embaixo, como papel de ficha destacado. */
-const SERRILHADO =
-  'conic-gradient(from 135deg at top, #0000, #000 1deg 89deg, #0000 90deg) top / 10px 51% repeat-x, ' +
-  'conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) bottom / 10px 51% repeat-x'
-const ESTILO_PAPEL: CSSProperties = { mask: SERRILHADO, WebkitMask: SERRILHADO }
-
-function Linhas({ texto, vazio, className }: { texto: string; vazio: string; className?: string }) {
-  const limpo = texto.trim()
-  if (!limpo) return <p className="text-[10.5px] text-muted italic">{vazio}</p>
-  return <p className={cn('break-words whitespace-pre-wrap', className)}>{limpo}</p>
-}
-
-/**
- * Ficha de exemplo com o cabeçalho e o rodapé exatamente como digitados.
- * O miolo (quantidade e valor) é só ilustrativo: quem define é a máquina.
- */
-export function FichaPrevia({
-  cabecalho,
-  rodape,
-  data,
-  legenda = true,
-  className,
-}: {
-  cabecalho: string
-  rodape: string
-  /** Data mostrada na ficha de exemplo (`yyyy-MM-dd`). */
-  data?: string | null
-  legenda?: boolean
-  className?: string
-}) {
-  return (
-    <figure className={cn('flex flex-col items-center gap-2.5', className)}>
-      <div className="flex w-full justify-center rounded-2xl bg-surface-2 px-4 py-5 dark:bg-bg">
-        <div className="w-full max-w-[236px] drop-shadow-md">
-          <div
-            style={ESTILO_PAPEL}
-            className="bg-surface px-4 py-5 text-center font-mono text-[11.5px] leading-[1.45] text-ink dark:bg-surface-3"
-            aria-label="Prévia da ficha impressa"
-          >
-            <Linhas texto={cabecalho} vazio="(sem cabeçalho)" className="font-bold" />
-            <div className="my-2.5 border-t border-dashed border-line-strong" />
-            <p className="text-[17px] leading-tight font-bold tracking-wide">1 FICHA</p>
-            <p className="mt-1 text-[13px] font-semibold">R$ 5,00</p>
-            <p className="tnum mt-1 text-[9.5px] text-muted">{data ? dataCurta(data) : 'dd/mm/aaaa'} · Nº 000001</p>
-            <div className="my-2.5 border-t border-dashed border-line-strong" />
-            <Linhas texto={rodape} vazio="(sem rodapé)" />
-          </div>
-        </div>
-      </div>
-      {legenda && (
-        <figcaption className="text-center text-[11.5px] text-muted">
-          Prévia ilustrativa: o produto e o valor vêm da máquina.
-        </figcaption>
-      )}
-    </figure>
-  )
-}
 
 /**
  * Copia para a área de transferência. O sistema roda na rede da empresa por http, onde o

@@ -8,13 +8,15 @@ import { nomeArquivoSeguro } from './storage'
 import type { Cliente, Configuracoes, Evento, Maquina } from '#shared/tipos.ts'
 import { txt } from './pdfTexto'
 
-const VERDE: [number, number, number] = [11, 158, 79]
-const TINTA: [number, number, number] = [50, 52, 56]
-const SECUNDARIO: [number, number, number] = [110, 112, 118]
-const LINHA: [number, number, number] = [226, 228, 232]
+// Cores do timbrado (também usadas no recibo, em pdfRecibo.ts)
+export const VERDE: [number, number, number] = [11, 158, 79]
+export const TINTA: [number, number, number] = [50, 52, 56]
+export const SECUNDARIO: [number, number, number] = [110, 112, 118]
+export const LINHA: [number, number, number] = [226, 228, 232]
 
 let timbradoCache: Promise<HTMLImageElement> | null = null
-function carregarTimbrado() {
+/** Papel timbrado da empresa (carregado uma vez). */
+export function carregarTimbrado() {
   timbradoCache ??= new Promise((ok, erro) => {
     const img = new Image()
     img.onload = () => ok(img)

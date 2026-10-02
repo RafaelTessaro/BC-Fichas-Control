@@ -26,7 +26,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ButtonHTMLAttri
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ConferenciaBadge } from '../components/Badges'
 import { ClienteFormModal } from '../components/ClienteFormModal'
-import { FichaPrevia } from '../components/FichaPrevia'
 import { SeletorMaquinas } from '../components/MaquinasEvento'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
@@ -37,12 +36,13 @@ import { confirmar } from '../components/ui/Feedback'
 import { ErroApi } from '../lib/api'
 import { AnimatedNumber, Avatar, EmptyState, PageHeader } from '../components/ui/Misc'
 import { calcularEvento, FORMAS_PAGAMENTO, ocupacaoPorDia, STATUS_EVENTO } from '#shared/calc.ts'
+import { bloqueiosMaquinas, maquinasParaTrocar, resumoTrocas } from '../lib/bloqueioMaquinas'
 import { cn } from '../lib/cn'
 import { codigoEvento, dataExtensa, hojeISO, moeda, normalizar, numero } from '../lib/format'
 import { CLIENTE_VAZIO, LIMITES } from '#shared/dominio.ts'
-import { capacidade, maquinasOcupadas } from '#shared/maquinas.ts'
+import { capacidade, ordenarMaquinas } from '#shared/maquinas.ts'
 import { novoId } from '../lib/storage'
-import type { DiaEvento, Evento, FormaPagamento, StatusEvento } from '#shared/tipos.ts'
+import type { DiaEvento, Evento, FormaPagamento, StatusEvento, TipoCliente } from '#shared/tipos.ts'
 import { useDados, type EventoInput } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
 import { useHoje } from '../lib/hoje'
@@ -94,7 +94,7 @@ export function EventoForm() {
   const [salvando, setSalvando] = useState(false)
   // Versão aberta para edição; se outra pessoa salvar antes, o servidor recusa e avisamos
   const [versaoBase, setVersaoBase] = useState(existente?.versao)
-  const [clienteModal, setClienteModal] = useState<{ aberto: boolean; nome?: string }>({ aberto: false })
+  const [clienteModal, setClienteModal] = useState<{ aberto: boolean; nome?: string; tipo?: TipoCliente }>({ aberto: false })
   const [periodoModal, setPeriodoModal] = useState(false)
 
   const set = <K extends keyof EventoInput>(k: K, v: EventoInput[K]) => setF((s) => ({ ...s, [k]: v }))
@@ -108,14 +108,14 @@ export function EventoForm() {
   const emManutencao = (data: string) => (data >= hoje ? cap.manutencao : 0)
   const cliente = clientes.find((c) => c.id === f.clienteId)
 
+  const irParaMaquinas = () =>
+    document.getElementById('maquinas-enviadas')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+
   // Vindo do detalhe por "Marcar máquinas": rola até o cartão das máquinas
   const secao = params.get('secao')
   useEffect(() => {
     if (secao !== 'maquinas') return
-    const t = setTimeout(
-      () => document.getElementById('maquinas-enviadas')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
-      150,
-    )
+    const t = setTimeout(irParaMaquinas, 150)
     return () => clearTimeout(t)
   }, [secao])
 
@@ -125,6 +125,8 @@ export function EventoForm() {
   /** Coloca o nome do evento em maiúsculas na primeira linha do cabeçalho (as outras linhas ficam). */
   const usarNomeNoCabecalho = () => set('cabecalho', [nomeMaiusculo, ...linhasCabecalho.slice(1)].join('\n'))
   const rodapePadrao = config.rodapePadrao.trim()
+  // Mesma altura nos dois campos, para ficarem alinhados lado a lado
+  const linhasTexto = Math.min(8, Math.max(3, linhasCabecalho.length, f.rodape.split('\n').length))
 
   const opcoesClientes = useMemo(
     () =>
@@ -160,6 +162,8 @@ export function EventoForm() {
       criandoAvulso.current = false
     }
   }
+  // Nome digitado que ainda não é de nenhum cliente: vira avulso direto, sem abrir o cadastro
+  const nomeNovo = (nome: string) => !!nome && !clientes.some((c) => normalizar(c.nome) === normalizar(nome))
   const acoesCliente: AcaoCombo[] = [
     {
       label: (nome: string) => (
@@ -172,15 +176,20 @@ export function EventoForm() {
       aoClicar: (nome: string) => setClienteModal({ aberto: true, nome }),
     },
     {
-      label: (nome: string) => (
-        <>
-          Usar como cliente avulso: <span className="truncate">“{nome}”</span>
-        </>
-      ),
+      // Sempre visível: sem nome digitado, abre o cadastro já em "Avulso" (só pede o nome)
+      label: (nome: string) =>
+        nomeNovo(nome) ? (
+          <>
+            Usar como cliente avulso: <span className="truncate">“{nome}”</span>
+          </>
+        ) : (
+          <>
+            Cliente avulso <span className="font-normal text-muted">(sem cadastro)</span>
+          </>
+        ),
       icone: <UserRound className="h-4 w-4" />,
-      aoClicar: usarComoAvulso,
-      // Só com algo digitado e sem um cliente com exatamente esse nome
-      visivel: (nome: string) => !!nome && !clientes.some((c) => normalizar(c.nome) === normalizar(nome)),
+      aoClicar: (nome: string) =>
+        nomeNovo(nome) ? void usarComoAvulso(nome) : setClienteModal({ aberto: true, nome, tipo: 'AVULSO' }),
     },
   ]
 
@@ -258,37 +267,29 @@ export function EventoForm() {
     // Máquina excluída por outra pessoa enquanto o formulário estava aberto: sai da lista
     const existentes = new Set(maquinas.map((m) => m.id))
     const maquinasIds = f.maquinasIds.filter((x) => existentes.has(x))
-    // Máquina em outro evento nas mesmas datas: pode ser troca no mesmo dia, então só confirma
-    if (f.status !== 'CANCELADO') {
-      const ocupadas = maquinasOcupadas(
-        f.dias.map((d) => d.data),
-        eventos,
-        id,
+    // Máquina em manutenção ou já em outro evento nas mesmas datas não pode ir: explica e não envia
+    const bloqueios = bloqueiosMaquinas({
+      maquinas,
+      eventos,
+      clientes,
+      dias: f.dias,
+      eventoId: id,
+      cancelado: f.status === 'CANCELADO',
+      hoje,
+    })
+    const trocar = maquinasParaTrocar({ selecionadas: maquinasIds, bloqueios, dias: f.dias, salvo: existente, hoje })
+    if (trocar.length) {
+      const itens = ordenarMaquinas(maquinas.filter((m) => trocar.includes(m.id))).map((m) => ({
+        identificacao: m.identificacao,
+        bloqueio: bloqueios.get(m.id)!,
+      }))
+      const varias = trocar.length > 1
+      toast.erro(
+        varias ? `Troque as ${trocar.length} máquinas indisponíveis` : 'Troque a máquina indisponível',
+        `${resumoTrocas(itens)}. Desmarque e escolha ${varias ? 'outras' : 'outra'} em “Máquinas enviadas”.`,
       )
-      const repetidas = maquinas.filter((m) => maquinasIds.includes(m.id) && ocupadas.has(m.id))
-      if (repetidas.length) {
-        const evento = (m: (typeof repetidas)[number]) => {
-          const outro = ocupadas.get(m.id)![0]
-          return `${codigoEvento(outro.codigo)} ${outro.nome}`
-        }
-        const varias = repetidas
-          .slice(0, 4)
-          .map((m) => `${m.identificacao} (${evento(m)})`)
-          .join(', ')
-        const descricao =
-          repetidas.length === 1
-            ? `${repetidas[0].identificacao} também está no evento ${evento(repetidas[0])} em alguma dessas datas.`
-            : `${varias}${repetidas.length > 4 ? ` e mais ${repetidas.length - 4}` : ''} também estão em outros eventos nessas datas.`
-        const ok = await confirmar({
-          titulo: repetidas.length === 1 ? 'Máquina em outro evento' : 'Máquinas em outros eventos',
-          descricao: `${descricao} Deseja salvar mesmo assim?`,
-          confirmar: 'Salvar mesmo assim',
-        })
-        if (!ok) {
-          document.getElementById('maquinas-enviadas')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-          return
-        }
-      }
+      irParaMaquinas()
+      return
     }
     const dados = {
       ...f,
@@ -302,7 +303,11 @@ export function EventoForm() {
       toast.sucesso(id ? 'Evento atualizado' : 'Evento cadastrado', `${codigoEvento(salvo.codigo)} • ${salvo.nome}`)
       navegar(`/eventos/${salvo.id}`, { replace: !!id })
     } catch (err) {
-      if (err instanceof ErroApi && err.status === 409) {
+      if (err instanceof ErroApi && err.status === 409 && !err.dados.atual) {
+        // Recusa do servidor (ex.: máquina já em outro evento): mostra a mensagem e mantém o que foi digitado
+        avisarErro('Não foi possível salvar o evento', err)
+        if (err.dados.conflitos || /m[áa]quina/i.test(err.message)) irParaMaquinas()
+      } else if (err instanceof ErroApi && err.status === 409) {
         const atual = err.dados.atual as Evento | undefined
         const manter = await confirmar({
           titulo: 'Evento alterado por outra pessoa',
@@ -318,7 +323,7 @@ export function EventoForm() {
     } finally {
       setSalvando(false)
     }
-  }, [salvando, validar, salvarEvento, f, id, versaoBase, navegar, maquinas, eventos])
+  }, [salvando, validar, salvarEvento, f, id, versaoBase, navegar, maquinas, eventos, clientes, existente, hoje])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -377,7 +382,13 @@ export function EventoForm() {
             />
             {/* Cidade ao lado do cliente (vem do cadastro dele); status ao lado do nome */}
             <div className="grid grid-cols-1 gap-4 px-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.9fr)]">
-              <Field label="Cliente" htmlFor="ev-cliente" erro={erros.cliente} className="sm:col-span-2">
+              <Field
+                label="Cliente"
+                htmlFor="ev-cliente"
+                erro={erros.cliente}
+                hint={!f.clienteId && 'Sem cadastro? Escolha “Cliente avulso”, no fim da lista.'}
+                className="sm:col-span-2"
+              >
                 <Combobox
                   id="ev-cliente"
                   opcoes={opcoesClientes}
@@ -424,73 +435,72 @@ export function EventoForm() {
               </Field>
             </div>
 
-            {/* Texto programado nas máquinas, com a prévia da ficha ao lado */}
+            {/* Texto programado nas máquinas: cabeçalho e rodapé lado a lado quando há espaço */}
             <div className="@container mx-5 mt-5 border-t border-line pt-4 pb-5">
               <div className="mb-4 flex items-start gap-2.5">
                 <ReceiptText className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
                 <div className="min-w-0">
                   <p className="text-[13px] font-semibold text-ink">Fichas impressas</p>
-                  <p className="text-xs text-muted">O cabeçalho e o rodapé são programados nas máquinas e saem em cada ficha.</p>
+                  <p className="text-xs text-muted">
+                    Texto para programar nas máquinas. Sai em cada ficha, no layout de cada máquina.
+                  </p>
                 </div>
               </div>
-              <div className="grid grid-cols-1 items-start gap-5 @lg:grid-cols-[minmax(0,1fr)_236px]">
-                <div className="flex min-w-0 flex-col gap-4">
-                  <Field
-                    label="Cabeçalho das fichas"
-                    htmlFor="ev-cabecalho"
-                    hint="Sai no topo de cada ficha. Pode ter mais de uma linha."
-                    extra={
+              <div className="grid grid-cols-1 items-start gap-4 @lg:grid-cols-2 @lg:gap-5">
+                <Field
+                  label="Cabeçalho"
+                  htmlFor="ev-cabecalho"
+                  hint="Sai no topo de cada ficha. Pode ter mais de uma linha."
+                  extra={
+                    <BotaoTexto
+                      icone={<WandSparkles className="h-3.5 w-3.5" />}
+                      onClick={usarNomeNoCabecalho}
+                      disabled={!nomeMaiusculo || linhasCabecalho[0].trim() === nomeMaiusculo}
+                      title="Coloca o nome do evento, em letras maiúsculas, na primeira linha do cabeçalho"
+                    >
+                      Usar nome do evento
+                    </BotaoTexto>
+                  }
+                >
+                  <Textarea
+                    id="ev-cabecalho"
+                    value={f.cabecalho}
+                    onChange={(e) => set('cabecalho', e.target.value)}
+                    placeholder={'Ex.: FESTA DA PRIMAVERA\nCLUBE RECREATIVO'}
+                    rows={linhasTexto}
+                    maxLength={LIMITES.texto}
+                    spellCheck={false}
+                    className="min-h-0! font-mono text-[13px] leading-relaxed"
+                  />
+                </Field>
+                <Field
+                  label="Rodapé"
+                  htmlFor="ev-rodape"
+                  hint="Sai no fim de cada ficha e também fecha o resumo em PDF."
+                  extra={
+                    rodapePadrao &&
+                    f.rodape.trim() !== rodapePadrao && (
                       <BotaoTexto
-                        icone={<WandSparkles className="h-3.5 w-3.5" />}
-                        onClick={usarNomeNoCabecalho}
-                        disabled={!nomeMaiusculo || linhasCabecalho[0].trim() === nomeMaiusculo}
-                        title="Coloca o nome do evento, em letras maiúsculas, na primeira linha do cabeçalho"
+                        icone={<RotateCcw className="h-3.5 w-3.5" />}
+                        onClick={() => set('rodape', config.rodapePadrao)}
+                        title={`Volta para o rodapé padrão: “${rodapePadrao}”`}
                       >
-                        Usar nome do evento
+                        Usar o padrão
                       </BotaoTexto>
-                    }
-                  >
-                    <Textarea
-                      id="ev-cabecalho"
-                      value={f.cabecalho}
-                      onChange={(e) => set('cabecalho', e.target.value)}
-                      placeholder={'Ex.: FESTA DA PRIMAVERA\nCLUBE RECREATIVO'}
-                      rows={Math.min(8, Math.max(3, linhasCabecalho.length))}
-                      maxLength={LIMITES.texto}
-                      spellCheck={false}
-                      className="min-h-0! font-mono text-[13px] leading-relaxed"
-                    />
-                  </Field>
-                  <Field
-                    label="Rodapé das fichas"
-                    htmlFor="ev-rodape"
-                    hint="Sai no fim de cada ficha e também fecha o resumo em PDF."
-                    extra={
-                      rodapePadrao &&
-                      f.rodape.trim() !== rodapePadrao && (
-                        <BotaoTexto
-                          icone={<RotateCcw className="h-3.5 w-3.5" />}
-                          onClick={() => set('rodape', config.rodapePadrao)}
-                          title={`Volta para o rodapé padrão: “${rodapePadrao}”`}
-                        >
-                          Usar o padrão
-                        </BotaoTexto>
-                      )
-                    }
-                  >
-                    <Textarea
-                      id="ev-rodape"
-                      value={f.rodape}
-                      onChange={(e) => set('rodape', e.target.value)}
-                      placeholder={rodapePadrao || 'Ex.: AGRADECEMOS SUA PRESENÇA!'}
-                      rows={Math.min(6, Math.max(2, f.rodape.split('\n').length))}
-                      maxLength={LIMITES.texto}
-                      spellCheck={false}
-                      className="min-h-0! font-mono text-[13px] leading-relaxed"
-                    />
-                  </Field>
-                </div>
-                <FichaPrevia cabecalho={f.cabecalho} rodape={f.rodape} data={resumo.dataInicio} />
+                    )
+                  }
+                >
+                  <Textarea
+                    id="ev-rodape"
+                    value={f.rodape}
+                    onChange={(e) => set('rodape', e.target.value)}
+                    placeholder={rodapePadrao || 'Ex.: AGRADECEMOS SUA PRESENÇA!'}
+                    rows={linhasTexto}
+                    maxLength={LIMITES.texto}
+                    spellCheck={false}
+                    className="min-h-0! font-mono text-[13px] leading-relaxed"
+                  />
+                </Field>
               </div>
             </div>
           </Card>
@@ -613,6 +623,7 @@ export function EventoForm() {
             aoMudar={(ids) => set('maquinasIds', ids)}
             dias={f.dias}
             eventoId={id}
+            cancelado={f.status === 'CANCELADO'}
           />
 
           {/* 4. Valores e bobinas */}
@@ -795,6 +806,7 @@ export function EventoForm() {
       <ClienteFormModal
         aberto={clienteModal.aberto}
         nomeInicial={clienteModal.nome}
+        tipoInicial={clienteModal.tipo}
         aoFechar={() => setClienteModal({ aberto: false })}
         aoSalvar={selecionarCliente}
       />

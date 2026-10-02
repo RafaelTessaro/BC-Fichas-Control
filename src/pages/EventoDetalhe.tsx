@@ -22,13 +22,13 @@ import {
   Trash2,
   Wallet,
 } from 'lucide-react'
-import { motion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import { useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConferenciaBadge, PagamentoBadge } from '../components/Badges'
 import { useAcoesEvento } from '../components/EventosTabela'
-import { FichaPrevia, TextoFicha } from '../components/FichaPrevia'
 import { MaquinasEnviadas } from '../components/MaquinasEvento'
+import { TextoFicha } from '../components/TextoFicha'
 import { GoogleSyncBadge } from '../components/GoogleSyncBadge'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
@@ -41,6 +41,7 @@ import { codigoEvento, dataCurta, dataExtensa, enderecoCompleto, hojeISO, moeda,
 import type { EventoPatch, FormaPagamento, StatusEvento } from '#shared/tipos.ts'
 import { useDados } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
+import { podeGerarRecibo } from '../lib/recibo'
 
 const ICONES_PAGAMENTO: Record<Exclude<FormaPagamento, 'NAO_PAGO'>, ReactNode> = {
   PIX: <QrCode className="h-4 w-4" />,
@@ -60,6 +61,7 @@ export function EventoDetalhe() {
   const [modalPagamento, setModalPagamento] = useState(false)
   const [modalDevolucao, setModalDevolucao] = useState(false)
   const [gerando, setGerando] = useState(false)
+  const [gerandoRecibo, setGerandoRecibo] = useState(false)
 
   if (!evento) {
     return (
@@ -91,6 +93,25 @@ export function EventoDetalhe() {
     setGerando(true)
     await acoes.pdf(completo)
     setGerando(false)
+  }
+
+  // Recibo: só para pagamento em PIX ou dinheiro; em destaque depois que o evento é finalizado
+  const temRecibo = podeGerarRecibo(evento)
+  const destaqueRecibo = temRecibo && evento.status === 'FINALIZADO'
+  const gerarRecibo = async () => {
+    setGerandoRecibo(true)
+    await acoes.recibo(completo)
+    setGerandoRecibo(false)
+  }
+  const pagoEm = `${FORMAS_PAGAMENTO[evento.formaPagamento].label}${evento.dataPagamento ? ` em ${dataCurta(evento.dataPagamento)}` : ''}`
+
+  const mudarStatus = (s: StatusEvento) => {
+    const oferecerRecibo = s === 'FINALIZADO' && podeGerarRecibo({ ...evento, status: s })
+    void alterar(
+      { status: s },
+      oferecerRecibo ? 'Evento finalizado' : 'Status atualizado',
+      oferecerRecibo ? 'Use “Gerar recibo”, logo abaixo do status, para entregar o recibo ao cliente.' : STATUS_EVENTO[s].label,
+    )
   }
 
   return (
@@ -148,6 +169,9 @@ export function EventoDetalhe() {
                 </Button>
               )}
               itens={[
+                ...(temRecibo
+                  ? [{ label: 'Gerar recibo', icone: <ReceiptText className="h-4 w-4" />, aoClicar: () => void gerarRecibo() }]
+                  : []),
                 { label: 'Duplicar evento', icone: <Copy className="h-4 w-4" />, aoClicar: () => acoes.duplicar(evento.id) },
                 'sep',
                 {
@@ -162,29 +186,65 @@ export function EventoDetalhe() {
         }
       />
 
-      {/* Andamento */}
-      <Card className="mb-6 flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
-        <div className="flex items-center gap-3">
-          <span className="text-[13px] font-medium text-muted">Status</span>
-          <Segmented
-            tamanho="sm"
-            valor={evento.status}
-            aoMudar={(s: StatusEvento) => void alterar({ status: s }, 'Status atualizado', STATUS_EVENTO[s].label)}
-            opcoes={(Object.keys(STATUS_EVENTO) as StatusEvento[]).map((s) => ({ valor: s, label: STATUS_EVENTO[s].label }))}
-          />
+      {/* Andamento (e o recibo em destaque quando o evento é finalizado com PIX ou dinheiro) */}
+      <Card className="mb-6 overflow-hidden">
+        <div className="flex flex-col gap-3 p-4 md:flex-row md:items-center md:justify-between">
+          <div className="flex min-w-0 flex-col items-start gap-2 sm:flex-row sm:items-center sm:gap-3">
+            <span className="text-[13px] font-medium text-muted">Status</span>
+            <Segmented
+              tamanho="sm"
+              valor={evento.status}
+              aoMudar={mudarStatus}
+              opcoes={(Object.keys(STATUS_EVENTO) as StatusEvento[]).map((s) => ({ valor: s, label: STATUS_EVENTO[s].label }))}
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {r.conferencia !== 'CONFERIDO' && (
+              <Button tamanho="sm" icone={<PackageCheck className="h-4 w-4" />} onClick={() => setModalDevolucao(true)}>
+                Registrar devolução
+              </Button>
+            )}
+            {!r.pago && evento.status !== 'CANCELADO' && (
+              <Button tamanho="sm" variante="soft" icone={<Wallet className="h-4 w-4" />} onClick={() => setModalPagamento(true)}>
+                Registrar pagamento
+              </Button>
+            )}
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {r.conferencia !== 'CONFERIDO' && (
-            <Button tamanho="sm" icone={<PackageCheck className="h-4 w-4" />} onClick={() => setModalDevolucao(true)}>
-              Registrar devolução
-            </Button>
+        <AnimatePresence initial={false}>
+          {destaqueRecibo && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+              className="overflow-hidden"
+            >
+              <div className="flex flex-col gap-3 border-t border-line bg-brand-soft px-4 py-3 sm:flex-row sm:items-center">
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand text-white">
+                    <ReceiptText className="h-[18px] w-[18px]" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-ink">Recibo para o cliente</p>
+                    <p className="tnum text-[13px] text-ink-2">
+                      Pago via {pagoEm} • <b className="font-semibold text-ink">{moeda(r.total)}</b>
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  variante="primary"
+                  icone={<ReceiptText className="h-4 w-4" />}
+                  onClick={gerarRecibo}
+                  disabled={gerandoRecibo}
+                  className="max-sm:w-full"
+                >
+                  {gerandoRecibo ? 'Gerando…' : 'Gerar recibo'}
+                </Button>
+              </div>
+            </motion.div>
           )}
-          {!r.pago && evento.status !== 'CANCELADO' && (
-            <Button tamanho="sm" variante="soft" icone={<Wallet className="h-4 w-4" />} onClick={() => setModalPagamento(true)}>
-              Registrar pagamento
-            </Button>
-          )}
-        </div>
+        </AnimatePresence>
       </Card>
 
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
@@ -229,14 +289,11 @@ export function EventoDetalhe() {
               titulo="Fichas"
               descricao="Cabeçalho e rodapé para programar nas máquinas."
             />
+            {/* Lado a lado quando há espaço */}
             <div className="@container px-5 pb-5">
-              <div className="grid grid-cols-1 items-start gap-5 @lg:grid-cols-[minmax(0,1fr)_236px]">
-                <div className="flex min-w-0 flex-col gap-4">
-                  <TextoFicha rotulo="Cabeçalho" texto={evento.cabecalho} vazio="Sem cabeçalho. Use “Editar” para preencher." />
-                  <TextoFicha rotulo="Rodapé" texto={evento.rodape} vazio="Sem rodapé." />
-                </div>
-                {/* No celular a prévia repetiria os textos acima */}
-                <FichaPrevia cabecalho={evento.cabecalho} rodape={evento.rodape} data={r.dataInicio} className="@max-lg:hidden" />
+              <div className="grid grid-cols-1 items-start gap-4 @lg:grid-cols-2">
+                <TextoFicha rotulo="Cabeçalho" texto={evento.cabecalho} vazio="Sem cabeçalho. Use “Editar” para preencher." />
+                <TextoFicha rotulo="Rodapé" texto={evento.rodape} vazio="Sem rodapé." />
               </div>
             </div>
           </Card>
@@ -287,7 +344,8 @@ export function EventoDetalhe() {
                   <div className="min-w-0">
                     <p className="truncate font-medium text-ink group-hover:text-brand-ink">{cliente.nome}</p>
                     <p className="truncate text-xs text-muted">
-                      {cliente.documento || (cliente.tipo === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física')}
+                      {cliente.documento ||
+                        { PJ: 'Pessoa jurídica', PF: 'Pessoa física', AVULSO: 'Cliente avulso' }[cliente.tipo]}
                     </p>
                   </div>
                 </Link>
@@ -326,16 +384,31 @@ export function EventoDetalhe() {
             />
             <div className="px-5 pb-5 text-sm">
               {r.pago ? (
-                <p className="text-ink-2">
-                  Pago via <b className="font-medium text-ink">{FORMAS_PAGAMENTO[evento.formaPagamento].label}</b>
-                  {evento.dataPagamento && (
-                    <>
-                      {' '}
-                      em <b className="tnum font-medium text-ink">{dataCurta(evento.dataPagamento)}</b>
-                    </>
+                <>
+                  <p className="text-ink-2">
+                    Pago via <b className="font-medium text-ink">{FORMAS_PAGAMENTO[evento.formaPagamento].label}</b>
+                    {evento.dataPagamento && (
+                      <>
+                        {' '}
+                        em <b className="tnum font-medium text-ink">{dataCurta(evento.dataPagamento)}</b>
+                      </>
+                    )}
+                    .
+                  </p>
+                  {/* Finalizado, o botão fica em destaque logo abaixo do status */}
+                  {temRecibo && !destaqueRecibo && (
+                    <Button
+                      tamanho="sm"
+                      variante="soft"
+                      className="mt-3"
+                      icone={<ReceiptText className="h-4 w-4" />}
+                      onClick={gerarRecibo}
+                      disabled={gerandoRecibo}
+                    >
+                      {gerandoRecibo ? 'Gerando…' : 'Gerar recibo'}
+                    </Button>
                   )}
-                  .
-                </p>
+                </>
               ) : (
                 <p className="flex items-center gap-2 text-ink-2">
                   <Clock className="h-4 w-4 text-warning" />
@@ -359,13 +432,17 @@ export function EventoDetalhe() {
         aoFechar={() => setModalPagamento(false)}
         total={r.total}
         sugerirFinalizar={r.conferencia === 'CONFERIDO'}
-        aoConfirmar={(forma, data, finalizar) =>
-          alterar(
+        aoConfirmar={(forma, data, finalizar) => {
+          // Finalizado com PIX ou dinheiro: o recibo aparece em destaque logo abaixo do status
+          const oferecerRecibo = finalizar && podeGerarRecibo({ formaPagamento: forma, status: 'FINALIZADO' })
+          return alterar(
             { formaPagamento: forma, dataPagamento: data, ...(finalizar ? { status: 'FINALIZADO' as const } : {}) },
-            'Pagamento registrado',
-            `${FORMAS_PAGAMENTO[forma].label} • ${moeda(r.total)}`,
+            oferecerRecibo ? 'Pagamento registrado e evento finalizado' : 'Pagamento registrado',
+            oferecerRecibo
+              ? `${FORMAS_PAGAMENTO[forma].label} • ${moeda(r.total)}. Use “Gerar recibo”, logo abaixo do status.`
+              : `${FORMAS_PAGAMENTO[forma].label} • ${moeda(r.total)}`,
           )
-        }
+        }}
       />
       <DevolucaoModal
         aberto={modalDevolucao}
