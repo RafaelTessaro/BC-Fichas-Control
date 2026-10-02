@@ -1,6 +1,6 @@
 import { endOfMonth, endOfYear, format, startOfMonth, startOfYear, subMonths } from 'date-fns'
 import { Download, Plus, Ticket } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { EventosTabela } from '../components/EventosTabela'
 import { Button } from '../components/ui/Button'
@@ -11,6 +11,7 @@ import { FORMAS_PAGAMENTO, STATUS_EVENTO } from '#shared/calc.ts'
 import { exportarCSV } from '../lib/csv'
 import { codigoEvento, dataCurta, hojeISO, moeda, normalizar, numero } from '../lib/format'
 import { porDataDesc, useEventosCompletos } from '../lib/hooks'
+import { useDados } from '../store/dados'
 import type { StatusEvento } from '#shared/tipos.ts'
 
 type FiltroStatus = 'todos' | StatusEvento
@@ -36,6 +37,17 @@ function intervalo(p: FiltroPeriodo): [string, string] | null {
 
 export function Eventos() {
   const todos = useEventosCompletos()
+  const maquinas = useDados((s) => s.maquinas)
+  // Identificação das máquinas (P-01, G-03…) para a busca e a exportação
+  const identificacoes = useMemo(() => new Map(maquinas.map((m) => [m.id, m.identificacao])), [maquinas])
+  const nomesMaquinas = useCallback(
+    (ids: string[]) =>
+      ids
+        .map((id) => identificacoes.get(id))
+        .filter(Boolean)
+        .join(', '),
+    [identificacoes],
+  )
   const navegar = useNavigate()
   const [status, setStatus] = useState<FiltroStatus>('todos')
   const [busca, setBusca] = useState('')
@@ -49,11 +61,14 @@ export function Eventos() {
     return todos
       .filter(
         ({ evento: e, cliente }) =>
-          !q || normalizar(`${e.nome} ${codigoEvento(e.codigo)} ${cliente?.nome ?? ''} ${e.cabecalho} ${e.cidade}`).includes(q),
+          !q ||
+          normalizar(
+            `${e.nome} ${codigoEvento(e.codigo)} ${cliente?.nome ?? ''} ${e.cabecalho} ${e.cidade} ${nomesMaquinas(e.maquinasIds)}`,
+          ).includes(q),
       )
       .filter(({ resumo: r }) => !iv || ((r.dataFim ?? '') >= iv[0] && (r.dataInicio ?? '') <= iv[1]))
       .filter(({ resumo: r }) => pagamento === 'todos' || (pagamento === 'pagos' ? r.pago : !r.pago))
-  }, [todos, busca, periodoSel, pagamento])
+  }, [todos, busca, periodoSel, pagamento, nomesMaquinas])
 
   const contagem = useMemo(() => {
     const c: Record<string, number> = { todos: base.length }
@@ -89,6 +104,7 @@ export function Eventos() {
         'Código',
         'Evento',
         'Cliente',
+        'Cidade',
         'Início',
         'Fim',
         'Diárias',
@@ -99,11 +115,13 @@ export function Eventos() {
         'Total',
         'Pagamento',
         'Status',
+        'Máquinas enviadas',
       ],
       lista.map(({ evento: e, resumo: r, cliente }) => [
         codigoEvento(e.codigo),
         e.nome,
         cliente?.nome ?? '',
+        e.cidade,
         dataCurta(r.dataInicio),
         dataCurta(r.dataFim),
         r.totalDiarias,
@@ -114,6 +132,7 @@ export function Eventos() {
         r.total,
         FORMAS_PAGAMENTO[e.formaPagamento].label,
         STATUS_EVENTO[e.status].label,
+        nomesMaquinas(e.maquinasIds),
       ]),
     )
 
@@ -166,7 +185,7 @@ export function Eventos() {
 
       <Card className="overflow-hidden">
         <div className="flex flex-col gap-3 border-b border-line p-4 lg:flex-row lg:items-center">
-          <SearchInput valor={busca} aoMudar={setBusca} placeholder="Buscar evento, cliente, código…" className="lg:w-80" />
+          <SearchInput valor={busca} aoMudar={setBusca} placeholder="Buscar evento, cliente, máquina…" className="lg:w-80" />
           <div className="grid grid-cols-2 gap-3 lg:flex lg:[&>*]:w-56">
             <Select value={periodoSel} onChange={(e) => setPeriodo(e.target.value as FiltroPeriodo)} aria-label="Período">
               <option value="todos">Todo o período</option>

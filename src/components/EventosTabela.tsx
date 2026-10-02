@@ -16,6 +16,7 @@ export function useAcoesEvento() {
   const duplicarEvento = useDados((s) => s.duplicarEvento)
   const excluirEvento = useDados((s) => s.excluirEvento)
   const config = useDados((s) => s.config)
+  const maquinas = useDados((s) => s.maquinas)
 
   return {
     editar: (id: string) => navegar(`/eventos/${id}/editar`),
@@ -32,7 +33,7 @@ export function useAcoesEvento() {
       try {
         // jsPDF só é carregado quando o primeiro PDF é gerado
         const { baixarResumoPDF } = await import('../lib/pdf')
-        const nome = await baixarResumoPDF(evento, cliente, config)
+        const nome = await baixarResumoPDF(evento, cliente, config, maquinas)
         toast.sucesso('PDF gerado', nome)
       } catch (e) {
         toast.erro('Não foi possível gerar o PDF', (e as Error).message)
@@ -85,7 +86,14 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
               <Td className="tnum text-xs font-medium text-muted">{codigoEvento(e.codigo)}</Td>
               <Td>
                 <p className="max-w-[260px] truncate font-medium text-ink">{e.nome}</p>
-                <p className="max-w-[260px] truncate text-xs text-muted">{e.cidade || (ocultarCliente ? '' : cliente?.nome)}</p>
+                <p className="max-w-[260px] truncate text-xs text-muted">
+                  {[
+                    e.cidade || (ocultarCliente ? '' : cliente?.nome),
+                    e.maquinasIds.length ? `${e.maquinasIds.length} ${e.maquinasIds.length === 1 ? 'máquina' : 'máquinas'}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(' • ')}
+                </p>
               </Td>
               {!ocultarCliente && <Td className="max-w-[220px] truncate max-md:hidden">{cliente?.nome ?? '—'}</Td>}
               <Td className="tnum whitespace-nowrap">{periodo(r.dataInicio, r.dataFim)}</Td>

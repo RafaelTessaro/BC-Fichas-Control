@@ -16,6 +16,7 @@ import {
   Phone,
   QrCode,
   Receipt,
+  ReceiptText,
   StickyNote,
   User,
   Trash2,
@@ -26,6 +27,8 @@ import { useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ConferenciaBadge, PagamentoBadge } from '../components/Badges'
 import { useAcoesEvento } from '../components/EventosTabela'
+import { FichaPrevia, TextoFicha } from '../components/FichaPrevia'
+import { MaquinasEnviadas } from '../components/MaquinasEvento'
 import { GoogleSyncBadge } from '../components/GoogleSyncBadge'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
@@ -219,6 +222,25 @@ export function EventoDetalhe() {
             </motion.div>
           </Card>
 
+          {/* Fichas: texto para programar nas máquinas */}
+          <Card>
+            <CardHeader
+              icone={<ReceiptText className="h-4 w-4" />}
+              titulo="Fichas"
+              descricao="Cabeçalho e rodapé para programar nas máquinas."
+            />
+            <div className="@container px-5 pb-5">
+              <div className="grid grid-cols-1 items-start gap-5 @lg:grid-cols-[minmax(0,1fr)_236px]">
+                <div className="flex min-w-0 flex-col gap-4">
+                  <TextoFicha rotulo="Cabeçalho" texto={evento.cabecalho} vazio="Sem cabeçalho. Use “Editar” para preencher." />
+                  <TextoFicha rotulo="Rodapé" texto={evento.rodape} vazio="Sem rodapé." />
+                </div>
+                {/* No celular a prévia repetiria os textos acima */}
+                <FichaPrevia cabecalho={evento.cabecalho} rodape={evento.rodape} data={r.dataInicio} className="@max-lg:hidden" />
+              </div>
+            </div>
+          </Card>
+
           {/* Dias */}
           <Card>
             <CardHeader
@@ -253,6 +275,8 @@ export function EventoDetalhe() {
         </div>
 
         <div className="flex flex-col gap-6">
+          <MaquinasEnviadas evento={evento} />
+
           {/* Cliente */}
           <Card>
             <CardHeader titulo="Cliente" />
@@ -321,17 +345,10 @@ export function EventoDetalhe() {
             </div>
           </Card>
 
-          {(evento.observacoes || evento.rodape) && (
+          {evento.observacoes && (
             <Card>
               <CardHeader icone={<StickyNote className="h-4 w-4" />} titulo="Observações" />
-              <div className="flex flex-col gap-3 px-5 pb-5 text-sm">
-                {evento.observacoes && <p className="whitespace-pre-wrap text-ink-2">{evento.observacoes}</p>}
-                {evento.rodape && (
-                  <p className="text-xs text-muted">
-                    Rodapé do PDF: <span className="font-medium text-ink-2">{evento.rodape}</span>
-                  </p>
-                )}
-              </div>
+              <p className="px-5 pb-5 text-sm break-words whitespace-pre-wrap text-ink-2">{evento.observacoes}</p>
             </Card>
           )}
         </div>

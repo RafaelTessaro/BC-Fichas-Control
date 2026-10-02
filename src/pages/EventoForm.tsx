@@ -10,6 +10,8 @@ import {
   Package,
   Plus,
   QrCode,
+  ReceiptText,
+  RotateCcw,
   Save,
   Trash2,
   TriangleAlert,
@@ -17,12 +19,15 @@ import {
   UserRound,
   Users,
   Wallet,
+  WandSparkles,
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { ConferenciaBadge } from '../components/Badges'
 import { ClienteFormModal } from '../components/ClienteFormModal'
+import { FichaPrevia } from '../components/FichaPrevia'
+import { SeletorMaquinas } from '../components/MaquinasEvento'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Combobox, type AcaoCombo } from '../components/ui/Combobox'
@@ -34,7 +39,8 @@ import { AnimatedNumber, Avatar, EmptyState, PageHeader } from '../components/ui
 import { calcularEvento, FORMAS_PAGAMENTO, ocupacaoPorDia, STATUS_EVENTO } from '#shared/calc.ts'
 import { cn } from '../lib/cn'
 import { codigoEvento, dataExtensa, hojeISO, moeda, normalizar, numero } from '../lib/format'
-import { CLIENTE_VAZIO } from '#shared/dominio.ts'
+import { CLIENTE_VAZIO, LIMITES } from '#shared/dominio.ts'
+import { capacidade, maquinasOcupadas } from '#shared/maquinas.ts'
 import { novoId } from '../lib/storage'
 import type { DiaEvento, Evento, FormaPagamento, StatusEvento } from '#shared/tipos.ts'
 import { useDados, type EventoInput } from '../store/dados'
@@ -56,7 +62,7 @@ export function EventoForm() {
   const { id } = useParams()
   const [params] = useSearchParams()
   const navegar = useNavigate()
-  const { eventos, clientes, config, salvarEvento } = useDados()
+  const { eventos, clientes, maquinas, config, salvarEvento } = useDados()
   const existente = id ? eventos.find((e) => e.id === id) : undefined
 
   const [f, setF] = useState<EventoInput>(() => {
@@ -93,7 +99,27 @@ export function EventoForm() {
   const set = <K extends keyof EventoInput>(k: K, v: EventoInput[K]) => setF((s) => ({ ...s, [k]: v }))
   const resumo = useMemo(() => calcularEvento(f), [f])
   const ocupacao = useMemo(() => ocupacaoPorDia(eventos, id), [eventos, id])
+  // Máquinas que a empresa tem (sem as desativadas); sem cadastro, a quantidade das configurações
+  const totalMaquinas = useMemo(() => capacidade(maquinas, config).total, [maquinas, config])
   const cliente = clientes.find((c) => c.id === f.clienteId)
+
+  // Vindo do detalhe por "Marcar máquinas": rola até o cartão das máquinas
+  const secao = params.get('secao')
+  useEffect(() => {
+    if (secao !== 'maquinas') return
+    const t = setTimeout(
+      () => document.getElementById('maquinas-enviadas')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+      150,
+    )
+    return () => clearTimeout(t)
+  }, [secao])
+
+  // ---- Cabeçalho e rodapé das fichas ------------------------------------------
+  const nomeMaiusculo = f.nome.trim().toLocaleUpperCase('pt-BR')
+  const linhasCabecalho = f.cabecalho.split('\n')
+  /** Coloca o nome do evento em maiúsculas na primeira linha do cabeçalho (as outras linhas ficam). */
+  const usarNomeNoCabecalho = () => set('cabecalho', [nomeMaiusculo, ...linhasCabecalho.slice(1)].join('\n'))
+  const rodapePadrao = config.rodapePadrao.trim()
 
   const opcoesClientes = useMemo(
     () =>
@@ -224,9 +250,45 @@ export function EventoForm() {
       toast.erro('Revise o formulário', primeiro)
       return
     }
+    // Máquina excluída por outra pessoa enquanto o formulário estava aberto: sai da lista
+    const existentes = new Set(maquinas.map((m) => m.id))
+    const maquinasIds = f.maquinasIds.filter((x) => existentes.has(x))
+    // Máquina em outro evento nas mesmas datas: pode ser troca no mesmo dia, então só confirma
+    if (f.status !== 'CANCELADO') {
+      const ocupadas = maquinasOcupadas(
+        f.dias.map((d) => d.data),
+        eventos,
+        id,
+      )
+      const repetidas = maquinas.filter((m) => maquinasIds.includes(m.id) && ocupadas.has(m.id))
+      if (repetidas.length) {
+        const evento = (m: (typeof repetidas)[number]) => {
+          const outro = ocupadas.get(m.id)![0]
+          return `${codigoEvento(outro.codigo)} ${outro.nome}`
+        }
+        const varias = repetidas
+          .slice(0, 4)
+          .map((m) => `${m.identificacao} (${evento(m)})`)
+          .join(', ')
+        const descricao =
+          repetidas.length === 1
+            ? `${repetidas[0].identificacao} também está no evento ${evento(repetidas[0])} em alguma dessas datas.`
+            : `${varias}${repetidas.length > 4 ? ` e mais ${repetidas.length - 4}` : ''} também estão em outros eventos nessas datas.`
+        const ok = await confirmar({
+          titulo: repetidas.length === 1 ? 'Máquina em outro evento' : 'Máquinas em outros eventos',
+          descricao: `${descricao} Deseja salvar mesmo assim?`,
+          confirmar: 'Salvar mesmo assim',
+        })
+        if (!ok) {
+          document.getElementById('maquinas-enviadas')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+          return
+        }
+      }
+    }
     const dados = {
       ...f,
       nome: f.nome.trim(),
+      maquinasIds,
       dataPagamento: f.formaPagamento === 'NAO_PAGO' ? '' : f.dataPagamento || hojeISO(),
     }
     setSalvando(true)
@@ -251,7 +313,7 @@ export function EventoForm() {
     } finally {
       setSalvando(false)
     }
-  }, [salvando, validar, salvarEvento, f, id, versaoBase, navegar])
+  }, [salvando, validar, salvarEvento, f, id, versaoBase, navegar, maquinas, eventos])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -288,7 +350,7 @@ export function EventoForm() {
           </Link>
         }
         titulo={existente ? `Editar evento ${codigoEvento(existente.codigo)}` : 'Novo evento'}
-        descricao="Preencha os dias de uso e os valores — o resumo é calculado automaticamente."
+        descricao="Preencha o evento, os dias de uso e as máquinas — o resumo é calculado automaticamente."
         acoes={
           <>
             <Button onClick={() => navegar(-1)}>Cancelar</Button>
@@ -301,14 +363,15 @@ export function EventoForm() {
 
       <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-w-0 flex-col gap-6">
-          {/* 1. Cliente e evento */}
+          {/* 1. Cliente e evento (com o texto programado nas fichas) */}
           <Card>
             <CardHeader
               icone={<Users className="h-4 w-4" />}
               titulo="Cliente e evento"
-              descricao="Quem contratou e onde as máquinas serão usadas."
+              descricao="Quem contratou e o que sai impresso nas fichas das máquinas."
             />
-            <div className="grid grid-cols-1 gap-4 px-5 pb-5 sm:grid-cols-2">
+            {/* Cidade ao lado do cliente (vem do cadastro dele); status ao lado do nome */}
+            <div className="grid grid-cols-1 gap-4 px-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.9fr)]">
               <Field label="Cliente" htmlFor="ev-cliente" erro={erros.cliente} className="sm:col-span-2">
                 <Combobox
                   id="ev-cliente"
@@ -325,7 +388,15 @@ export function EventoForm() {
                   acoes={acoesCliente}
                 />
               </Field>
-              <Field label="Nome do evento" htmlFor="ev-nome" erro={erros.nome}>
+              <Field label="Cidade" htmlFor="ev-cidade">
+                <Input
+                  id="ev-cidade"
+                  value={f.cidade}
+                  onChange={(e) => set('cidade', e.target.value)}
+                  placeholder="Ex.: Rio Claro"
+                />
+              </Field>
+              <Field label="Nome do evento" htmlFor="ev-nome" erro={erros.nome} className="sm:col-span-2">
                 <Input
                   id="ev-nome"
                   value={f.nome}
@@ -346,22 +417,76 @@ export function EventoForm() {
                   ))}
                 </Select>
               </Field>
-              <Field label="Cabeçalho das fichas" htmlFor="ev-cabecalho">
-                <Input
-                  id="ev-cabecalho"
-                  value={f.cabecalho}
-                  onChange={(e) => set('cabecalho', e.target.value)}
-                  placeholder="Ex.: FESTA DA PRIMAVERA"
-                />
-              </Field>
-              <Field label="Cidade" htmlFor="ev-cidade">
-                <Input
-                  id="ev-cidade"
-                  value={f.cidade}
-                  onChange={(e) => set('cidade', e.target.value)}
-                  placeholder="Ex.: Rio Claro"
-                />
-              </Field>
+            </div>
+
+            {/* Texto programado nas máquinas, com a prévia da ficha ao lado */}
+            <div className="@container mx-5 mt-5 border-t border-line pt-4 pb-5">
+              <div className="mb-4 flex items-start gap-2.5">
+                <ReceiptText className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
+                <div className="min-w-0">
+                  <p className="text-[13px] font-semibold text-ink">Fichas impressas</p>
+                  <p className="text-xs text-muted">O cabeçalho e o rodapé são programados nas máquinas e saem em cada ficha.</p>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 items-start gap-5 @lg:grid-cols-[minmax(0,1fr)_236px]">
+                <div className="flex min-w-0 flex-col gap-4">
+                  <Field
+                    label="Cabeçalho das fichas"
+                    htmlFor="ev-cabecalho"
+                    hint="Sai no topo de cada ficha. Pode ter mais de uma linha."
+                    extra={
+                      <BotaoTexto
+                        icone={<WandSparkles className="h-3.5 w-3.5" />}
+                        onClick={usarNomeNoCabecalho}
+                        disabled={!nomeMaiusculo || linhasCabecalho[0].trim() === nomeMaiusculo}
+                        title="Coloca o nome do evento, em letras maiúsculas, na primeira linha do cabeçalho"
+                      >
+                        Usar nome do evento
+                      </BotaoTexto>
+                    }
+                  >
+                    <Textarea
+                      id="ev-cabecalho"
+                      value={f.cabecalho}
+                      onChange={(e) => set('cabecalho', e.target.value)}
+                      placeholder={'Ex.: FESTA DA PRIMAVERA\nCLUBE RECREATIVO'}
+                      rows={Math.min(8, Math.max(3, linhasCabecalho.length))}
+                      maxLength={LIMITES.texto}
+                      spellCheck={false}
+                      className="min-h-0! font-mono text-[13px] leading-relaxed"
+                    />
+                  </Field>
+                  <Field
+                    label="Rodapé das fichas"
+                    htmlFor="ev-rodape"
+                    hint="Sai no fim de cada ficha e também fecha o resumo em PDF."
+                    extra={
+                      rodapePadrao &&
+                      f.rodape.trim() !== rodapePadrao && (
+                        <BotaoTexto
+                          icone={<RotateCcw className="h-3.5 w-3.5" />}
+                          onClick={() => set('rodape', config.rodapePadrao)}
+                          title={`Volta para o rodapé padrão: “${rodapePadrao}”`}
+                        >
+                          Usar o padrão
+                        </BotaoTexto>
+                      )
+                    }
+                  >
+                    <Textarea
+                      id="ev-rodape"
+                      value={f.rodape}
+                      onChange={(e) => set('rodape', e.target.value)}
+                      placeholder={rodapePadrao || 'Ex.: AGRADECEMOS SUA PRESENÇA!'}
+                      rows={Math.min(6, Math.max(2, f.rodape.split('\n').length))}
+                      maxLength={LIMITES.texto}
+                      spellCheck={false}
+                      className="min-h-0! font-mono text-[13px] leading-relaxed"
+                    />
+                  </Field>
+                </div>
+                <FichaPrevia cabecalho={f.cabecalho} rodape={f.rodape} data={resumo.dataInicio} />
+              </div>
             </div>
           </Card>
 
@@ -381,14 +506,14 @@ export function EventoForm() {
               <div className="hidden grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)_36px] gap-3 px-1 pb-2 text-xs font-medium text-muted sm:grid">
                 <span>Data</span>
                 <span>Máquinas</span>
-                <span>Disponibilidade da frota</span>
+                <span>Disponibilidade</span>
                 <span />
               </div>
               <motion.div layout className="flex flex-col gap-2">
                 <AnimatePresence initial={false}>
                   {f.dias.map((d) => {
                     const usadas = ocupacao.get(d.data) ?? 0
-                    const livres = config.frotaMaquinas - usadas
+                    const livres = totalMaquinas - usadas
                     const excede = d.maquinas > livres
                     const repetida = datasRepetidas.has(d.data)
                     return (
@@ -400,7 +525,7 @@ export function EventoForm() {
                         exit={{ opacity: 0, height: 0 }}
                         transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
                       >
-                        <div className="grid grid-cols-[minmax(0,1fr)_120px_36px] items-center gap-3 rounded-xl border border-line bg-surface-2/50 p-2 sm:grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)_36px] sm:border-0 sm:bg-transparent sm:p-0">
+                        <div className="grid grid-cols-[minmax(0,1fr)_104px_32px] items-center gap-2 rounded-xl border border-line bg-surface-2/50 p-2 sm:grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)_36px] sm:gap-3 sm:border-0 sm:bg-transparent sm:p-0">
                           <div className="relative">
                             <Input
                               type="date"
@@ -420,18 +545,18 @@ export function EventoForm() {
                           <div className="order-last col-span-3 flex min-w-0 items-center gap-2 text-xs sm:order-none sm:col-span-1">
                             {d.data && (
                               <>
-                                <span className="truncate text-muted">{dataExtensa(d.data, 'EEE, d MMM')}</span>
+                                <span className="min-w-0 truncate text-muted">{dataExtensa(d.data, 'EEE, d MMM')}</span>
                                 <span className="text-line-strong">•</span>
                                 {repetida ? (
-                                  <span className="font-medium text-danger">Data repetida</span>
+                                  <span className="shrink-0 font-medium whitespace-nowrap text-danger">Data repetida</span>
                                 ) : excede ? (
-                                  <span className="inline-flex items-center gap-1 font-medium text-warning">
+                                  <span className="inline-flex shrink-0 items-center gap-1 font-medium whitespace-nowrap text-warning">
                                     <TriangleAlert className="h-3.5 w-3.5" />
-                                    {livres <= 0 ? 'Frota esgotada' : `Só ${livres} livre${livres > 1 ? 's' : ''}`}
+                                    {livres <= 0 ? 'Sem máquinas livres' : `Só ${livres} ${livres > 1 ? 'livres' : 'livre'}`}
                                   </span>
                                 ) : (
-                                  <span className="tnum truncate text-muted">
-                                    {livres - d.maquinas} de {config.frotaMaquinas} livres
+                                  <span className="tnum shrink-0 whitespace-nowrap text-muted">
+                                    {livres - d.maquinas} de {totalMaquinas} livres
                                   </span>
                                 )}
                               </>
@@ -469,7 +594,16 @@ export function EventoForm() {
             </div>
           </Card>
 
-          {/* 3. Valores e bobinas */}
+          {/* 3. Máquinas enviadas */}
+          <SeletorMaquinas
+            id="maquinas-enviadas"
+            maquinasIds={f.maquinasIds}
+            aoMudar={(ids) => set('maquinasIds', ids)}
+            dias={f.dias}
+            eventoId={id}
+          />
+
+          {/* 4. Valores e bobinas */}
           <Card>
             <CardHeader
               icone={<Package className="h-4 w-4" />}
@@ -524,7 +658,7 @@ export function EventoForm() {
             </div>
           </Card>
 
-          {/* 4. Pagamento */}
+          {/* 5. Pagamento */}
           <Card>
             <CardHeader icone={<Wallet className="h-4 w-4" />} titulo="Pagamento e observações" />
             <div className="flex flex-col gap-4 px-5 pb-5">
@@ -578,26 +712,16 @@ export function EventoForm() {
                   </motion.div>
                 )}
               </AnimatePresence>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <Field label="Mensagem de rodapé do PDF" htmlFor="ev-rod" hint="Aparece no resumo entregue ao cliente.">
-                  <Input
-                    id="ev-rod"
-                    value={f.rodape}
-                    onChange={(e) => set('rodape', e.target.value)}
-                    placeholder={config.rodapePadrao}
-                  />
-                </Field>
-                <Field label="Observações" htmlFor="ev-obs">
-                  <Textarea
-                    id="ev-obs"
-                    value={f.observacoes}
-                    onChange={(e) => set('observacoes', e.target.value)}
-                    placeholder="Ex.: entregar as máquinas às 18h"
-                    className="min-h-10"
-                    rows={1}
-                  />
-                </Field>
-              </div>
+              <Field label="Observações" htmlFor="ev-obs" hint="Aparecem no resumo em PDF entregue ao cliente.">
+                <Textarea
+                  id="ev-obs"
+                  value={f.observacoes}
+                  onChange={(e) => set('observacoes', e.target.value)}
+                  placeholder="Ex.: entregar as máquinas às 18h"
+                  className="min-h-0!"
+                  rows={2}
+                />
+              </Field>
             </div>
           </Card>
         </div>
@@ -664,6 +788,29 @@ export function EventoForm() {
       />
       <PeriodoModal aberto={periodoModal} aoFechar={() => setPeriodoModal(false)} aoConfirmar={adicionarPeriodo} />
     </>
+  )
+}
+
+/** Botão pequeno e discreto ao lado do rótulo de um campo. */
+function BotaoTexto({
+  icone,
+  children,
+  className,
+  ...props
+}: { icone: ReactNode; children: ReactNode } & ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        '-my-1 inline-flex h-6 shrink-0 cursor-pointer items-center gap-1 rounded-md px-1.5 text-xs font-medium whitespace-nowrap text-brand-ink transition-colors hover:bg-brand-soft',
+        'disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent',
+        className,
+      )}
+      {...props}
+    >
+      {icone}
+      {children}
+    </button>
   )
 }
 
