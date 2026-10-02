@@ -1,8 +1,19 @@
-// Máquinas (P e G), situação de cada uma e ordens de serviço de manutenção.
+// Máquinas (P e G), situação de cada uma, manutenções e ocupação nos eventos.
 // Usado pelo servidor e pela interface, para que as regras sejam sempre as mesmas.
 
 import type { Tone } from './calc.ts'
-import type { Configuracoes, Evento, Maquina, OrdemServico, StatusMaquina, StatusOS, TipoMaquina, TipoOS } from './tipos.ts'
+import type {
+  Configuracoes,
+  DiaEvento,
+  Evento,
+  Maquina,
+  OrdemServico,
+  StatusMaquina,
+  StatusOS,
+  StatusProgramacao,
+  TipoMaquina,
+  TipoOS,
+} from './tipos.ts'
 
 export const TIPOS_MAQUINA: TipoMaquina[] = ['P', 'G']
 
@@ -25,11 +36,12 @@ export const ESTADO_MAQUINA: Record<EstadoMaquina, { label: string; tone: Tone }
 
 export const STATUS_OS_LISTA: StatusOS[] = ['ABERTA', 'EM_ANDAMENTO', 'CONCLUIDA', 'CANCELADA']
 
-export const STATUS_OS: Record<StatusOS, { label: string; tone: Tone }> = {
-  ABERTA: { label: 'Aberta', tone: 'warning' },
-  EM_ANDAMENTO: { label: 'Em andamento', tone: 'info' },
-  CONCLUIDA: { label: 'Concluída', tone: 'success' },
-  CANCELADA: { label: 'Cancelada', tone: 'neutral' },
+/** Situação da manutenção (os códigos são os da antiga "O.S."). */
+export const STATUS_OS: Record<StatusOS, { label: string; tone: Tone; descricao: string }> = {
+  ABERTA: { label: 'Iniciada', tone: 'warning', descricao: 'Registrada, aguardando o serviço' },
+  EM_ANDAMENTO: { label: 'Em andamento', tone: 'info', descricao: 'O serviço está sendo feito' },
+  CONCLUIDA: { label: 'Concluída', tone: 'success', descricao: 'Serviço pronto' },
+  CANCELADA: { label: 'Cancelada', tone: 'neutral', descricao: 'Não vai mais ser feita' },
 }
 
 export const TIPOS_OS: TipoOS[] = ['PREVENTIVA', 'CORRETIVA']
@@ -39,21 +51,29 @@ export const TIPO_OS: Record<TipoOS, { label: string; descricao: string }> = {
   CORRETIVA: { label: 'Corretiva', descricao: 'Conserto de um problema ou defeito' },
 }
 
-/** Serviços sugeridos na O.S. (outros podem ser digitados). */
-export const SERVICOS_PADRAO = [
-  'Limpeza completa',
-  'Higienização',
-  'Revisão geral',
-  'Troca de peças',
-  'Reparo da impressora',
-  'Reparo elétrico',
-  'Teste de funcionamento',
-]
+/** Chave para comparar nomes de serviço sem diferenciar maiúsculas, acentos e espaços. */
+export const chaveServico = (s: string) =>
+  s
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLocaleLowerCase('pt-BR')
+    .replace(/\s+/g, ' ')
+    .trim()
 
-/** "O.S. 0007" */
-export const codigoOS = (numero: number) => `O.S. ${String(numero).padStart(4, '0')}`
+/** Número da manutenção para exibir: "nº 0007". */
+export const codigoOS = (numero: number) => `nº ${String(numero).padStart(4, '0')}`
 
-/** O.S. que ainda precisam de atenção. */
+export const STATUS_PROGRAMACAO_LISTA: StatusProgramacao[] = ['NAO_INICIADA', 'EM_PROGRAMACAO', 'ENVIADA', 'CONCLUIDA']
+
+/** Andamento da programação das máquinas para o evento. */
+export const STATUS_PROGRAMACAO: Record<StatusProgramacao, { label: string; tone: Tone; descricao: string }> = {
+  NAO_INICIADA: { label: 'Não iniciada', tone: 'warning', descricao: 'Ainda não começou a programar' },
+  EM_PROGRAMACAO: { label: 'Em programação', tone: 'info', descricao: 'As máquinas estão sendo programadas' },
+  ENVIADA: { label: 'Enviada ao cliente', tone: 'brand', descricao: 'Aguardando o cliente conferir' },
+  CONCLUIDA: { label: 'Concluída', tone: 'success', descricao: 'Programação pronta' },
+}
+
+/** Manutenções que ainda precisam de atenção. */
 export const osEmAberto = (o: Pick<OrdemServico, 'status'>) => o.status === 'ABERTA' || o.status === 'EM_ANDAMENTO'
 
 /** Identificação sugerida para a n-ésima máquina do tipo: "P-01", "G-12". */
@@ -103,6 +123,52 @@ export const ordenarMaquinas = <T extends Pick<Maquina, 'tipo' | 'identificacao'
 
 type EventoPeriodo = Pick<Evento, 'dias'>
 
+/** Um dia em que as máquinas do evento estão fora da empresa. */
+export interface DiaOcupado {
+  data: string
+  maquinas: number
+  /** `true` nos dias de uso (contam diária); `false` nos dias em que só ficam com o cliente. */
+  uso: boolean
+}
+
+/** O mínimo de um evento para calcular os dias ocupados (a quantidade de máquinas é opcional). */
+export type EventoOcupacao = {
+  dias: Array<Pick<DiaEvento, 'data'> & Partial<Pick<DiaEvento, 'maquinas'>>>
+  periodoCorrido?: boolean
+}
+
+const somaDia = (d: Partial<Pick<DiaEvento, 'maquinas'>>) => Number(d.maquinas) || 0
+
+/** Dia seguinte (`yyyy-MM-dd`), sem depender do fuso. */
+function diaSeguinte(data: string) {
+  const [a, m, d] = data.split('-').map(Number)
+  const dt = new Date(Date.UTC(a, m - 1, d + 1))
+  return dt.toISOString().slice(0, 10)
+}
+
+/**
+ * Dias em que as máquinas do evento ficam fora da empresa. Normalmente, só os dias de uso, com a
+ * quantidade de cada um. Com `periodoCorrido` (as máquinas ficam com o cliente entre um uso e
+ * outro), todos os dias do primeiro ao último, sempre com a maior quantidade do evento: o cliente
+ * fica com todas as máquinas o período inteiro. Base da agenda, da disponibilidade e dos conflitos.
+ */
+export function diasOcupados(e: EventoOcupacao): DiaOcupado[] {
+  const uso = new Map<string, number>()
+  for (const d of e.dias) if (d.data) uso.set(d.data, (uso.get(d.data) ?? 0) + somaDia(d))
+  const datas = [...uso.keys()].sort()
+  if (!e.periodoCorrido || datas.length < 2) return datas.map((data) => ({ data, maquinas: uso.get(data)!, uso: true }))
+  const maior = Math.max(...uso.values())
+  const lista: DiaOcupado[] = []
+  // Limite de segurança: um período corrido de no máximo ~2 anos
+  for (let data = datas[0], n = 0; data <= datas[datas.length - 1] && n < 800; data = diaSeguinte(data), n++) {
+    lista.push({ data, maquinas: maior, uso: uso.has(data) })
+  }
+  return lista
+}
+
+/** Só as datas de `diasOcupados`. */
+export const datasOcupadas = (e: EventoOcupacao) => diasOcupados(e).map((d) => d.data)
+
 /** Primeiro e último dia do evento (`null` sem dias). */
 export function periodoEvento(e: EventoPeriodo): { inicio: string; fim: string } | null {
   const datas = e.dias
@@ -112,20 +178,14 @@ export function periodoEvento(e: EventoPeriodo): { inicio: string; fim: string }
   return datas.length ? { inicio: datas[0], fim: datas[datas.length - 1] } : null
 }
 
-const linhasDoCabecalho = (cabecalho: string) =>
-  cabecalho
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
-
-/** Onde a máquina está quando locada: a primeira linha do cabeçalho das fichas, ou o nome do evento. */
-export function localDaLocacao(e: Pick<Evento, 'cabecalho' | 'nome'>) {
-  return linhasDoCabecalho(e.cabecalho)[0] || e.nome
+/** Onde a máquina está quando locada: o nome do evento (que é o topo das fichas programadas). */
+export function localDaLocacao(e: Pick<Evento, 'nome'>) {
+  return e.nome
 }
 
-/** O cabeçalho inteiro numa linha ("FESTA DA PRIMAVERA · CLUBE RECREATIVO"), ou o nome do evento. */
-export function cabecalhoEmLinha(e: Pick<Evento, 'cabecalho' | 'nome'>) {
-  return linhasDoCabecalho(e.cabecalho).join(' · ') || e.nome
+/** Nome do evento numa linha (antes vinha do cabeçalho das fichas). */
+export function cabecalhoEmLinha(e: Pick<Evento, 'nome'>) {
+  return e.nome
 }
 
 export interface SituacaoMaquina {
@@ -140,9 +200,9 @@ export interface SituacaoMaquina {
 
 /**
  * Situação da máquina em `hoje` (`yyyy-MM-dd`): desativada e em manutenção valem o cadastro;
- * fora disso, "Locada" quando hoje é um dos dias de um evento não cancelado com a máquina.
- * Conta só os dias cadastrados (como a agenda e os conflitos): num evento de 27/09 e 04/10,
- * a máquina fica livre no meio da semana.
+ * fora disso, "Locada" quando hoje é um dos dias ocupados de um evento não cancelado com a
+ * máquina (ver `diasOcupados`): num evento de 27/09 e 04/10, a máquina fica livre no meio da
+ * semana — a não ser que o evento tenha o período corrido (ela fica com o cliente).
  */
 export function situacaoMaquina(maquina: Pick<Maquina, 'id' | 'status'>, eventos: Evento[], hoje: string): SituacaoMaquina {
   if (maquina.status === 'DESATIVADA') return { estado: 'DESATIVADA' }
@@ -152,10 +212,7 @@ export function situacaoMaquina(maquina: Pick<Maquina, 'id' | 'status'>, eventos
   let dataProxima = ''
   for (const e of eventos) {
     if (e.status === 'CANCELADO' || !e.maquinasIds.includes(maquina.id)) continue
-    const datas = e.dias
-      .map((d) => d.data)
-      .filter(Boolean)
-      .sort()
+    const datas = datasOcupadas(e)
     if (datas.includes(hoje)) {
       if (!evento || datas[0] < inicioEvento) [evento, inicioEvento] = [e, datas[0]]
       continue
@@ -170,18 +227,18 @@ export function situacaoMaquina(maquina: Pick<Maquina, 'id' | 'status'>, eventos
 
 /**
  * Para cada máquina do evento, os outros eventos (não cancelados) que usam a mesma máquina
- * em alguma das mesmas datas.
+ * em alguma das mesmas datas (dias ocupados dos dois lados, ver `diasOcupados`).
  */
 export function conflitosMaquinas(
-  evento: Pick<Evento, 'dias' | 'maquinasIds'> & { id?: string },
+  evento: EventoOcupacao & Pick<Evento, 'maquinasIds'> & { id?: string },
   eventos: Evento[],
 ): Map<string, Evento[]> {
-  const datas = new Set(evento.dias.map((d) => d.data).filter(Boolean))
+  const datas = new Set(datasOcupadas(evento))
   const mapa = new Map<string, Evento[]>()
   if (!datas.size) return mapa
   for (const outro of eventos) {
     if (outro.id === evento.id || outro.status === 'CANCELADO') continue
-    if (!outro.dias.some((d) => datas.has(d.data))) continue
+    if (!datasOcupadas(outro).some((d) => datas.has(d))) continue
     for (const id of outro.maquinasIds) {
       if (!evento.maquinasIds.includes(id)) continue
       mapa.set(id, [...(mapa.get(id) ?? []), outro])
@@ -190,12 +247,15 @@ export function conflitosMaquinas(
   return mapa
 }
 
-/** Ocupação de cada máquina nas datas informadas: id da máquina → eventos que a usam nessas datas. */
+/**
+ * Ocupação de cada máquina nas datas informadas: id da máquina → eventos que a têm nessas datas
+ * (pelos dias ocupados de cada evento, ver `diasOcupados`).
+ */
 export function maquinasOcupadas(datas: string[], eventos: Evento[], ignorarId?: string): Map<string, Evento[]> {
   const alvo = new Set(datas.filter(Boolean))
   const mapa = new Map<string, Evento[]>()
   for (const e of eventos) {
-    if (e.id === ignorarId || e.status === 'CANCELADO' || !e.dias.some((d) => alvo.has(d.data))) continue
+    if (e.id === ignorarId || e.status === 'CANCELADO' || !datasOcupadas(e).some((d) => alvo.has(d))) continue
     for (const id of e.maquinasIds) mapa.set(id, [...(mapa.get(id) ?? []), e])
   }
   return mapa

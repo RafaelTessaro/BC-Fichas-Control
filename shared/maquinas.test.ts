@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { normalizarEvento, normalizarOS, validarBackup } from './dominio.ts'
+import { normalizarEvento, normalizarOS, programacaoPadrao, validarBackup } from './dominio.ts'
+import { ocupacaoPorDia } from './calc.ts'
 import {
   cabecalhoEmLinha,
   capacidade,
   chaveIdentificacao,
   conflitosMaquinas,
+  datasOcupadas,
+  diasOcupados,
   localDaLocacao,
   maquinasOcupadas,
   numeroDaIdentificacao,
@@ -38,6 +41,8 @@ const ev = (id: string, datas: string[], maquinasIds: string[], extra: Partial<E
   nome: `Evento ${id}`,
   cidade: '',
   cabecalho: '',
+  periodoCorrido: false,
+  programacao: 'NAO_INICIADA',
   dias: datas.map((data, i) => ({ id: `${id}${i}`, data, maquinas: 1 })),
   maquinasIds,
   valorDiaria: 0,
@@ -89,13 +94,13 @@ describe('situação da máquina', () => {
     ev('cancelado', ['2026-10-02'], ['P-02'], { status: 'CANCELADO' }),
   ]
 
-  it('locada quando um evento em andamento inclui hoje, com o local vindo do cabeçalho', () => {
+  it('locada quando um evento em andamento inclui hoje, com o local vindo do nome do evento', () => {
     const s = situacaoMaquina(maq('P-01'), eventos, hoje)
     expect(s.estado).toBe('LOCADA')
     expect(s.evento?.id).toBe('agora')
     expect(s.proxima?.id).toBe('depois')
-    expect(localDaLocacao(s.evento!)).toBe('FESTA DA PRIMAVERA')
-    expect(cabecalhoEmLinha(s.evento!)).toBe('FESTA DA PRIMAVERA · ESCOLA')
+    expect(localDaLocacao(s.evento!)).toBe('Evento agora')
+    expect(cabecalhoEmLinha(s.evento!)).toBe('Evento agora')
     expect(localDaLocacao(ev('x', [], [], { nome: 'Quermesse' }))).toBe('Quermesse')
     expect(s.dataProxima).toBe('2026-10-20')
   })
@@ -152,10 +157,13 @@ describe('capacidade e ajuste de quantidade', () => {
 })
 
 describe('validação', () => {
-  it('evento: cabeçalho com quebras de linha padronizadas e máquinas sem repetição', () => {
-    const { valor } = normalizarEvento({ cabecalho: ' LINHA 1\r\nLINHA 2 ', maquinasIds: ['a', 'a', '', 'b', 3] })
-    expect(valor.cabecalho).toBe('LINHA 1\nLINHA 2')
+  it('evento: cabeçalho antigo vira observação e máquinas sem repetição', () => {
+    const { valor } = normalizarEvento({ nome: 'Festa', cabecalho: ' LINHA 1\r\nLINHA 2 ', maquinasIds: ['a', 'a', '', 'b', 3] })
+    // O nome é o topo das fichas: o cabeçalho antigo vai para as observações
+    expect(valor.cabecalho).toBe('')
+    expect(valor.observacoes).toBe('Cabeçalho das fichas: LINHA 1 / LINHA 2')
     expect(valor.maquinasIds).toEqual(['a', 'b', '3'])
+    expect(valor).toMatchObject({ periodoCorrido: false, programacao: 'NAO_INICIADA' })
   })
 
   it('O.S.: conclusão só quando concluída, serviços sem repetição', () => {
@@ -184,5 +192,45 @@ describe('validação', () => {
     expect(() => validarBackup({ ...base, eventos: [], ordens: [{ id: 'o', maquinaId: 'nada', problema: 'x' }] })).toThrow(
       /sem máquina correspondente/,
     )
+  })
+})
+
+describe('período corrido (as máquinas ficam com o cliente entre os dias de uso)', () => {
+  const fds = ['2026-10-03', '2026-10-04', '2026-10-10', '2026-10-11']
+
+  it('sem período corrido, só os dias de uso; com, todos os dias do primeiro ao último com a maior quantidade', () => {
+    const e = { dias: fds.map((data, i) => ({ data, maquinas: i === 1 ? 5 : 3 })) }
+    expect(diasOcupados(e)).toEqual(fds.map((data, i) => ({ data, maquinas: i === 1 ? 5 : 3, uso: true })))
+    const corrido = diasOcupados({ ...e, periodoCorrido: true })
+    expect(corrido).toHaveLength(9)
+    expect(corrido.every((d) => d.maquinas === 5)).toBe(true)
+    expect(corrido.filter((d) => d.uso).map((d) => d.data)).toEqual(fds)
+    expect(corrido[2]).toEqual({ data: '2026-10-05', maquinas: 5, uso: false })
+    // Virada de mês e um só dia
+    expect(datasOcupadas({ dias: [{ data: '2026-10-30' }, { data: '2026-11-02' }], periodoCorrido: true })).toEqual([
+      '2026-10-30',
+      '2026-10-31',
+      '2026-11-01',
+      '2026-11-02',
+    ])
+    expect(datasOcupadas({ dias: [{ data: '2026-10-30' }], periodoCorrido: true })).toEqual(['2026-10-30'])
+  })
+
+  it('situação, conflitos e ocupação por dia contam os dias do meio', () => {
+    const feira = ev('feira', fds, ['P-01'], { periodoCorrido: true })
+    // Quarta-feira entre os fins de semana: locada, com o cliente
+    expect(situacaoMaquina(maq('P-01'), [feira], '2026-10-07')).toMatchObject({ estado: 'LOCADA', evento: { id: 'feira' } })
+    expect(situacaoMaquina(maq('P-01'), [{ ...feira, periodoCorrido: false }], '2026-10-07').estado).toBe('DISPONIVEL')
+    const meio = { id: 'meio', dias: [{ id: 'x', data: '2026-10-07', maquinas: 1 }], maquinasIds: ['P-01'] }
+    expect([...conflitosMaquinas(meio, [feira]).keys()]).toEqual(['P-01'])
+    expect([...maquinasOcupadas(['2026-10-08'], [feira]).keys()]).toEqual(['P-01'])
+    expect(ocupacaoPorDia([feira]).get('2026-10-06')).toBe(1)
+    expect(ocupacaoPorDia([{ ...feira, periodoCorrido: false }]).get('2026-10-06')).toBeUndefined()
+  })
+
+  it('programação padrão dos eventos antigos: concluída no passado, não iniciada no futuro', () => {
+    expect(programacaoPadrao(ev('a', ['2026-09-01'], []), '2026-10-02')).toBe('CONCLUIDA')
+    expect(programacaoPadrao(ev('a', ['2026-11-01'], []), '2026-10-02')).toBe('NAO_INICIADA')
+    expect(programacaoPadrao(ev('a', ['2026-11-01'], [], { status: 'CANCELADO' }), '2026-10-02')).toBe('CONCLUIDA')
   })
 })

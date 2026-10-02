@@ -121,12 +121,14 @@ describe('máquinas', () => {
 })
 
 describe('evento com cabeçalho e máquinas enviadas', () => {
-  it('grava o cabeçalho, as máquinas e recusa máquina inexistente', async () => {
+  it('grava as máquinas, recusa máquina inexistente e leva o cabeçalho antigo para as observações', async () => {
     const cli = await criarCliente()
     const p1 = await criarMaquina('P-01')
     const g1 = await criarMaquina('G-01')
     const e = (await req<Evento>('POST', '/api/eventos', eventoCom(cli.id, ['2026-08-01'], [p1.id, g1.id, p1.id]), 201)).json
-    expect(e.cabecalho).toBe('FESTA DA PRIMAVERA\nESCOLA ESTADUAL')
+    // O nome do evento é o topo das fichas: um cabeçalho diferente (de uma tela antiga) vira observação
+    expect(e.cabecalho).toBe('')
+    expect(e.observacoes).toBe('Cabeçalho das fichas: FESTA DA PRIMAVERA / ESCOLA ESTADUAL')
     expect(e.maquinasIds).toEqual([p1.id, g1.id])
     expect('local' in e).toBe(false)
 
@@ -136,7 +138,42 @@ describe('evento com cabeçalho e máquinas enviadas', () => {
 
     const copia = (await req<Evento>('POST', `/api/eventos/${e.id}/duplicar`, undefined, 201)).json
     expect(copia.maquinasIds).toEqual([])
-    expect(copia.cabecalho).toBe(e.cabecalho)
+    expect(copia.observacoes).toBe(e.observacoes)
+    // Cabeçalho igual ao nome não diz nada a mais: some sem ir para as observações
+    const igual = (await req<Evento>('POST', '/api/eventos', { ...eventoCom(cli.id, ['2026-08-02']), cabecalho: ' festa ' }, 201))
+      .json
+    expect(igual).toMatchObject({ cabecalho: '', observacoes: '' })
+  })
+
+  it('eventos da versão 2.2: cabeçalho vai para as observações; programação e período corrido ganham o padrão', async () => {
+    await app.close()
+    const arquivo = join(pasta, 'v22.db')
+    ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: arquivo, pastaEstatica: null }))
+    const cli = await criarCliente()
+    const passado = (await req<Evento>('POST', '/api/eventos', { ...eventoCom(cli.id, ['2020-03-01']), cabecalho: '' }, 201)).json
+    const futuro = (await req<Evento>('POST', '/api/eventos', { ...eventoCom(cli.id, ['2099-03-01']), cabecalho: '' }, 201)).json
+    const db = new DatabaseSync(arquivo)
+    for (const id of [passado.id, futuro.id]) {
+      const { dados: json } = db.prepare('SELECT dados FROM eventos WHERE id = ?').get(id) as { dados: string }
+      const { programacao: _p, periodoCorrido: _c, ...antigo } = JSON.parse(json)
+      db.prepare('UPDATE eventos SET dados = ? WHERE id = ?').run(
+        JSON.stringify({ ...antigo, cabecalho: 'ARRAIÁ DA ESCOLA\nRIO CLARO', observacoes: 'Levar extensão' }),
+        id,
+      )
+    }
+    db.close()
+    const lidos = (await dados()).eventos
+    const [a, b] = [passado.id, futuro.id].map((id) => lidos.find((x) => x.id === id)!)
+    expect(a).toMatchObject({
+      cabecalho: '',
+      observacoes: 'Cabeçalho das fichas: ARRAIÁ DA ESCOLA / RIO CLARO\nLevar extensão',
+      programacao: 'CONCLUIDA',
+      periodoCorrido: false,
+    })
+    expect(b.programacao).toBe('NAO_INICIADA')
+    // Salvar de novo não repete a linha
+    const salvo = (await req<Evento>('PUT', `/api/eventos/${b.id}`, b, 200)).json
+    expect(salvo.observacoes).toBe('Cabeçalho das fichas: ARRAIÁ DA ESCOLA / RIO CLARO\nLevar extensão')
   })
 
   it('eventos gravados antes desta versão ganham cabeçalho e máquinas vazios (e perdem o "local")', async () => {
@@ -144,7 +181,7 @@ describe('evento com cabeçalho e máquinas enviadas', () => {
     const arquivo = join(pasta, 'antigo.db')
     ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: arquivo, pastaEstatica: null }))
     const cli = await criarCliente()
-    const e = (await req<Evento>('POST', '/api/eventos', eventoCom(cli.id, ['2026-08-01']), 201)).json
+    const e = (await req<Evento>('POST', '/api/eventos', { ...eventoCom(cli.id, ['2026-08-01']), cabecalho: '' }, 201)).json
     const db = new DatabaseSync(arquivo)
     const { dados: json } = db.prepare('SELECT dados FROM eventos WHERE id = ?').get(e.id) as { dados: string }
     const { cabecalho: _c, maquinasIds: _m, ...antigo } = JSON.parse(json)
@@ -326,7 +363,7 @@ describe('backup com máquinas e O.S.', () => {
   it('exporta e restaura máquinas, O.S. e a numeração', async () => {
     await montarDados()
     const backup = (await req<Backup>('GET', '/api/backup')).json
-    expect(backup).toMatchObject({ versao: 3, proximaOS: 2 })
+    expect(backup).toMatchObject({ versao: 4, proximaOS: 2 })
     expect(backup.maquinas).toHaveLength(1)
     expect(backup.ordens).toHaveLength(1)
 
@@ -357,7 +394,7 @@ describe('backup com máquinas e O.S.', () => {
       })),
     }
     const r = await req('POST', '/api/backup/mesclar', outro, 200)
-    expect(r.json).toEqual({ clientes: 1, eventos: 1, maquinas: 0, ordens: 1, ignorados: 1 })
+    expect(r.json).toEqual({ clientes: 1, eventos: 1, maquinas: 0, ordens: 1, reclamacoes: 0, ignorados: 1 })
     const d = await dados()
     expect(d.maquinas).toHaveLength(1)
     expect(d.ordens.map((o) => [o.numero, o.maquinaId])).toEqual([

@@ -29,6 +29,8 @@ const evento: Evento = {
   nome: 'Festa Junina da Escola Estadual Professor João Batista de Oliveira',
   cidade: 'Santa Gertrudes',
   cabecalho: '',
+  periodoCorrido: false,
+  programacao: 'NAO_INICIADA',
   dias: ['2026-10-11', '2026-10-12', '2026-10-18', '2026-10-19'].map((data, i) => ({ id: `d${i}`, data, maquinas: 6 })),
   maquinasIds: [],
   valorDiaria: 143.37,

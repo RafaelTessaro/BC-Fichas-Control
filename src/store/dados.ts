@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { CONFIG_PADRAO } from '#shared/dominio.ts'
 import { ordenarMaquinas } from '#shared/maquinas.ts'
 import type {
+  Anexo,
   Backup,
   Cliente,
   ClienteInput,
@@ -15,13 +16,15 @@ import type {
   MensagemTempoReal,
   OrdemServico,
   OrdemServicoInput,
+  Reclamacao,
+  ReclamacaoInput,
   StatusMaquina,
   TipoMaquina,
 } from '#shared/tipos.ts'
 import { api, conectarTempoReal, type ResultadoAjuste } from '../lib/api'
 
 export { CONFIG_PADRAO }
-export type { ClienteInput, EventoInput, MaquinaInput, OrdemServicoInput, ResultadoAjuste }
+export type { ClienteInput, EventoInput, MaquinaInput, OrdemServicoInput, ReclamacaoInput, ResultadoAjuste }
 
 /** Registro que o usuário começou a editar (para detectar alterações de outra pessoa). */
 export interface Alvo {
@@ -34,8 +37,12 @@ interface DadosState {
   eventos: Evento[]
   /** Máquinas cadastradas (P e G), em ordem natural de identificação. */
   maquinas: Maquina[]
-  /** Ordens de serviço de manutenção, da mais recente para a mais antiga. */
+  /** Manutenções das máquinas ("ordens de serviço" no código), da mais recente para a mais antiga. */
   ordens: OrdemServico[]
+  /** Reclamações de clientes sobre as máquinas, da mais recente para a mais antiga. */
+  reclamacoes: Reclamacao[]
+  /** Arquivos anexados aos eventos (só os dados; o conteúdo é baixado pelo `api.urlAnexo`). */
+  anexos: Anexo[]
   config: Configuracoes
   /** Última revisão do servidor aplicada nesta tela. */
   revisao: number
@@ -63,7 +70,14 @@ interface DadosState {
   /** `statusMaquina` muda a situação da máquina na mesma gravação. */
   salvarOrdem: (dados: OrdemServicoInput, alvo?: Alvo, statusMaquina?: StatusMaquina) => Promise<OrdemServico>
   excluirOrdem: (id: string) => Promise<void>
+  salvarReclamacao: (dados: ReclamacaoInput, alvo?: Alvo) => Promise<Reclamacao>
+  excluirReclamacao: (id: string) => Promise<void>
+  /** Envia um arquivo para o evento (`aoProgresso` de 0 a 1). */
+  enviarAnexo: (eventoId: string, arquivo: File | Blob, nome: string, aoProgresso?: (fracao: number) => void) => Promise<Anexo>
+  excluirAnexo: (id: string) => Promise<void>
   salvarConfig: (config: Configuracoes) => Promise<Configuracoes>
+  /** Grava a lista de serviços de manutenção cadastrados. */
+  salvarServicos: (servicos: string[]) => Promise<Configuracoes>
   exportar: () => Promise<Backup>
   importar: (dados: unknown) => Promise<{ clientes: number; eventos: number; maquinas: number }>
   /** Acrescenta dados (sem apagar os do servidor). */
@@ -86,6 +100,10 @@ function mesclar<T extends { id: string; versao: number }>(lista: T[], item: T):
 
 const mesclarMaquina = (lista: Maquina[], m: Maquina) => ordenarMaquinas(mesclar(lista, m))
 const mesclarOrdem = (lista: OrdemServico[], o: OrdemServico) => mesclar(lista, o).sort((a, b) => b.numero - a.numero)
+const mesclarReclamacao = (lista: Reclamacao[], r: Reclamacao) =>
+  mesclar(lista, r).sort((a, b) => b.data.localeCompare(a.data) || b.criadoEm.localeCompare(a.criadoEm))
+/** Arquivos não mudam depois de enviados: só entram (sem repetir) ou saem. */
+const mesclarAnexo = (lista: Anexo[], a: Anexo) => (lista.some((x) => x.id === a.id) ? lista : [...lista, a])
 
 let fila: MensagemTempoReal[] = []
 let carregamento: Promise<void> | null = null
@@ -113,6 +131,8 @@ export const useDados = create<DadosState>()((set, get) => {
       eventos: d.eventos,
       maquinas: d.maquinas,
       ordens: d.ordens,
+      reclamacoes: d.reclamacoes ?? [],
+      anexos: d.anexos ?? [],
       config: d.config,
       revisao: d.revisao,
       status: 'pronto',
@@ -144,7 +164,12 @@ export const useDados = create<DadosState>()((set, get) => {
         })
         break
       case 'evento':
-        set({ eventos: msg.acao === 'salvo' ? mesclar(s.eventos, msg.dado) : s.eventos.filter((e) => e.id !== msg.id) })
+        set(
+          msg.acao === 'salvo'
+            ? { eventos: mesclar(s.eventos, msg.dado) }
+            : // Os arquivos do evento excluído saem junto
+              { eventos: s.eventos.filter((e) => e.id !== msg.id), anexos: s.anexos.filter((a) => a.eventoId !== msg.id) },
+        )
         break
       case 'maquina':
         set({
@@ -153,6 +178,15 @@ export const useDados = create<DadosState>()((set, get) => {
         break
       case 'os':
         set({ ordens: msg.acao === 'salvo' ? mesclarOrdem(s.ordens, msg.dado) : s.ordens.filter((o) => o.id !== msg.id) })
+        break
+      case 'reclamacao':
+        set({
+          reclamacoes:
+            msg.acao === 'salvo' ? mesclarReclamacao(s.reclamacoes, msg.dado) : s.reclamacoes.filter((r) => r.id !== msg.id),
+        })
+        break
+      case 'anexo':
+        set({ anexos: msg.acao === 'salvo' ? mesclarAnexo(s.anexos, msg.dado) : s.anexos.filter((a) => a.id !== msg.id) })
         break
       case 'config':
         set({ config: msg.dado })
@@ -169,6 +203,8 @@ export const useDados = create<DadosState>()((set, get) => {
     eventos: [],
     maquinas: [],
     ordens: [],
+    reclamacoes: [],
+    anexos: [],
     config: CONFIG_PADRAO,
     revisao: 0,
     status: 'carregando',
@@ -264,7 +300,7 @@ export const useDados = create<DadosState>()((set, get) => {
 
     async excluirEvento(id) {
       await api.excluirEvento(id)
-      set((s) => ({ eventos: s.eventos.filter((e) => e.id !== id) }))
+      set((s) => ({ eventos: s.eventos.filter((e) => e.id !== id), anexos: s.anexos.filter((a) => a.eventoId !== id) }))
     },
 
     async salvarMaquina(dados, alvo) {
@@ -310,8 +346,36 @@ export const useDados = create<DadosState>()((set, get) => {
       set((s) => ({ ordens: s.ordens.filter((o) => o.id !== id) }))
     },
 
+    async salvarReclamacao(dados, alvo) {
+      const salva = alvo ? await api.atualizarReclamacao(alvo.id, dados, alvo.versao) : await api.criarReclamacao(dados)
+      set((s) => ({ reclamacoes: mesclarReclamacao(s.reclamacoes, salva) }))
+      return salva
+    },
+
+    async excluirReclamacao(id) {
+      await api.excluirReclamacao(id)
+      set((s) => ({ reclamacoes: s.reclamacoes.filter((r) => r.id !== id) }))
+    },
+
+    async enviarAnexo(eventoId, arquivo, nome, aoProgresso) {
+      const anexo = await api.enviarAnexo(eventoId, arquivo, nome, aoProgresso)
+      set((s) => ({ anexos: mesclarAnexo(s.anexos, anexo) }))
+      return anexo
+    },
+
+    async excluirAnexo(id) {
+      await api.excluirAnexo(id)
+      set((s) => ({ anexos: s.anexos.filter((a) => a.id !== id) }))
+    },
+
     async salvarConfig(config) {
       const salvo = await api.salvarConfig(config)
+      set({ config: salvo })
+      return salvo
+    },
+
+    async salvarServicos(servicos) {
+      const salvo = await api.salvarServicos(servicos)
       set({ config: salvo })
       return salvo
     },

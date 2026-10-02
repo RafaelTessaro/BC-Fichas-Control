@@ -56,8 +56,18 @@ export async function rotasDados(app: FastifyInstance, { repo, tempoReal, backup
     return reply.code(204).send()
   })
 
+  // ---- Reclamações de clientes sobre as máquinas ----
+  app.post('/api/reclamacoes', async (req, reply) => reply.code(201).send(repo.criarReclamacao(req.body)))
+  app.put('/api/reclamacoes/:id', async (req: ComId) => repo.atualizarReclamacao(req.params.id, req.body, versaoDo(req.body)))
+  app.delete('/api/reclamacoes/:id', async (req: ComId, reply) => {
+    repo.excluirReclamacao(req.params.id)
+    return reply.code(204).send()
+  })
+
   // ---- Configurações ----
   app.put('/api/config', async (req) => repo.salvarConfig(req.body))
+  // Lista de serviços de manutenção (cadastrada na tela de manutenção)
+  app.put('/api/config/servicos', async (req) => repo.salvarServicos(req.body))
 
   // ---- Backup ----
   app.get('/api/backup', async (_req, reply) => {

@@ -2,7 +2,7 @@
 // datas), com o motivo em texto. Usado no cartão "Máquinas enviadas" e na conferência antes de
 // salvar. Segue as regras do servidor (verificarMaquinasLivres em server/repositorio.ts).
 
-import { maquinasOcupadas } from '#shared/maquinas.ts'
+import { datasOcupadas, maquinasOcupadas, type EventoOcupacao } from '#shared/maquinas.ts'
 import type { Cliente, DiaEvento, Evento, Maquina } from '#shared/tipos.ts'
 import { codigoEvento } from './format'
 
@@ -27,9 +27,8 @@ export function listaDatas(datas: string[]): string {
   return `${curtas.slice(0, -1).join(', ')} e ${curtas[curtas.length - 1]}`
 }
 
-/** Datas do outro evento que também estão em `datas`. */
-export const datasEmComum = (outro: Pick<Evento, 'dias'>, datas: Set<string>) =>
-  outro.dias.map((d) => d.data).filter((d) => datas.has(d))
+/** Datas ocupadas pelo outro evento (com período corrido, também as do meio) que também estão em `datas`. */
+export const datasEmComum = (outro: EventoOcupacao, datas: Set<string>) => datasOcupadas(outro).filter((d) => datas.has(d))
 
 /** "#0012 Festa X — Cliente Y" (sem o cliente se ele foi removido). */
 export function nomeEvento(e: Pick<Evento, 'codigo' | 'nome' | 'clienteId'>, clientes: Map<string, Pick<Cliente, 'nome'>>) {
@@ -47,6 +46,7 @@ export function bloqueiosMaquinas({
   eventos,
   clientes,
   dias,
+  periodoCorrido,
   eventoId,
   cancelado,
   hoje,
@@ -54,7 +54,9 @@ export function bloqueiosMaquinas({
   maquinas: Maquina[]
   eventos: Evento[]
   clientes: Cliente[]
-  dias: Pick<DiaEvento, 'data'>[]
+  dias: EventoOcupacao['dias']
+  /** As máquinas ficam com o cliente entre os dias (contam todos os dias do período). */
+  periodoCorrido?: boolean
   /** Evento em edição (não conta como conflito com ele mesmo). */
   eventoId?: string
   cancelado?: boolean
@@ -62,7 +64,7 @@ export function bloqueiosMaquinas({
 }): Map<string, Bloqueio> {
   const mapa = new Map<string, Bloqueio>()
   if (cancelado) return mapa
-  const datas = new Set(dias.map((d) => d.data).filter(Boolean))
+  const datas = new Set(datasOcupadas({ dias, periodoCorrido }))
   const temFuturo = [...datas].some((d) => d >= hoje)
   const ocupadas = maquinasOcupadas([...datas], eventos, eventoId)
   const porId = new Map(clientes.map((c) => [c.id, c]))
@@ -105,6 +107,7 @@ export function trocasMaquinas({
   eventos,
   clientes = [],
   dias,
+  periodoCorrido,
   eventoId,
   salvo,
   cancelado,
@@ -115,11 +118,13 @@ export function trocasMaquinas({
   eventos: Evento[]
   /** Para o nome do cliente no texto do motivo. */
   clientes?: Cliente[]
-  dias: Pick<DiaEvento, 'data'>[]
+  dias: EventoOcupacao['dias']
+  /** As máquinas ficam com o cliente entre os dias (contam todos os dias do período). */
+  periodoCorrido?: boolean
   /** Evento em edição (não conta como conflito com ele mesmo). */
   eventoId?: string
   /** Versão gravada do evento em edição (nada num evento novo). */
-  salvo?: Pick<Evento, 'maquinasIds' | 'dias' | 'status'>
+  salvo?: Pick<Evento, 'maquinasIds' | 'status'> & EventoOcupacao
   /** Evento que vai ser salvo como cancelado: nada é cobrado. */
   cancelado?: boolean
   hoje: string
@@ -129,8 +134,9 @@ export function trocasMaquinas({
   const valeSalvo = salvo && salvo.status !== 'CANCELADO'
   const antes = new Set(valeSalvo ? salvo.maquinasIds : [])
   const gravadas = new Set(salvo?.maquinasIds ?? [])
-  const diasAntes = new Set(valeSalvo ? salvo.dias.map((d) => d.data) : [])
-  const datas = new Set(dias.map((d) => d.data).filter(Boolean))
+  // Dias ocupados (com período corrido, também os do meio), dos dois lados
+  const diasAntes = new Set(valeSalvo ? datasOcupadas(salvo) : [])
+  const datas = new Set(datasOcupadas({ dias, periodoCorrido }))
   const diasNovos = new Set([...datas].filter((d) => !diasAntes.has(d)))
   const temFuturo = [...datas].some((d) => d >= hoje)
   const novoFuturo = [...diasNovos].some((d) => d >= hoje)

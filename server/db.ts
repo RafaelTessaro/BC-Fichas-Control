@@ -54,6 +54,28 @@ const MIGRACOES: string[] = [
   CREATE INDEX ordens_maquina ON ordens_servico(maquina_id);
   INSERT INTO meta (chave, valor) VALUES ('proxima_os', '1');
   `,
+  // Reclamações de clientes sobre as máquinas e arquivos anexados aos eventos
+  `
+  CREATE TABLE reclamacoes (
+    id            TEXT PRIMARY KEY,
+    maquina_id    TEXT NOT NULL REFERENCES maquinas(id),
+    evento_id     TEXT NOT NULL DEFAULT '',
+    dados         TEXT NOT NULL,
+    versao        INTEGER NOT NULL,
+    criado_em     TEXT NOT NULL,
+    atualizado_em TEXT NOT NULL
+  );
+  CREATE INDEX reclamacoes_maquina ON reclamacoes(maquina_id);
+  CREATE TABLE anexos (
+    id        TEXT PRIMARY KEY,
+    evento_id TEXT NOT NULL,
+    nome      TEXT NOT NULL,
+    tipo      TEXT NOT NULL,
+    tamanho   INTEGER NOT NULL,
+    criado_em TEXT NOT NULL
+  );
+  CREATE INDEX anexos_evento ON anexos(evento_id);
+  `,
 ]
 
 export function abrirBanco(arquivo: string): Banco {

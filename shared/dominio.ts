@@ -2,7 +2,16 @@
 // Usado pelo servidor (fonte da verdade) e pela interface (validação imediata nos formulários).
 
 import { cnpjValido, cpfValido, mascaraCep, mascaraCnpj, mascaraCpf, normalizarCnpj, somenteDigitos } from './documentos.ts'
-import { chaveIdentificacao, STATUS_MAQUINA_LISTA, STATUS_OS_LISTA, TIPOS_MAQUINA, TIPOS_OS } from './maquinas.ts'
+import {
+  chaveIdentificacao,
+  chaveServico,
+  periodoEvento,
+  STATUS_MAQUINA_LISTA,
+  STATUS_OS_LISTA,
+  STATUS_PROGRAMACAO_LISTA,
+  TIPOS_MAQUINA,
+  TIPOS_OS,
+} from './maquinas.ts'
 import type {
   Backup,
   Cliente,
@@ -17,7 +26,10 @@ import type {
   MaquinaInput,
   OrdemServico,
   OrdemServicoInput,
+  Reclamacao,
+  ReclamacaoInput,
   StatusEvento,
+  StatusProgramacao,
   TipoCliente,
 } from './tipos.ts'
 
@@ -30,6 +42,8 @@ export const CONFIG_PADRAO: Configuracoes = {
   empresaRazaoSocial: 'FABIO DE GODOY LIMA LTDA',
   empresaCnpj: '12.403.843/0001-18',
   empresaCidade: 'Rio Claro - SP',
+  // Sem serviços prontos: o usuário cadastra os que costuma fazer
+  servicosManutencao: [],
 }
 
 export const CLIENTE_VAZIO: ClienteInput = {
@@ -69,6 +83,8 @@ export const LIMITES = {
   maquinasEvento: 500,
   identificacao: 30,
   servicos: 20,
+  /** Serviços de manutenção cadastrados (a lista para marcar). */
+  catalogoServicos: 100,
   /** Cadastro de várias máquinas de uma vez. */
   lote: 200,
 }
@@ -245,7 +261,8 @@ export function normalizarEvento(entrada: unknown): Resultado<EventoInput> {
       clienteId,
       nome,
       cidade: texto(r.cidade),
-      cabecalho: multilinha(r.cabecalho),
+      // O nome do evento é o topo das fichas: um cabeçalho que diga algo a mais vai para as observações
+      cabecalho: '',
       dias,
       maquinasIds: ids(r.maquinasIds, LIMITES.maquinasEvento),
       valorDiaria: dinheiro(r.valorDiaria),
@@ -257,7 +274,9 @@ export function normalizarEvento(entrada: unknown): Resultado<EventoInput> {
       dataPagamento,
       status: umDe(r.status, STATUS, 'EM_ABERTO'),
       rodape: multilinha(r.rodape),
-      observacoes: texto(r.observacoes, LIMITES.textoLongo),
+      observacoes: observacoesComCabecalhoAntigo(r.cabecalho, nome, texto(r.observacoes, LIMITES.textoLongo)),
+      periodoCorrido: r.periodoCorrido === true,
+      programacao: umDe(r.programacao, STATUS_PROGRAMACAO_LISTA, 'NAO_INICIADA'),
     },
     erros,
   }
@@ -272,6 +291,7 @@ export function normalizarPatch(entrada: unknown, atual: Evento): Resultado<Even
   if ('dataPagamento' in r) patch.dataPagamento = texto(r.dataPagamento, 10)
   if ('bobinasDevolvidas' in r) patch.bobinasDevolvidas = r.bobinasDevolvidas as number | null
   if ('observacoes' in r) patch.observacoes = texto(r.observacoes, LIMITES.textoLongo)
+  if ('programacao' in r) patch.programacao = umDe(r.programacao, STATUS_PROGRAMACAO_LISTA, atual.programacao)
   // Reaproveita a validação completa sobre o resultado da combinação
   const { valor, erros } = normalizarEvento({ ...atual, ...patch })
   const final: EventoPatch = {}
@@ -293,12 +313,54 @@ export function observacoesComLocalAntigo(local: unknown, observacoes: string) {
   return texto([`Local: ${l}`, observacoes].filter(Boolean).join('\n'), LIMITES.textoLongo)
 }
 
+/**
+ * Até a versão 2.2 o evento tinha um "cabeçalho das fichas" separado do nome. Agora o nome do
+ * evento faz esse papel: quando o cabeçalho antigo diz algo além do nome, ele vai para o início
+ * das observações (para não perder o que foi digitado).
+ */
+export function observacoesComCabecalhoAntigo(cabecalho: unknown, nome: string, observacoes: string) {
+  const linhas = (typeof cabecalho === 'string' ? cabecalho : '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+  if (!linhas.length) return observacoes
+  const igual = (a: string, b: string) => a.localeCompare(b, 'pt-BR', { sensitivity: 'base' }) === 0
+  if (linhas.length === 1 && igual(linhas[0], nome.trim())) return observacoes
+  const linha = `Cabeçalho das fichas: ${linhas.join(' / ')}`
+  if (observacoes.includes(linha)) return observacoes
+  return texto([linha, observacoes].filter(Boolean).join('\n'), LIMITES.textoLongo)
+}
+
+/**
+ * Programação de um evento gravado antes desse controle: concluída nos eventos que já passaram,
+ * terminaram ou foram cancelados; "não iniciada" nos que ainda vão acontecer.
+ */
+export function programacaoPadrao(e: Pick<Evento, 'dias' | 'status'>, hoje = hojeLocalIso()): StatusProgramacao {
+  if (e.status === 'FINALIZADO' || e.status === 'CANCELADO') return 'CONCLUIDA'
+  const p = periodoEvento(e)
+  return p && p.fim < hoje ? 'CONCLUIDA' : 'NAO_INICIADA'
+}
+
+/**
+ * Ajustes de leitura de um evento gravado por versões anteriores (no banco ou num backup):
+ * "local" e "cabeçalho" antigos vão para as observações; programação ausente ganha o padrão.
+ */
+export function atualizarEventoAntigo<T extends Evento>(e: T, bruto: Record<string, unknown>): T {
+  let observacoes = observacoesComLocalAntigo(bruto.local, e.observacoes)
+  // (já aplicado por normalizarEvento nos backups; aqui, para o que está gravado no banco)
+  observacoes = observacoesComCabecalhoAntigo(bruto.cabecalho, e.nome, observacoes)
+  const programacao = STATUS_PROGRAMACAO_LISTA.includes(bruto.programacao as StatusProgramacao)
+    ? (bruto.programacao as StatusProgramacao)
+    : programacaoPadrao(e)
+  return { ...e, observacoes, cabecalho: '', programacao, periodoCorrido: bruto.periodoCorrido === true }
+}
+
 export function migrarEvento(entrada: unknown): Evento {
   const r = obj(entrada)
   const { valor } = normalizarEvento(r)
-  valor.observacoes = observacoesComLocalAntigo(r.local, valor.observacoes)
   const agora = new Date().toISOString()
-  return {
+  const evento: Evento = {
     ...valor,
     id: texto(r.id, 100),
     versao: Math.max(1, inteiro(r.versao, Number.MAX_SAFE_INTEGER, 1)),
@@ -306,6 +368,7 @@ export function migrarEvento(entrada: unknown): Evento {
     criadoEm: texto(r.criadoEm, 40) || agora,
     atualizadoEm: texto(r.atualizadoEm, 40) || agora,
   }
+  return atualizarEventoAntigo(evento, r)
 }
 
 // ---- Máquinas -----------------------------------------------------------------
@@ -374,17 +437,9 @@ export function normalizarOS(entrada: unknown): Resultado<OrdemServicoInput> {
     erros.push('A conclusão não pode ser antes da abertura.')
   }
 
-  // Serviços sem repetição (sem diferenciar maiúsculas), na ordem em que foram marcados
-  const vistos = new Set<string>()
-  const servicos: string[] = []
-  for (const x of Array.isArray(r.servicos) ? r.servicos : []) {
-    const t = texto(x, 60)
-    const chave = t.toLocaleLowerCase('pt-BR')
-    if (!t || vistos.has(chave)) continue
-    vistos.add(chave)
-    servicos.push(t)
-  }
-  if (servicos.length > LIMITES.servicos) erros.push(`Uma O.S. pode ter no máximo ${LIMITES.servicos} serviços.`)
+  // Serviços sem repetição (sem diferenciar maiúsculas e acentos), na ordem em que foram marcados
+  const servicos = listaServicos(r.servicos, LIMITES.servicos + 1)
+  if (servicos.length > LIMITES.servicos) erros.push(`Uma manutenção pode ter no máximo ${LIMITES.servicos} serviços.`)
   const problema = texto(r.problema, LIMITES.textoLongo)
   if (!servicos.length && !problema) erros.push('Marque pelo menos um serviço ou descreva o problema.')
 
@@ -422,6 +477,21 @@ export function migrarOS(entrada: unknown): OrdemServico {
 
 // ---- Configurações -----------------------------------------------------------
 
+/** Lista de serviços sem repetição (sem diferenciar maiúsculas e acentos), na ordem dada. */
+export function listaServicos(v: unknown, max: number): string[] {
+  const vistos = new Set<string>()
+  const lista: string[] = []
+  for (const x of Array.isArray(v) ? v : []) {
+    const t = texto(x, 60).replace(/\s+/g, ' ')
+    const chave = chaveServico(t)
+    if (!t || vistos.has(chave)) continue
+    vistos.add(chave)
+    lista.push(t.charAt(0).toLocaleUpperCase('pt-BR') + t.slice(1))
+    if (lista.length >= max) break
+  }
+  return lista
+}
+
 export function normalizarConfig(entrada: unknown): Resultado<Configuracoes> {
   const r = { ...CONFIG_PADRAO, ...obj(entrada) }
   const erros: string[] = []
@@ -437,8 +507,36 @@ export function normalizarConfig(entrada: unknown): Resultado<Configuracoes> {
       empresaRazaoSocial: texto(r.empresaRazaoSocial),
       empresaCnpj: cnpj ? mascaraCnpj(cnpj) : '',
       empresaCidade: texto(r.empresaCidade),
+      servicosManutencao: listaServicos(r.servicosManutencao, LIMITES.catalogoServicos),
     },
     erros,
+  }
+}
+
+// ---- Reclamações de clientes ----------------------------------------------------
+
+export function normalizarReclamacao(entrada: unknown): Resultado<ReclamacaoInput> {
+  const r = obj(entrada)
+  const erros: string[] = []
+  const maquinaId = texto(r.maquinaId, 100)
+  if (!maquinaId) erros.push('Selecione a máquina.')
+  const descricao = texto(r.descricao, LIMITES.textoLongo)
+  if (!descricao) erros.push('Descreva o que o cliente relatou.')
+  const data = texto(r.data, 10) || hojeLocalIso()
+  if (!dataIsoValida(data)) erros.push('Data da reclamação inválida.')
+  return { valor: { maquinaId, eventoId: texto(r.eventoId, 100), data, descricao }, erros }
+}
+
+export function migrarReclamacao(entrada: unknown): Reclamacao {
+  const r = obj(entrada)
+  const { valor } = normalizarReclamacao(r)
+  const agora = new Date().toISOString()
+  return {
+    ...valor,
+    id: texto(r.id, 100),
+    versao: Math.max(1, inteiro(r.versao, Number.MAX_SAFE_INTEGER, 1)),
+    criadoEm: texto(r.criadoEm, 40) || agora,
+    atualizadoEm: texto(r.atualizadoEm, 40) || agora,
   }
 }
 
@@ -487,9 +585,18 @@ export function validarBackup(dados: unknown): Backup {
   for (const e of eventos) e.maquinasIds = e.maquinasIds.filter((id) => idsMaquinas.has(id))
 
   const ordens = (Array.isArray(b.ordens) ? b.ordens : []).map(migrarOS).filter((o) => o.id)
-  if (new Set(ordens.map((o) => o.id)).size !== ordens.length) throw new Error('Backup inválido: ordens de serviço repetidas.')
+  if (new Set(ordens.map((o) => o.id)).size !== ordens.length) throw new Error('Backup inválido: manutenções repetidas.')
   const semMaquina = ordens.filter((o) => !idsMaquinas.has(o.maquinaId))
-  if (semMaquina.length) throw new Error(`Backup inválido: ${semMaquina.length} ordem(ns) de serviço sem máquina correspondente.`)
+  if (semMaquina.length) throw new Error(`Backup inválido: ${semMaquina.length} manutenção(ões) sem máquina correspondente.`)
+
+  // Reclamações (backup versão 4): sem a máquina não há onde guardar; evento que não veio fica em branco
+  const idsEventos = new Set(eventos.map((e) => e.id))
+  const reclamacoes = (Array.isArray(b.reclamacoes) ? b.reclamacoes : [])
+    .map(migrarReclamacao)
+    .filter((r) => r.id && r.descricao && idsMaquinas.has(r.maquinaId))
+    .map((r) => (r.eventoId && !idsEventos.has(r.eventoId) ? { ...r, eventoId: '' } : r))
+  if (new Set(reclamacoes.map((r) => r.id)).size !== reclamacoes.length)
+    throw new Error('Backup inválido: reclamações repetidas.')
 
   // Garante códigos de evento e números de O.S. únicos (versões antigas podiam repetir após importações)
   const maiorCodigo = numerosUnicos(
@@ -505,12 +612,13 @@ export function validarBackup(dados: unknown): Backup {
 
   return {
     app: 'bc-fichas-control',
-    versao: 3,
+    versao: 4,
     exportadoEm: texto(b.exportadoEm, 40),
     clientes,
     eventos,
     maquinas,
     ordens,
+    reclamacoes,
     config: normalizarConfig(b.config).valor,
     proximoCodigo: Math.max(inteiro(b.proximoCodigo, Number.MAX_SAFE_INTEGER, 1), maiorCodigo + 1),
     proximaOS: Math.max(inteiro(b.proximaOS, Number.MAX_SAFE_INTEGER, 1), maiorOS + 1),

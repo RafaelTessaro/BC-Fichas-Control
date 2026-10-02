@@ -37,6 +37,9 @@ export interface Cliente {
 
 export type StatusEvento = 'EM_ABERTO' | 'PENDENTE' | 'FINALIZADO' | 'CANCELADO'
 
+/** Andamento da programação das máquinas para o evento (acompanhado pela secretária). */
+export type StatusProgramacao = 'NAO_INICIADA' | 'EM_PROGRAMACAO' | 'ENVIADA' | 'CONCLUIDA'
+
 export type FormaPagamento = 'NAO_PAGO' | 'DINHEIRO' | 'BOLETO' | 'CREDITO' | 'DEBITO' | 'PIX'
 
 /** Um dia de utilização das máquinas dentro de um evento. */
@@ -61,11 +64,24 @@ export interface Evento {
   versao: number
   codigo: number
   clienteId: ID
+  /** Nome do evento: também é o que sai no topo das fichas programadas nas máquinas. */
   nome: string
+  /** Não é mais preenchida na tela (vale a cidade do cliente); mantida nos eventos antigos. */
   cidade: string
-  /** Texto programado no topo das fichas impressas pelas máquinas (pode ter várias linhas). */
+  /**
+   * Antigo cabeçalho das fichas (o nome do evento faz esse papel). Ao ler um evento antigo, o
+   * texto vai para as observações e este campo fica vazio.
+   */
   cabecalho: string
   dias: DiaEvento[]
+  /**
+   * As máquinas ficam com o cliente do primeiro ao último dia (ex.: usa só nos fins de semana do
+   * mês, mas não devolve no meio da semana). Para a agenda e a disponibilidade, contam como
+   * ocupadas todos os dias desse período; as diárias continuam só nos dias de uso.
+   */
+  periodoCorrido: boolean
+  /** Andamento da programação das máquinas para este evento. */
+  programacao: StatusProgramacao
   /** Máquinas enviadas para o evento (ids de `Maquina`). */
   maquinasIds: ID[]
   valorDiaria: number
@@ -100,6 +116,8 @@ export interface Configuracoes {
   empresaRazaoSocial: string
   empresaCnpj: string
   empresaCidade: string
+  /** Serviços de manutenção que o usuário cadastrou para marcar nas manutenções (ex.: "Higienização"). */
+  servicosManutencao: string[]
 }
 
 // ---- Máquinas e manutenção ---------------------------------------------------
@@ -129,7 +147,10 @@ export interface Maquina {
 export type StatusOS = 'ABERTA' | 'EM_ANDAMENTO' | 'CONCLUIDA' | 'CANCELADA'
 export type TipoOS = 'PREVENTIVA' | 'CORRETIVA'
 
-/** Ordem de serviço interna de manutenção de uma máquina. */
+/**
+ * Registro interno de uma manutenção feita (ou a fazer) numa máquina. No código continua com o
+ * nome antigo, "ordem de serviço"; na tela aparece só como "manutenção".
+ */
 export interface OrdemServico {
   id: ID
   versao: number
@@ -146,7 +167,7 @@ export interface OrdemServico {
   servicos: string[]
   /** Problema relatado ou motivo da manutenção. */
   problema: string
-  /** O que foi feito. */
+  /** Campos da versão anterior (não aparecem mais na tela; preservados nos registros antigos). */
   solucao: string
   pecas: string
   responsavel: string
@@ -155,17 +176,46 @@ export interface OrdemServico {
   atualizadoEm: string
 }
 
+/** Reclamação de um cliente sobre uma máquina (ex.: "travando"), para o histórico da máquina. */
+export interface Reclamacao {
+  id: ID
+  versao: number
+  maquinaId: ID
+  /** Evento em que a máquina estava ('' quando não é de um evento). */
+  eventoId: ID
+  /** Data da reclamação `yyyy-MM-dd`. */
+  data: string
+  descricao: string
+  criadoEm: string
+  atualizadoEm: string
+}
+
+/** Arquivo anexado a um evento (print da conversa, logo, cardápio…), guardado no servidor. */
+export interface Anexo {
+  id: ID
+  eventoId: ID
+  /** Nome original do arquivo. */
+  nome: string
+  /** Tipo do conteúdo (ex.: "image/png", "application/pdf"). */
+  tipo: string
+  /** Tamanho em bytes. */
+  tamanho: number
+  criadoEm: string
+}
+
 /** Campos editáveis de um cliente (o servidor controla id, versão e datas). */
 export type ClienteInput = Omit<Cliente, 'id' | 'versao' | 'criadoEm' | 'atualizadoEm'>
 /** Campos editáveis de uma máquina. */
 export type MaquinaInput = Omit<Maquina, 'id' | 'versao' | 'criadoEm' | 'atualizadoEm'>
 /** Campos editáveis de uma ordem de serviço (o servidor controla id, versão, número e datas). */
 export type OrdemServicoInput = Omit<OrdemServico, 'id' | 'versao' | 'numero' | 'criadoEm' | 'atualizadoEm'>
+/** Campos editáveis de uma reclamação. */
+export type ReclamacaoInput = Omit<Reclamacao, 'id' | 'versao' | 'criadoEm' | 'atualizadoEm'>
 /** Campos editáveis de um evento (o servidor controla id, versão, código e datas). */
 export type EventoInput = Omit<Evento, 'id' | 'versao' | 'codigo' | 'criadoEm' | 'atualizadoEm' | 'google'>
 /** Alterações rápidas permitidas sem reenviar o evento inteiro. */
 export type EventoPatch = Partial<
-  Pick<EventoInput, 'status' | 'formaPagamento' | 'dataPagamento' | 'bobinasDevolvidas' | 'observacoes'>
+  Pick<EventoInput, 'status' | 'formaPagamento' | 'dataPagamento' | 'bobinasDevolvidas' | 'observacoes' | 'programacao'>
 >
 
 export interface DadosCompletos {
@@ -173,6 +223,9 @@ export interface DadosCompletos {
   eventos: Evento[]
   maquinas: Maquina[]
   ordens: OrdemServico[]
+  reclamacoes: Reclamacao[]
+  /** Arquivos anexados aos eventos (só os dados; o conteúdo é baixado sob demanda). */
+  anexos: Anexo[]
   config: Configuracoes
   /** Contador global de alterações; aumenta a cada gravação no servidor. */
   revisao: number
@@ -186,6 +239,8 @@ export interface Backup {
   eventos: Evento[]
   maquinas: Maquina[]
   ordens: OrdemServico[]
+  /** A partir da versão 4 do backup. Os arquivos anexados não vão no backup (ficam em dados/anexos). */
+  reclamacoes: Reclamacao[]
   config: Configuracoes
   proximoCodigo: number
   proximaOS: number
@@ -201,5 +256,9 @@ export type MensagemTempoReal =
   | { revisao: number; tipo: 'maquina'; acao: 'excluido'; id: ID }
   | { revisao: number; tipo: 'os'; acao: 'salvo'; dado: OrdemServico }
   | { revisao: number; tipo: 'os'; acao: 'excluido'; id: ID }
+  | { revisao: number; tipo: 'reclamacao'; acao: 'salvo'; dado: Reclamacao }
+  | { revisao: number; tipo: 'reclamacao'; acao: 'excluido'; id: ID }
+  | { revisao: number; tipo: 'anexo'; acao: 'salvo'; dado: Anexo }
+  | { revisao: number; tipo: 'anexo'; acao: 'excluido'; id: ID }
   | { revisao: number; tipo: 'config'; acao: 'salvo'; dado: Configuracoes }
   | { revisao: number; tipo: 'tudo'; acao: 'recarregar' }

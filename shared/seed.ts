@@ -2,8 +2,21 @@ import { addDays, format, subMonths } from 'date-fns'
 import { CLIENTE_VAZIO, MAQUINA_VAZIA } from './dominio.ts'
 import { completarCnpj, completarCpf, mascaraCnpj, mascaraCpf } from './documentos.ts'
 import { novoId } from './id.ts'
-import { identificacaoPadrao } from './maquinas.ts'
-import type { Cliente, Evento, FormaPagamento, Maquina, OrdemServico, StatusEvento, TipoMaquina } from './tipos.ts'
+import { datasOcupadas, identificacaoPadrao } from './maquinas.ts'
+import type {
+  Cliente,
+  Evento,
+  FormaPagamento,
+  Maquina,
+  OrdemServico,
+  Reclamacao,
+  StatusEvento,
+  StatusProgramacao,
+  TipoMaquina,
+} from './tipos.ts'
+
+/** Serviços de manutenção do exemplo (entram na lista de serviços se ela estiver vazia). */
+export const SERVICOS_EXEMPLO = ['Limpeza completa', 'Higienização', 'Revisão', 'Troca de cabeçote', 'Teste de impressão']
 
 /** Gerador pseudoaleatório determinístico para que o exemplo seja sempre igual. */
 function rng(semente: number) {
@@ -106,6 +119,9 @@ export function gerarDadosExemplo(hoje: Date) {
           : 'PENDENTE'
     const cliente = pick(clientes)
     const nome = pick(EVENTOS)
+    const programacao: StatusProgramacao = futuro
+      ? pick(['NAO_INICIADA', 'EM_PROGRAMACAO', 'ENVIADA', 'CONCLUIDA'] as const)
+      : 'CONCLUIDA'
 
     eventos.push({
       id: novoId(),
@@ -113,9 +129,11 @@ export function gerarDadosExemplo(hoje: Date) {
       codigo: codigo++,
       clienteId: cliente.id,
       nome,
-      cidade: cliente.cidade,
-      cabecalho: `${nome.toUpperCase()}\n${cliente.nome.toUpperCase()}`,
+      cidade: '',
+      cabecalho: '',
       dias,
+      periodoCorrido: false,
+      programacao,
       maquinasIds: [],
       valorDiaria: 80,
       valorBobina: 6,
@@ -140,9 +158,11 @@ export function gerarDadosExemplo(hoje: Date) {
     codigo: codigo++,
     clienteId: clienteHoje.id,
     nome: 'Festa da Primavera',
-    cidade: clienteHoje.cidade,
-    cabecalho: `FESTA DA PRIMAVERA\n${clienteHoje.nome.toUpperCase()}`,
+    cidade: '',
+    cabecalho: '',
     dias: [-1, 0, 1].map((d) => ({ id: novoId(), data: format(addDays(hoje, d), 'yyyy-MM-dd'), maquinas: 4 })),
+    periodoCorrido: false,
+    programacao: 'CONCLUIDA',
     maquinasIds: [],
     valorDiaria: 80,
     valorBobina: 6,
@@ -158,6 +178,38 @@ export function gerarDadosExemplo(hoje: Date) {
     atualizadoEm: ts,
   })
 
+  // Um cliente que usa só nos fins de semana do mês, mas fica com as máquinas o período todo
+  const primeiroSabado = addDays(hoje, ((6 - hoje.getDay() + 7) % 7) + 7)
+  eventos.push({
+    id: novoId(),
+    versao: 1,
+    codigo: codigo++,
+    clienteId: clientes[3].id,
+    nome: 'Feira de Artesanato',
+    cidade: '',
+    cabecalho: '',
+    dias: [0, 1, 7, 8, 14, 15, 21, 22].map((d) => ({
+      id: novoId(),
+      data: format(addDays(primeiroSabado, d), 'yyyy-MM-dd'),
+      maquinas: 3,
+    })),
+    periodoCorrido: true,
+    programacao: 'EM_PROGRAMACAO',
+    maquinasIds: [],
+    valorDiaria: 70,
+    valorBobina: 6,
+    bobinasConsignadas: 200,
+    bobinasDevolvidas: null,
+    desconto: 0,
+    formaPagamento: 'NAO_PAGO',
+    dataPagamento: '',
+    status: 'EM_ABERTO',
+    rodape: 'OBRIGADO PELA VISITA!',
+    observacoes: 'Usa nos fins de semana do mês; as máquinas ficam no salão da associação.',
+    criadoEm: ts,
+    atualizadoEm: ts,
+  })
+
   // Máquinas: 12 pequenas e 6 grandes, uma grande em manutenção e uma pequena antiga desativada
   const maquinas: Maquina[] = []
   const criar = (tipo: TipoMaquina, n: number, extra: Partial<Maquina> = {}) =>
@@ -167,27 +219,26 @@ export function gerarDadosExemplo(hoje: Date) {
       versao: 1,
       tipo,
       identificacao: identificacaoPadrao(tipo, n),
-      modelo: tipo === 'P' ? 'Compacta 2 vias' : 'Totem com tela 15"',
-      numeroSerie: `${tipo}${2024}${String(n * 37).padStart(4, '0')}`,
-      dataAquisicao: format(subMonths(hoje, 30 - n), 'yyyy-MM-dd'),
       criadoEm: ts,
       atualizadoEm: ts,
       ...extra,
     })
   for (let n = 1; n <= 12; n++) criar('P', n)
   for (let n = 1; n <= 6; n++) criar('G', n, n === 4 ? { status: 'MANUTENCAO' } : {})
-  criar('P', 13, { status: 'DESATIVADA', observacoes: 'Placa principal queimada; sem conserto.' })
+  criar('P', 13, { status: 'DESATIVADA' })
 
   // Máquinas enviadas: em cada evento, as livres naquelas datas (sem repetir entre eventos ao mesmo tempo)
   const emUso = new Map<string, Set<string>>()
   const operantes = maquinas.filter((m) => m.status === 'DISPONIVEL')
   for (const e of eventos) {
     const precisa = Math.max(...e.dias.map((d) => d.maquinas))
-    const ocupadas = new Set(e.dias.flatMap((d) => [...(emUso.get(d.data) ?? [])]))
+    // Dias ocupados: com período corrido, também os do meio
+    const datas = datasOcupadas(e)
+    const ocupadas = new Set(datas.flatMap((d) => [...(emUso.get(d) ?? [])]))
     const livres = operantes.filter((m) => !ocupadas.has(m.id))
     const inicio = Math.floor(r() * livres.length)
     e.maquinasIds = Array.from({ length: Math.min(precisa, livres.length) }, (_, i) => livres[(inicio + i) % livres.length].id)
-    for (const d of e.dias) emUso.set(d.data, new Set([...(emUso.get(d.data) ?? []), ...e.maquinasIds]))
+    for (const d of datas) emUso.set(d, new Set([...(emUso.get(d) ?? []), ...e.maquinasIds]))
   }
 
   // Histórico de manutenção: limpezas periódicas e alguns consertos
@@ -215,8 +266,7 @@ export function gerarDadosExemplo(hoje: Date) {
       novaOS({
         maquinaId: m.id,
         abertura: format(subMonths(hoje, mes), 'yyyy-MM-dd'),
-        servicos: ['Limpeza completa', 'Higienização', 'Teste de funcionamento'],
-        solucao: 'Limpeza interna e externa, higienização da tela e teste de impressão.',
+        servicos: ['Limpeza completa', 'Higienização', 'Teste de impressão'],
       })
     }
   }
@@ -228,11 +278,8 @@ export function gerarDadosExemplo(hoje: Date) {
       tipo: 'CORRETIVA',
       abertura,
       conclusao: format(addDays(subMonths(hoje, 9 - i * 2), 2), 'yyyy-MM-dd'),
-      servicos: i % 2 ? ['Reparo elétrico'] : ['Reparo da impressora', 'Troca de peças'],
+      servicos: i % 2 ? ['Revisão'] : ['Troca de cabeçote', 'Teste de impressão'],
       problema: PROBLEMAS[i],
-      solucao: i % 2 ? 'Conector de alimentação refeito e bateria testada.' : 'Rolete da impressora trocado e lâmina ajustada.',
-      pecas: i % 2 ? '' : 'Rolete de tração',
-      custo: i % 2 ? 60 : 145,
     })
   }
   const emManutencao = maquinas.find((m) => m.status === 'MANUTENCAO')!
@@ -242,9 +289,29 @@ export function gerarDadosExemplo(hoje: Date) {
     status: 'EM_ANDAMENTO',
     abertura: format(addDays(hoje, -2), 'yyyy-MM-dd'),
     conclusao: '',
-    servicos: ['Reparo da impressora'],
+    servicos: ['Revisão'],
     problema: PROBLEMAS[4],
   })
 
-  return { clientes, eventos, maquinas, ordens, proximoCodigo: codigo, proximaOS: ordens.length + 1 }
+  // Reclamações de clientes: nas duas primeiras locações já terminadas que tinham máquinas
+  const reclamacoes: Reclamacao[] = []
+  const hojeIso = format(hoje, 'yyyy-MM-dd')
+  const terminados = eventos.filter(
+    (e) => e.status === 'FINALIZADO' && e.maquinasIds.length && e.dias[e.dias.length - 1].data < hojeIso,
+  )
+  const relatos = ['Cliente disse que a máquina travou duas vezes no meio da festa.', 'Ficha saindo com a impressão fraca.']
+  terminados.slice(-2).forEach((e, i) => {
+    reclamacoes.push({
+      id: novoId(),
+      versao: 1,
+      maquinaId: e.maquinasIds[0],
+      eventoId: e.id,
+      data: e.dias[e.dias.length - 1].data,
+      descricao: relatos[i],
+      criadoEm: ts,
+      atualizadoEm: ts,
+    })
+  })
+
+  return { clientes, eventos, maquinas, ordens, reclamacoes, proximoCodigo: codigo, proximaOS: ordens.length + 1 }
 }

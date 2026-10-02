@@ -285,14 +285,14 @@ describe('API de dados', () => {
       payload: doNavegador('A', '12403843000118', 1),
     })
 
-    expect(r1.json()).toEqual({ clientes: 1, eventos: 2, maquinas: 0, ordens: 0, ignorados: 1 })
+    expect(r1.json()).toEqual({ clientes: 1, eventos: 2, maquinas: 0, ordens: 0, reclamacoes: 0, ignorados: 1 })
     const r2 = await app.inject({
       method: 'POST',
       url: '/api/backup/mesclar',
       headers: H,
       payload: doNavegador('B', '12403843000118', 1),
     })
-    expect(r2.json()).toEqual({ clientes: 1, eventos: 2, maquinas: 0, ordens: 0, ignorados: 1 })
+    expect(r2.json()).toEqual({ clientes: 1, eventos: 2, maquinas: 0, ordens: 0, reclamacoes: 0, ignorados: 1 })
     // repetir o envio do mesmo computador não duplica
     const r3 = await app.inject({
       method: 'POST',
@@ -300,7 +300,7 @@ describe('API de dados', () => {
       headers: H,
       payload: doNavegador('A', '12403843000118', 1),
     })
-    expect(r3.json()).toEqual({ clientes: 0, eventos: 0, maquinas: 0, ordens: 0, ignorados: 4 })
+    expect(r3.json()).toEqual({ clientes: 0, eventos: 0, maquinas: 0, ordens: 0, reclamacoes: 0, ignorados: 4 })
 
     const dados = (await app.inject({ url: '/api/dados' })).json()
     expect(dados.clientes).toHaveLength(3)

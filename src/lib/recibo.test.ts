@@ -20,6 +20,8 @@ const evento = (extra: Partial<Evento> = {}): Evento => ({
   nome: 'Baile da Cidade',
   cidade: 'Rio Claro',
   cabecalho: '',
+  periodoCorrido: false,
+  programacao: 'NAO_INICIADA',
   dias: [
     { id: 'd1', data: '2026-10-11', maquinas: 3 },
     { id: 'd2', data: '2026-10-12', maquinas: 3 },

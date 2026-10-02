@@ -1,4 +1,5 @@
 import type { Evento, FormaPagamento, StatusEvento } from './tipos.ts'
+import { diasOcupados } from './maquinas.ts'
 
 /**
  * Regras de cálculo herdadas da planilha "Controle Interno de Locação":
@@ -101,15 +102,16 @@ export const CONFERENCIA: Record<StatusConferencia, { label: string; tone: Tone 
 
 export type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'brand'
 
-/** Soma de máquinas reservadas por data, considerando eventos não cancelados. */
+/**
+ * Soma de máquinas fora da empresa por data, considerando eventos não cancelados. Usa os dias
+ * ocupados de cada evento: com período corrido, também os dias em que as máquinas só ficam com o
+ * cliente (ver `diasOcupados`).
+ */
 export function ocupacaoPorDia(eventos: Evento[], ignorarId?: string): Map<string, number> {
   const mapa = new Map<string, number>()
   for (const ev of eventos) {
     if (ev.status === 'CANCELADO' || ev.id === ignorarId) continue
-    for (const d of ev.dias) {
-      if (!d.data) continue
-      mapa.set(d.data, (mapa.get(d.data) ?? 0) + (Number(d.maquinas) || 0))
-    }
+    for (const d of diasOcupados(ev)) mapa.set(d.data, (mapa.get(d.data) ?? 0) + d.maquinas)
   }
   return mapa
 }

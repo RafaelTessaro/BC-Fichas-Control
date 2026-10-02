@@ -9,6 +9,8 @@ import { abrirBanco } from './db.ts'
 import { ErroApi } from './erros.ts'
 import { criarModuloGoogle } from './google/modulo.ts'
 import { Repositorio } from './repositorio.ts'
+import { criarModuloEmail, type CriarTransporte } from './email.ts'
+import { rotasAnexos } from './rotas/anexos.ts'
 import { rotasConsultas } from './rotas/consultas.ts'
 import { rotasDados } from './rotas/dados.ts'
 import { TempoReal } from './tempoReal.ts'
@@ -27,6 +29,8 @@ export interface OpcoesApp {
   /** Pasta com a interface compilada (`dist`). `null` desativa. */
   pastaEstatica?: string | null
   logger?: boolean
+  /** Transporte de e-mail (os testes trocam o SMTP por um que só guarda as mensagens). */
+  transporteEmail?: CriarTransporte
   /** Ativa backups diários e o sincronizador do Google (desligado em testes). */
   tarefasEmSegundoPlano?: boolean
 }
@@ -95,6 +99,8 @@ export async function criarApp(opcoes: OpcoesApp) {
   }))
 
   await rotasDados(app, ctx)
+  await rotasAnexos(app, ctx)
+  await criarModuloEmail(ctx, opcoes.transporteEmail).rotas(app)
   await rotasConsultas(app, ctx)
   await google.rotas(app)
 

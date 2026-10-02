@@ -1,7 +1,9 @@
 import {
+  atualizarEventoAntigo,
   CONFIG_PADRAO,
   hojeLocalIso,
   LIMITES,
+  listaServicos,
   MAQUINA_VAZIA,
   normalizarCliente,
   normalizarConfig,
@@ -9,20 +11,22 @@ import {
   normalizarMaquina,
   normalizarOS,
   normalizarPatch,
-  observacoesComLocalAntigo,
+  normalizarReclamacao,
   validarBackup,
 } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
 import {
   chaveIdentificacao,
   conflitosMaquinas,
+  datasOcupadas,
   ordenarMaquinas,
   planoAjuste,
   STATUS_MAQUINA_LISTA,
   TIPOS_MAQUINA,
 } from '#shared/maquinas.ts'
-import { gerarDadosExemplo } from '#shared/seed.ts'
+import { gerarDadosExemplo, SERVICOS_EXEMPLO } from '#shared/seed.ts'
 import type {
+  Anexo,
   Backup,
   Cliente,
   Configuracoes,
@@ -31,6 +35,7 @@ import type {
   Maquina,
   MensagemTempoReal,
   OrdemServico,
+  Reclamacao,
   StatusMaquina,
   TipoMaquina,
 } from '#shared/tipos.ts'
@@ -41,6 +46,11 @@ import type { ExtensaoRepositorio } from './extensoes.ts'
 type Linha = { id: string; dados: string; versao: number; criado_em: string; atualizado_em: string }
 type LinhaEvento = Linha & { codigo: number; cliente_id: string }
 type LinhaOS = Linha & { numero: number; maquina_id: string }
+type LinhaReclamacao = Linha & { maquina_id: string; evento_id: string }
+type LinhaAnexo = { id: string; evento_id: string; nome: string; tipo: string; tamanho: number; criado_em: string }
+
+/** Arquivos por evento (limite de segurança). */
+export const LIMITE_ANEXOS_POR_EVENTO = 100
 
 /** Na O.S., pedido opcional para mudar a situação da máquina junto (ex.: "Em manutenção" ao abrir). */
 function statusMaquinaPedido(corpo: unknown): StatusMaquina | undefined {
@@ -134,12 +144,40 @@ export class Repositorio {
     return l && this.paraOS(l)
   }
 
+  listarReclamacoes(): Reclamacao[] {
+    const linhas = this.db.prepare('SELECT * FROM reclamacoes').all() as LinhaReclamacao[]
+    return linhas
+      .map((l) => this.paraReclamacao(l))
+      .sort((a, b) => b.data.localeCompare(a.data) || b.criadoEm.localeCompare(a.criadoEm))
+  }
+
+  obterReclamacao(id: string): Reclamacao | undefined {
+    const l = this.db.prepare('SELECT * FROM reclamacoes WHERE id = ?').get(id) as LinhaReclamacao | undefined
+    return l && this.paraReclamacao(l)
+  }
+
+  listarAnexos(eventoId?: string): Anexo[] {
+    const linhas = (
+      eventoId
+        ? this.db.prepare('SELECT * FROM anexos WHERE evento_id = ? ORDER BY criado_em').all(eventoId)
+        : this.db.prepare('SELECT * FROM anexos ORDER BY criado_em').all()
+    ) as LinhaAnexo[]
+    return linhas.map((l) => this.paraAnexo(l))
+  }
+
+  obterAnexo(id: string): Anexo | undefined {
+    const l = this.db.prepare('SELECT * FROM anexos WHERE id = ?').get(id) as LinhaAnexo | undefined
+    return l && this.paraAnexo(l)
+  }
+
   dadosCompletos(): DadosCompletos {
     return {
       clientes: this.listarClientes(),
       eventos: this.listarEventos(),
       maquinas: this.listarMaquinas(),
       ordens: this.listarOrdens(),
+      reclamacoes: this.listarReclamacoes(),
+      anexos: this.listarAnexos(),
       config: this.obterConfig(),
       revisao: this.revisao(),
     }
@@ -262,6 +300,7 @@ export class Repositorio {
       formaPagamento: 'NAO_PAGO',
       dataPagamento: '',
       status: 'EM_ABERTO',
+      programacao: 'NAO_INICIADA',
     })
   }
 
@@ -269,6 +308,9 @@ export class Repositorio {
     const { evento, rev } = transacao(this.db, () => {
       const evento = this.obterEventoBruto(id)
       if (!evento) throw naoEncontrado('Evento')
+      // Os arquivos anexados saem junto (os do disco são apagados pela extensão de anexos);
+      // as reclamações ficam no histórico das máquinas
+      this.db.prepare('DELETE FROM anexos WHERE evento_id = ?').run(id)
       this.db.prepare('DELETE FROM eventos WHERE id = ?').run(id)
       return { evento, rev: this.incrementarRevisao() }
     })
@@ -279,7 +321,22 @@ export class Repositorio {
   // ---- Configurações ---------------------------------------------------------
 
   salvarConfig(entrada: unknown): Configuracoes {
-    const config = validar(normalizarConfig(entrada))
+    // A lista de serviços de manutenção tem gravação própria (salvarServicos): aqui fica como está
+    const config = { ...validar(normalizarConfig(entrada)), servicosManutencao: this.obterConfig().servicosManutencao }
+    return this.gravarConfig(config)
+  }
+
+  /** Grava só a lista de serviços de manutenção (cadastrados na tela de manutenção). */
+  salvarServicos(entrada: unknown): Configuracoes {
+    const lista = (entrada as { servicos?: unknown } | null)?.servicos
+    if (!Array.isArray(lista)) throw new ErroApi(400, 'Lista de serviços inválida.')
+    if (lista.length > LIMITES.catalogoServicos) {
+      throw new ErroApi(400, `Cadastre no máximo ${LIMITES.catalogoServicos} serviços.`)
+    }
+    return this.gravarConfig({ ...this.obterConfig(), servicosManutencao: listaServicos(lista, LIMITES.catalogoServicos) })
+  }
+
+  private gravarConfig(config: Configuracoes): Configuracoes {
     const rev = transacao(this.db, () => {
       this.db
         .prepare("INSERT INTO config (chave, valor) VALUES ('geral', ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor")
@@ -429,17 +486,98 @@ export class Repositorio {
     this.publicar({ revisao: rev, tipo: 'os', acao: 'excluido', id })
   }
 
+  // ---- Reclamações de clientes -----------------------------------------------
+
+  criarReclamacao(entrada: unknown): Reclamacao {
+    const dados = validar(normalizarReclamacao(entrada))
+    const { reclamacao, rev } = transacao(this.db, () => {
+      this.exigirMaquina(dados.maquinaId)
+      if (dados.eventoId && !this.obterEventoBruto(dados.eventoId))
+        throw new ErroApi(400, 'O evento selecionado não existe mais.')
+      const ts = agora()
+      const reclamacao: Reclamacao = { ...dados, id: novoId(), versao: 1, criadoEm: ts, atualizadoEm: ts }
+      this.gravarReclamacao(reclamacao, true)
+      return { reclamacao, rev: this.incrementarRevisao() }
+    })
+    this.publicar({ revisao: rev, tipo: 'reclamacao', acao: 'salvo', dado: reclamacao })
+    return reclamacao
+  }
+
+  atualizarReclamacao(id: string, entrada: unknown, versaoEsperada?: number): Reclamacao {
+    const dados = validar(normalizarReclamacao(entrada))
+    const { reclamacao, rev } = transacao(this.db, () => {
+      const atual = this.obterReclamacao(id)
+      if (!atual) throw naoEncontrado('Reclamação')
+      this.verificarVersao(atual, versaoEsperada, 'reclamacao')
+      this.exigirMaquina(dados.maquinaId)
+      // Evento que foi excluído depois continua aceito na edição (é o que já estava gravado)
+      if (dados.eventoId && dados.eventoId !== atual.eventoId && !this.obterEventoBruto(dados.eventoId)) {
+        throw new ErroApi(400, 'O evento selecionado não existe mais.')
+      }
+      const reclamacao: Reclamacao = { ...atual, ...dados, versao: atual.versao + 1, atualizadoEm: agora() }
+      this.gravarReclamacao(reclamacao, false)
+      return { reclamacao, rev: this.incrementarRevisao() }
+    })
+    this.publicar({ revisao: rev, tipo: 'reclamacao', acao: 'salvo', dado: reclamacao })
+    return reclamacao
+  }
+
+  excluirReclamacao(id: string) {
+    const rev = transacao(this.db, () => {
+      if (!this.obterReclamacao(id)) throw naoEncontrado('Reclamação')
+      this.db.prepare('DELETE FROM reclamacoes WHERE id = ?').run(id)
+      return this.incrementarRevisao()
+    })
+    this.publicar({ revisao: rev, tipo: 'reclamacao', acao: 'excluido', id })
+  }
+
+  // ---- Arquivos anexados aos eventos (o conteúdo fica no disco, ver rotas/anexos.ts) ----
+
+  /** Registra um arquivo já gravado no disco. `gravarArquivo` roda dentro da transação. */
+  registrarAnexo(dados: Omit<Anexo, 'id' | 'criadoEm'>, gravarArquivo: (id: string) => void): Anexo {
+    const { anexo, rev } = transacao(this.db, () => {
+      if (!this.obterEventoBruto(dados.eventoId)) throw naoEncontrado('Evento')
+      const { qtd } = this.db.prepare('SELECT COUNT(*) AS qtd FROM anexos WHERE evento_id = ?').get(dados.eventoId) as {
+        qtd: number
+      }
+      if (qtd >= LIMITE_ANEXOS_POR_EVENTO) {
+        throw new ErroApi(409, `Este evento já tem ${LIMITE_ANEXOS_POR_EVENTO} arquivos. Apague algum antes de anexar outro.`)
+      }
+      const anexo: Anexo = { ...dados, id: novoId(), criadoEm: agora() }
+      gravarArquivo(anexo.id)
+      this.db
+        .prepare('INSERT INTO anexos (id, evento_id, nome, tipo, tamanho, criado_em) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(anexo.id, anexo.eventoId, anexo.nome, anexo.tipo, anexo.tamanho, anexo.criadoEm)
+      return { anexo, rev: this.incrementarRevisao() }
+    })
+    this.publicar({ revisao: rev, tipo: 'anexo', acao: 'salvo', dado: anexo })
+    return anexo
+  }
+
+  /** Apaga o registro do arquivo e devolve o que foi apagado (para a rota apagar o conteúdo). */
+  excluirAnexo(id: string): Anexo {
+    const { anexo, rev } = transacao(this.db, () => {
+      const anexo = this.obterAnexo(id)
+      if (!anexo) throw naoEncontrado('Arquivo')
+      this.db.prepare('DELETE FROM anexos WHERE id = ?').run(id)
+      return { anexo, rev: this.incrementarRevisao() }
+    })
+    this.publicar({ revisao: rev, tipo: 'anexo', acao: 'excluido', id })
+    return anexo
+  }
+
   // ---- Backup, exemplo e limpeza ---------------------------------------------
 
   exportar(): Backup {
     return {
       app: 'bc-fichas-control',
-      versao: 3,
+      versao: 4,
       exportadoEm: agora(),
       clientes: this.listarClientes(),
       eventos: this.listarEventosBrutos(),
       maquinas: this.listarMaquinas(),
       ordens: this.listarOrdens(),
+      reclamacoes: this.listarReclamacoes(),
       config: this.obterConfig(),
       proximoCodigo: Number(lerMeta(this.db, 'proximo_codigo') ?? 1),
       proximaOS: Number(lerMeta(this.db, 'proxima_os') ?? 1),
@@ -474,7 +612,7 @@ export class Repositorio {
     } catch (e) {
       throw new ErroApi(400, (e as Error).message)
     }
-    const resultado = { clientes: 0, eventos: 0, maquinas: 0, ordens: 0, ignorados: 0 }
+    const resultado = { clientes: 0, eventos: 0, maquinas: 0, ordens: 0, reclamacoes: 0, ignorados: 0 }
     const novosEventos: Evento[] = []
     const rev = transacao(this.db, () => {
       const existentes = this.listarClientes()
@@ -552,6 +690,18 @@ export class Repositorio {
       }
       const maior = Math.max(0, ...codigos)
       if (Number(lerMeta(this.db, 'proximo_codigo') ?? 1) <= maior) gravarMeta(this.db, 'proximo_codigo', maior + 1)
+
+      const idsReclamacoes = new Set(this.listarReclamacoes().map((r) => r.id))
+      const eventosAgora = new Set(this.listarEventosBrutos().map((e) => e.id))
+      for (const r of backup.reclamacoes) {
+        if (idsReclamacoes.has(r.id)) {
+          resultado.ignorados++
+          continue
+        }
+        const eventoId = r.eventoId && eventosAgora.has(r.eventoId) ? r.eventoId : ''
+        this.gravarReclamacao({ ...r, maquinaId: mapaMaquina.get(r.maquinaId) ?? r.maquinaId, eventoId }, true)
+        resultado.reclamacoes++
+      }
       return this.incrementarRevisao()
     })
     this.publicar({ revisao: rev, tipo: 'tudo', acao: 'recarregar' })
@@ -564,7 +714,10 @@ export class Repositorio {
       .prepare('SELECT (SELECT COUNT(*) FROM clientes) + (SELECT COUNT(*) FROM eventos) + (SELECT COUNT(*) FROM maquinas) AS qtd')
       .get() as { qtd: number }
     if (qtd > 0) throw new ErroApi(409, 'Os dados de exemplo só podem ser carregados com o sistema vazio.')
-    this.substituirTudo({ ...gerarDadosExemplo(new Date()), config: this.obterConfig() })
+    const config = this.obterConfig()
+    // A lista de serviços vazia ganha os serviços usados no exemplo
+    if (!config.servicosManutencao.length) config.servicosManutencao = [...SERVICOS_EXEMPLO]
+    this.substituirTudo({ ...gerarDadosExemplo(new Date()), config })
   }
 
   limparTudo() {
@@ -573,6 +726,7 @@ export class Repositorio {
       eventos: [],
       maquinas: [],
       ordens: [],
+      reclamacoes: [],
       config: this.obterConfig(),
       proximoCodigo: 1,
       proximaOS: 1,
@@ -582,14 +736,22 @@ export class Repositorio {
   // ---- Internos --------------------------------------------------------------
 
   private substituirTudo(dados: Omit<Backup, 'app' | 'versao' | 'exportadoEm'>) {
-    const { clientes, eventos, maquinas, ordens, config } = dados
+    const { clientes, eventos, maquinas, ordens, reclamacoes, config } = dados
     const anteriores = this.listarEventosBrutos()
     const rev = transacao(this.db, () => {
-      this.db.exec('DELETE FROM ordens_servico; DELETE FROM eventos; DELETE FROM maquinas; DELETE FROM clientes;')
+      this.db.exec(
+        'DELETE FROM reclamacoes; DELETE FROM ordens_servico; DELETE FROM eventos; DELETE FROM maquinas; DELETE FROM clientes;',
+      )
       for (const c of clientes) this.gravarCliente(c, true)
       for (const m of maquinas) this.gravarMaquina(m, true)
       for (const o of ordens) this.gravarOS(o, true)
       for (const e of eventos) this.gravarEvento(e, true)
+      for (const r of reclamacoes) this.gravarReclamacao(r, true)
+      // Arquivos de eventos que deixaram de existir saem (o conteúdo é apagado pela extensão de anexos)
+      const ficam = new Set(eventos.map((e) => e.id))
+      for (const a of this.listarAnexos()) {
+        if (!ficam.has(a.eventoId)) this.db.prepare('DELETE FROM anexos WHERE id = ?').run(a.id)
+      }
       this.db
         .prepare("INSERT INTO config (chave, valor) VALUES ('geral', ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor")
         .run(JSON.stringify(config))
@@ -634,10 +796,16 @@ export class Repositorio {
   private verificarVersao(
     atual: { versao: number },
     esperada: number | undefined,
-    tipo: 'cliente' | 'evento' | 'maquina' | 'os',
+    tipo: 'cliente' | 'evento' | 'maquina' | 'os' | 'reclamacao',
   ) {
     if (esperada !== undefined && esperada !== atual.versao) {
-      const qual = { cliente: 'Este cliente', evento: 'Este evento', maquina: 'Esta máquina', os: 'Esta O.S.' }[tipo]
+      const qual = {
+        cliente: 'Este cliente',
+        evento: 'Este evento',
+        maquina: 'Esta máquina',
+        os: 'Esta manutenção',
+        reclamacao: 'Esta reclamação',
+      }[tipo]
       const genero = tipo === 'cliente' || tipo === 'evento' ? 'alterado' : 'alterada'
       throw new ErroApi(409, `${qual} foi ${genero} por outra pessoa enquanto você editava.`, {
         atual: tipo === 'evento' ? this.decorar(atual as Evento) : atual,
@@ -656,14 +824,16 @@ export class Repositorio {
     }
   }
 
-  /** "2 O.S. e 3 eventos", ou vazio se a máquina nunca foi usada nem passou por manutenção. */
+  /** "2 manutenções e 3 eventos", ou vazio se a máquina nunca foi usada nem passou por manutenção. */
   private historicoMaquina(id: string) {
     const { os } = this.db.prepare('SELECT COUNT(*) AS os FROM ordens_servico WHERE maquina_id = ?').get(id) as { os: number }
+    const { rec } = this.db.prepare('SELECT COUNT(*) AS rec FROM reclamacoes WHERE maquina_id = ?').get(id) as { rec: number }
     const eventos = this.listarEventosBrutos().filter((e) => e.maquinasIds.includes(id)).length
     const partes = []
-    if (os) partes.push(`${os} O.S.`)
+    if (os) partes.push(`${os} ${os > 1 ? 'manutenções' : 'manutenção'}`)
+    if (rec) partes.push(`${rec} ${rec > 1 ? 'reclamações' : 'reclamação'}`)
     if (eventos) partes.push(`${eventos} evento${eventos > 1 ? 's' : ''}`)
-    return partes.join(' e ')
+    return partes.length > 1 ? `${partes.slice(0, -1).join(', ')} e ${partes[partes.length - 1]}` : partes.join('')
   }
 
   private exigirMaquina(id: string): Maquina {
@@ -687,21 +857,23 @@ export class Repositorio {
    * novo, para não travar a edição de eventos antigos.
    */
   private verificarMaquinasLivres(
-    evento: Pick<Evento, 'dias' | 'maquinasIds' | 'status'> & { id: string | undefined },
+    evento: Pick<Evento, 'dias' | 'maquinasIds' | 'status'> & { id: string | undefined; periodoCorrido?: boolean },
     anterior?: Evento,
     /** O que dizer para resolver (na troca rápida de status não há máquinas para escolher). */
     saida = 'Escolha outra máquina.',
   ) {
-    // A mesma regra de maquinasParaTrocar (src/lib/bloqueioMaquinas.ts), que a tela usa antes de salvar
+    // A mesma regra de trocasMaquinas (src/lib/bloqueioMaquinas.ts), que a tela usa antes de salvar.
+    // Os dias são os ocupados (ver diasOcupados): com período corrido, também os do meio.
     if (evento.status === 'CANCELADO' || !evento.maquinasIds.length) return
     const hoje = hojeLocalIso()
     const valeAnterior = anterior && anterior.status !== 'CANCELADO'
     const antes = new Set(valeAnterior ? anterior.maquinasIds : [])
     const gravadas = new Set(anterior?.maquinasIds ?? [])
-    const diasAntes = new Set(valeAnterior ? anterior.dias.map((d) => d.data) : [])
-    const diasNovos = evento.dias.filter((d) => !diasAntes.has(d.data))
-    const temFuturo = evento.dias.some((d) => d.data >= hoje)
-    const novoFuturo = diasNovos.some((d) => d.data >= hoje)
+    const ocupados = datasOcupadas(evento)
+    const diasAntes = new Set(valeAnterior ? datasOcupadas(anterior) : [])
+    const diasNovos = ocupados.filter((d) => !diasAntes.has(d))
+    const temFuturo = ocupados.some((d) => d >= hoje)
+    const novoFuturo = diasNovos.some((d) => d >= hoje)
     const maquinas = new Map(this.listarMaquinas().map((m) => [m.id, m]))
     const novas = evento.maquinasIds.filter((id) => !antes.has(id))
     const jaEstavam = diasNovos.length ? evento.maquinasIds.filter((id) => antes.has(id)) : []
@@ -719,19 +891,19 @@ export class Repositorio {
         )
       }
     }
-    // Máquinas novas em todos os dias; as que já estavam, só nos dias acrescentados
+    // Máquinas novas em todos os dias ocupados; as que já estavam, só nos dias acrescentados
+    const comoDias = (datas: string[]) => datas.map((data) => ({ id: data, data, maquinas: 1 }))
     const eventos = this.listarEventosBrutos()
     const conflitos = [
-      ...conflitosMaquinas({ id: evento.id, dias: evento.dias, maquinasIds: novas }, eventos),
-      ...conflitosMaquinas({ id: evento.id, dias: diasNovos, maquinasIds: jaEstavam }, eventos),
+      ...conflitosMaquinas({ id: evento.id, dias: comoDias(ocupados), maquinasIds: novas }, eventos),
+      ...conflitosMaquinas({ id: evento.id, dias: comoDias(diasNovos), maquinasIds: jaEstavam }, eventos),
     ]
     if (!conflitos.length) return
     const [maquinaId, outros] = conflitos[0]
     const outro = outros[0]
     // Só as datas que causam a recusa (para a que já estava, os dias acrescentados)
-    const datas = new Set((novas.includes(maquinaId) ? evento.dias : diasNovos).map((d) => d.data))
-    const emComum = outro.dias
-      .map((d) => d.data)
+    const datas = new Set(novas.includes(maquinaId) ? ocupados : diasNovos)
+    const emComum = datasOcupadas(outro)
       .filter((d) => datas.has(d))
       .sort()
       .map((d) => `${d.slice(8, 10)}/${d.slice(5, 7)}`)
@@ -840,6 +1012,37 @@ export class Repositorio {
     }
   }
 
+  private gravarReclamacao(r: Reclamacao, novo: boolean) {
+    const { id, versao, criadoEm, atualizadoEm, ...dados } = r
+    if (novo) {
+      this.db
+        .prepare(
+          'INSERT INTO reclamacoes (id, maquina_id, evento_id, dados, versao, criado_em, atualizado_em) VALUES (?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(id, r.maquinaId, r.eventoId, JSON.stringify(dados), versao, criadoEm, atualizadoEm)
+    } else {
+      this.db
+        .prepare('UPDATE reclamacoes SET maquina_id = ?, evento_id = ?, dados = ?, versao = ?, atualizado_em = ? WHERE id = ?')
+        .run(r.maquinaId, r.eventoId, JSON.stringify(dados), versao, atualizadoEm, id)
+    }
+  }
+
+  private paraReclamacao(l: LinhaReclamacao): Reclamacao {
+    return {
+      ...JSON.parse(l.dados),
+      id: l.id,
+      versao: l.versao,
+      maquinaId: l.maquina_id,
+      eventoId: l.evento_id,
+      criadoEm: l.criado_em,
+      atualizadoEm: l.atualizado_em,
+    }
+  }
+
+  private paraAnexo(l: LinhaAnexo): Anexo {
+    return { id: l.id, eventoId: l.evento_id, nome: l.nome, tipo: l.tipo, tamanho: l.tamanho, criadoEm: l.criado_em }
+  }
+
   private paraMaquina(l: Linha): Maquina {
     return { ...JSON.parse(l.dados), id: l.id, versao: l.versao, criadoEm: l.criado_em, atualizadoEm: l.atualizado_em }
   }
@@ -861,14 +1064,15 @@ export class Repositorio {
   }
 
   private paraEvento(l: LinhaEvento): Evento {
-    // Eventos gravados antes do cabeçalho e das máquinas: valores padrão; o antigo "local" vai
-    // para as observações (e fica gravado assim na próxima alteração do evento)
-    const { local, ...dados } = JSON.parse(l.dados)
-    return {
+    // Eventos gravados por versões anteriores: valores padrão; o antigo "local" e o cabeçalho
+    // das fichas vão para as observações (e ficam gravados assim na próxima alteração do evento)
+    const bruto = JSON.parse(l.dados)
+    const { local: _l, ...dados } = bruto
+    const evento: Evento = {
       cabecalho: '',
       maquinasIds: [],
       ...dados,
-      observacoes: observacoesComLocalAntigo(local, String(dados.observacoes ?? '')),
+      observacoes: String(dados.observacoes ?? ''),
       id: l.id,
       versao: l.versao,
       codigo: l.codigo,
@@ -876,5 +1080,6 @@ export class Repositorio {
       criadoEm: l.criado_em,
       atualizadoEm: l.atualizado_em,
     }
+    return atualizarEventoAntigo(evento, bruto)
   }
 }

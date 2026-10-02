@@ -38,6 +38,8 @@ const ev = (id: string, datas: string[], maquinasIds: string[], extra: Partial<E
   nome: `Evento ${id}`,
   cidade: '',
   cabecalho: '',
+  periodoCorrido: false,
+  programacao: 'NAO_INICIADA',
   dias: datas.map((data, i) => ({ id: `${id}${i}`, data, maquinas: 1 })),
   maquinasIds,
   valorDiaria: 0,

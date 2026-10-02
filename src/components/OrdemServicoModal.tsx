@@ -21,7 +21,6 @@ import {
   ESTADO_MAQUINA,
   localDaLocacao,
   osEmAberto,
-  SERVICOS_PADRAO,
   STATUS_OS,
   STATUS_OS_LISTA,
   TIPO_MAQUINA,
@@ -172,7 +171,7 @@ function FormularioOS({
       vistos.add(chave)
       lista.push(s.trim())
     }
-    SERVICOS_PADRAO.forEach(incluir)
+    useDados.getState().config.servicosManutencao.forEach(incluir)
     ordens.flatMap((o) => o.servicos).forEach(incluir)
     return lista
   }, [ordens])

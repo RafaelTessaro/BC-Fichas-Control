@@ -76,6 +76,8 @@ export function EventoForm() {
       nome: '',
       cidade: '',
       cabecalho: '',
+      periodoCorrido: false,
+      programacao: 'NAO_INICIADA',
       dias: [{ id: novoId(), data: params.get('data') ?? hojeISO(), maquinas: 1 }],
       maquinasIds: [],
       valorDiaria: config.valorDiariaPadrao,
