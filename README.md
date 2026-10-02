@@ -25,10 +25,10 @@ Google Agenda — se ela cair, essas duas funções esperam e voltam sozinhas.
 | Visão geral | **Painel** | Faturamento do mês, valores a receber, máquinas em uso hoje, próximos eventos, pagamentos pendentes e bobinas a conferir |
 | | **Agenda** | Calendário mensal com a ocupação das máquinas por dia (e os números das máquinas de cada evento); avisa quando passa de 80% ou do total de máquinas |
 | Cadastros | **Clientes** | Empresa (CNPJ, com consulta automática na Receita), pessoa física (CPF) ou cliente avulso; histórico e total faturado |
-| | **Eventos** | Dias de uso com a quantidade de máquinas em cada dia, cabeçalho e rodapé das fichas (com prévia), máquinas enviadas, valores, bobinas consignadas/devolvidas, desconto, pagamento e PDF do cliente |
+| | **Eventos** | Dias de uso com a quantidade de máquinas em cada dia, cabeçalho e rodapé das fichas, máquinas enviadas, valores, bobinas consignadas/devolvidas, desconto, pagamento, PDF do cliente e recibo (PIX ou dinheiro) |
 | Gestão | **Manutenção** | Máquinas P e G com identificação (P-01, G-03…), situação (disponível, locada, em manutenção, desativada) e onde cada uma está; ordens de serviço (O.S.) com serviços, problema, solução, peças e custo, histórico de cada máquina e O.S. impressa no timbrado |
 | | **Relatórios** | Faturamento por mês/semana, recebido × a receber, ticket médio, formas de pagamento, ranking de clientes e planilha (CSV) |
-| | **Configurações** | Disponibilidade de máquinas (quantas P e G), valores padrão, tema claro/escuro, backups e integração com o Google Agenda |
+| | **Configurações** | Disponibilidade de máquinas (quantas P e G), valores padrão, dados do recibo, tema claro/escuro, backups, integração com o Google Agenda e zona de perigo (apagar dados) |
 
 Atalhos: **Ctrl/⌘ + K** abre a busca global e **Ctrl/⌘ + S** salva o evento.
 
@@ -45,6 +45,15 @@ Atalhos: **Ctrl/⌘ + K** abre a busca global e **Ctrl/⌘ + S** salva o evento.
 | Status: Em aberto, Pendente, Finalizado | igual, mais **Cancelado** (fica fora do faturamento e sai do Google Agenda) |
 
 As regras ficam em [`shared/calc.ts`](shared/calc.ts), com testes em [`shared/calc.test.ts`](shared/calc.test.ts).
+
+### Recibo
+
+Eventos pagos em **PIX** ou **Dinheiro** têm o botão **Gerar recibo** (no detalhe do evento e no
+menu de cada evento da lista). O recibo sai em PDF no papel timbrado, com o número do evento, o
+valor em algarismos e por extenso, o detalhamento (diárias, bobinas e desconto), a forma e a data
+do pagamento e o espaço para assinatura. O nome, a razão social, o CNPJ e a cidade que aparecem
+no recibo ficam em **Configurações → Dados do recibo**. Para cliente avulso sem nome, o recibo
+deixa o espaço do nome em branco para preencher à mão.
 
 ---
 
@@ -141,6 +150,8 @@ use `instalar-servico.ps1 -Porta N`, que também ajusta o Firewall.
 - Em **Configurações → Dados e backup** é possível baixar um backup completo (`.json`),
   restaurar um backup e fazer uma cópia na hora.
 - Recomendado: copiar a pasta `dados/backups` para um pendrive, HD externo ou nuvem uma vez por semana.
+- **Apagar todos os dados** fica separado, no fim de Configurações, na **Zona de perigo**: pede para
+  digitar `APAGAR` e o servidor guarda uma cópia automática antes. As configurações continuam.
 - Para voltar uma cópia `.db`, use o `restaurar-copia.ps1` (tabela acima). **Não** copie o arquivo
   `.db` por cima com o Explorer: o banco trabalha junto com os arquivos `bc-fichas.db-wal` e
   `bc-fichas.db-shm`, e misturar arquivos de momentos diferentes corrompe os dados. No Linux:
@@ -173,8 +184,13 @@ Não exponha a porta do servidor para a internet.
   em manutenção ou com eventos de hoje em diante não são retiradas. Também dá para cadastrar uma a
   uma na aba Manutenção.
 - **Onde cada máquina está:** no evento, marque os números das máquinas enviadas. Nos dias do
-  evento a máquina aparece como **Locada**, com o cabeçalho da festa como local. O sistema avisa
-  quando a mesma máquina está em outro evento nas mesmas datas, em manutenção ou com O.S. em aberto.
+  evento a máquina aparece como **Locada**, com o cabeçalho da festa como local. Máquina em outro
+  evento nas mesmas datas, em manutenção (para eventos de hoje em diante) ou desativada fica
+  apagada e não pode ser marcada; o servidor também recusa. Uma máquina que já estava no evento e
+  depois entrou em manutenção não trava a edição: o sistema só avisa. Máquina com O.S. em aberto
+  ainda pode ser marcada, com um aviso para conferir se está pronta.
+- **Identificação:** no cadastro da máquina, a letra vem do tipo (P ou G) e o número é livre
+  (P-07, G-12…). O sistema não aceita duas máquinas com a mesma identificação.
 - **Cabeçalho e rodapé das fichas:** no evento, os textos que são programados nas máquinas e
   saem impressos em cada ficha. O rodapé também fecha o resumo em PDF do cliente. Eventos
   cadastrados antes desta versão tinham o campo "Local": o texto dele foi guardado no início das
@@ -193,7 +209,9 @@ Não exponha a porta do servidor para a internet.
   aceito; enquanto os serviços de consulta não o suportarem, preencha os dados à mão.
 - **Pessoa física (CPF):** CPF validado e endereço preenchido pelo CEP.
 - **Avulso:** cliente eventual, sem documento — só um nome (ou nem isso). Também dá para criar
-  na hora, no lançamento do evento, com **"Usar como cliente avulso"**.
+  na hora, no lançamento do evento: a opção **"Cliente avulso (sem cadastro)"** fica sempre no
+  fim da lista de clientes, e ao digitar um nome que não existe aparece **"Usar como cliente
+  avulso"**.
 
 O sistema não permite dois clientes com o mesmo CNPJ/CPF. As consultas precisam de internet no
 servidor; sem internet, os campos podem ser preenchidos à mão normalmente.
