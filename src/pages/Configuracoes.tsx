@@ -145,7 +145,7 @@ export function Configuracoes() {
     const semMaquinas = !Array.isArray((dados as { maquinas?: unknown } | null)?.maquinas)
     const aviso =
       semMaquinas && maquinas.length
-        ? ` Atenção: este backup é de uma versão sem o cadastro de máquinas. As ${qtd(maquinas.length, 'máquina', 'máquinas')} e as ordens de serviço atuais serão apagadas e precisarão ser cadastradas de novo.`
+        ? ` Atenção: este backup é de uma versão sem o cadastro de máquinas. ${maquinas.length === 1 ? 'A máquina' : `As ${qtd(maquinas.length, 'máquina', 'máquinas')}`} e as ordens de serviço atuais serão apagadas e precisarão ser cadastradas de novo.`
         : ''
     const ok = await confirmar({
       titulo: 'Restaurar backup?',
@@ -474,7 +474,7 @@ function ZonaDePerigo({ aoBaixarBackup }: { aoBaixarBackup: () => void }) {
   const apagar = async () => {
     const ok = await confirmar({
       titulo: 'Apagar todos os dados?',
-      descricao: `Serão apagados ${resumo}, do servidor e de todos os computadores. As configurações continuam. Antes de apagar, o servidor guarda uma cópia automática.`,
+      descricao: `Isto apaga ${resumo} do servidor e de todos os computadores. As configurações continuam. Antes de apagar, o servidor guarda uma cópia automática.`,
       confirmar: 'Apagar tudo',
       perigo: true,
       digitar: 'APAGAR',

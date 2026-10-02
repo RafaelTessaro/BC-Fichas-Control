@@ -176,8 +176,10 @@ describe('trocarTipoCliente', () => {
       consultadoEm: '',
     })
     // Continua o que aparece para o avulso
-    expect(avulso).toMatchObject({ nome: 'Barraca do Zé', cidade: 'Rio Claro' })
+    expect(avulso).toMatchObject({ nome: 'Barraca do Zé', cidade: 'Rio Claro', uf: 'SP' })
     expect(normalizarCliente(avulso).erros).toEqual([])
+    // Sem cidade, a UF (que o avulso não mostra) também sai
+    expect(trocarTipoCliente({ ...empresa, cidade: '' }, 'AVULSO').uf).toBe('')
   })
 
   it('para pessoa física, limpa os dados de empresa e ajusta a máscara', () => {

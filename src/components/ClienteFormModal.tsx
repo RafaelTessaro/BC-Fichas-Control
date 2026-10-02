@@ -121,7 +121,12 @@ function formularioInicial(cliente?: Cliente, nomeInicial?: string, tipoInicial?
     const { id: _i, versao: _v, criadoEm: _c, atualizadoEm: _a, ...resto } = cliente
     return { ...CLIENTE_VAZIO, ...resto }
   }
-  const base: ClienteInput = { ...CLIENTE_VAZIO, tipo: tipoInicial ?? 'PJ', nome: nomeInicial?.trim() ?? '', uf: 'SP' }
+  const base: ClienteInput = {
+    ...CLIENTE_VAZIO,
+    tipo: tipoInicial ?? 'PJ',
+    nome: nomeInicial?.trim() ?? '',
+    uf: tipoInicial === 'AVULSO' ? '' : 'SP',
+  }
   const digitos = somenteDigitos(base.nome)
   if (/^[\d./\-\s]+$/.test(base.nome) && tipoInicial !== 'AVULSO') {
     if (cnpjValido(digitos)) return { ...base, tipo: 'PJ', nome: '', documento: mascaraDocumento(digitos, 'PJ') }

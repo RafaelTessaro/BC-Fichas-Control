@@ -159,9 +159,10 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
               <Td className="max-sm:hidden">
                 <div className="flex flex-col items-start gap-1">
                   <PagamentoBadge forma={e.formaPagamento} />
-                  <span className="xl:hidden">
+                  <div className="flex items-center gap-1 xl:hidden">
                     <StatusBadge status={e.status} />
-                  </span>
+                    <GoogleSyncBadge evento={e} compacto />
+                  </div>
                 </div>
               </Td>
               <Td className="max-xl:hidden">

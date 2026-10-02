@@ -106,8 +106,12 @@ export async function gerarReciboPDF(evento: Evento, cliente: Cliente | undefine
 
   // Fecho, local e data, e a assinatura (sempre juntos, perto do fim da página)
   const alturaAssinatura = 6 + recibo.assinatura.length * 5
+  // Espaço para assinar acima da linha: 30 mm se couber; numa página cheia encolhe até 16 mm
+  // antes de levar o fecho e a assinatura sozinhos para outra página
+  const ESPACO_ASSINAR = 30
+  const MINIMO_ASSINAR = 16
   y += 5.5 + 14
-  garantirEspaco(8 + 30 + alturaAssinatura)
+  garantirEspaco(8 + MINIMO_ASSINAR + alturaAssinatura)
   doc
     .setFont('helvetica', 'normal')
     .setFontSize(11.5)
@@ -116,7 +120,8 @@ export async function gerarReciboPDF(evento: Evento, cliente: Cliente | undefine
   y += 8
   doc.text(txt(recibo.localData), R, y, { align: 'right' })
 
-  const yLinha = Math.max(y + 30, Math.min(236, LIMITE - alturaAssinatura))
+  const espaco = Math.min(ESPACO_ASSINAR, LIMITE - alturaAssinatura - y)
+  const yLinha = Math.max(y + espaco, Math.min(236, LIMITE - alturaAssinatura))
   doc
     .setDrawColor(...TINTA)
     .setLineWidth(0.3)

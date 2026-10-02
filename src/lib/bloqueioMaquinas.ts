@@ -73,21 +73,25 @@ export function bloqueiosMaquinas({
       mapa.set(m.id, { motivo: 'MANUTENCAO', eventos: [], texto: 'Em manutenção' })
     } else {
       const outros = ocupadas.get(m.id)
-      if (!outros?.length) continue
-      const partes = outros.map((e) => `${nomeEvento(e, porId)}, em ${listaDatas(datasEmComum(e, datas))}`)
-      mapa.set(m.id, {
-        motivo: 'OCUPADA',
-        eventos: outros,
-        texto: `${outros.length > 1 ? 'Nos eventos' : 'No evento'} ${partes.join('; ')}`,
-      })
+      if (outros?.length) mapa.set(m.id, bloqueioOcupada(outros, datas, porId))
     }
   }
   return mapa
 }
 
+/** Bloqueio por outros eventos, citando só as datas de `datas` que cada um ocupa. */
+function bloqueioOcupada(outros: Evento[], datas: Set<string>, clientes: Map<string, Pick<Cliente, 'nome'>>): Bloqueio {
+  const partes = outros.map((e) => `${nomeEvento(e, clientes)}, em ${listaDatas(datasEmComum(e, datas))}`)
+  return {
+    motivo: 'OCUPADA',
+    eventos: outros,
+    texto: `${outros.length > 1 ? 'Nos eventos' : 'No evento'} ${partes.join('; ')}`,
+  }
+}
+
 /**
- * Máquinas marcadas que precisam ser trocadas antes de salvar — a MESMA regra do servidor
- * (verificarMaquinasLivres em server/repositorio.ts):
+ * Máquinas marcadas que precisam ser trocadas antes de salvar, com o motivo — a MESMA regra do
+ * servidor (verificarMaquinasLivres em server/repositorio.ts):
  * - máquina acrescentada agora: não pode estar desativada, nem em manutenção (se o evento tem algum
  *   dia de hoje em diante), nem em outro evento em alguma das datas;
  * - máquina que já estava gravada: só é cobrada nos dias acrescentados (conflito nesses dias, ou
@@ -95,10 +99,11 @@ export function bloqueiosMaquinas({
  *   exemplo, uma máquina que entrou em manutenção durante o evento — não trava a edição.
  * Desativada que já estava no evento continua aceita num evento que já passou (é histórico).
  */
-export function maquinasParaTrocar({
+export function trocasMaquinas({
   selecionadas,
   maquinas,
   eventos,
+  clientes = [],
   dias,
   eventoId,
   salvo,
@@ -108,6 +113,8 @@ export function maquinasParaTrocar({
   selecionadas: string[]
   maquinas: Pick<Maquina, 'id' | 'status'>[]
   eventos: Evento[]
+  /** Para o nome do cliente no texto do motivo. */
+  clientes?: Cliente[]
   dias: Pick<DiaEvento, 'data'>[]
   /** Evento em edição (não conta como conflito com ele mesmo). */
   eventoId?: string
@@ -116,29 +123,41 @@ export function maquinasParaTrocar({
   /** Evento que vai ser salvo como cancelado: nada é cobrado. */
   cancelado?: boolean
   hoje: string
-}): string[] {
-  if (cancelado) return []
+}): Map<string, Bloqueio> {
+  const mapa = new Map<string, Bloqueio>()
+  if (cancelado) return mapa
   const valeSalvo = salvo && salvo.status !== 'CANCELADO'
   const antes = new Set(valeSalvo ? salvo.maquinasIds : [])
   const gravadas = new Set(salvo?.maquinasIds ?? [])
   const diasAntes = new Set(valeSalvo ? salvo.dias.map((d) => d.data) : [])
-  const datas = dias.map((d) => d.data).filter(Boolean)
-  const diasNovos = new Set(datas.filter((d) => !diasAntes.has(d)))
-  const temFuturo = datas.some((d) => d >= hoje)
+  const datas = new Set(dias.map((d) => d.data).filter(Boolean))
+  const diasNovos = new Set([...datas].filter((d) => !diasAntes.has(d)))
+  const temFuturo = [...datas].some((d) => d >= hoje)
   const novoFuturo = [...diasNovos].some((d) => d >= hoje)
   const status = new Map(maquinas.map((m) => [m.id, m.status]))
-  const ocupadas = maquinasOcupadas(datas, eventos, eventoId)
-  return selecionadas.filter((id) => {
+  const ocupadas = maquinasOcupadas([...datas], eventos, eventoId)
+  const porId = new Map(clientes.map((c) => [c.id, c]))
+  for (const id of selecionadas) {
     const nova = !antes.has(id)
-    if (!nova && !diasNovos.size) return false
+    if (!nova && !diasNovos.size) continue
     const futuro = nova ? temFuturo : novoFuturo
     const st = status.get(id)
-    if (st === 'DESATIVADA' && (futuro || !gravadas.has(id))) return true
-    if (st === 'MANUTENCAO' && futuro) return true
-    const outros = ocupadas.get(id) ?? []
-    return nova ? outros.length > 0 : outros.some((e) => e.dias.some((d) => diasNovos.has(d.data)))
-  })
+    if (st === 'DESATIVADA' && (futuro || !gravadas.has(id))) {
+      mapa.set(id, { motivo: 'DESATIVADA', eventos: [], texto: 'Desativada' })
+    } else if (st === 'MANUTENCAO' && futuro) {
+      mapa.set(id, { motivo: 'MANUTENCAO', eventos: [], texto: 'Em manutenção' })
+    } else {
+      // A que já estava gravada só conta nos dias acrescentados (e o texto cita só esses dias)
+      const alvo = nova ? datas : diasNovos
+      const outros = (ocupadas.get(id) ?? []).filter((e) => e.dias.some((d) => alvo.has(d.data)))
+      if (outros.length) mapa.set(id, bloqueioOcupada(outros, alvo, porId))
+    }
+  }
+  return mapa
 }
+
+/** Só os ids de `trocasMaquinas`. */
+export const maquinasParaTrocar = (...args: Parameters<typeof trocasMaquinas>) => [...trocasMaquinas(...args).keys()]
 
 /** "P-01", "P-01 e P-02", "P-01, P-02 e G-06". */
 export const juntarNomes = (nomes: string[]) =>

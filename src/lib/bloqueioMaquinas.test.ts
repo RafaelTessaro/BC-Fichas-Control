@@ -8,6 +8,7 @@ import {
   listaDatas,
   maquinasParaTrocar,
   resumoTrocas,
+  trocasMaquinas,
 } from './bloqueioMaquinas'
 
 const HOJE = '2026-10-02'
@@ -164,5 +165,50 @@ describe('máquinas bloqueadas no evento', () => {
     // Num evento futuro a desativada volta a ser cobrada
     const futuro = ev('e', 20, ['2026-10-11'], ['G-01'], { status: 'CANCELADO' })
     expect(trocar(['G-01'], [], dias('2026-10-11'), { salvo: futuro })).toEqual(['G-01'])
+  })
+
+  it('o motivo da troca é o que de fato a impede (e cita só os dias acrescentados)', () => {
+    // P-01 já estava gravada e depois foi desativada; o dia acrescentado (passado) bate com outro evento
+    const outro = ev('a', 12, ['2026-09-29'], ['P-01'])
+    const desat = [maq('P-01', { status: 'DESATIVADA' })]
+    const salvo = ev('e', 20, ['2026-10-01'], ['P-01'])
+    const t = trocasMaquinas({
+      selecionadas: ['P-01'],
+      maquinas: desat,
+      eventos: [outro],
+      clientes,
+      dias: dias('2026-09-29', '2026-10-01'),
+      eventoId: 'e',
+      salvo,
+      hoje: HOJE,
+    })
+    expect(t.get('P-01')).toMatchObject({ motivo: 'OCUPADA', texto: 'No evento #0012 Festa a — Clube Primavera, em 29/09' })
+    // Em manutenção, gravada num dia futuro, com dia passado acrescentado em conflito: também é o conflito
+    const manut = [maq('P-01', { status: 'MANUTENCAO' })]
+    const salvoFuturo = ev('e', 20, ['2026-10-03'], ['P-01'])
+    const t2 = trocasMaquinas({
+      selecionadas: ['P-01'],
+      maquinas: manut,
+      eventos: [outro],
+      clientes,
+      dias: dias('2026-09-29', '2026-10-03'),
+      eventoId: 'e',
+      salvo: salvoFuturo,
+      hoje: HOJE,
+    })
+    expect(t2.get('P-01')?.motivo).toBe('OCUPADA')
+    // Conflito antigo em 03/10 já aceito; 04/10 acrescentado: o texto cita só 04/10
+    const antigo = ev('a', 12, ['2026-10-03', '2026-10-04'], ['P-01'])
+    const t3 = trocasMaquinas({
+      selecionadas: ['P-01'],
+      maquinas: [maq('P-01')],
+      eventos: [antigo],
+      clientes,
+      dias: dias('2026-10-03', '2026-10-04'),
+      eventoId: 'e',
+      salvo: salvoFuturo,
+      hoje: HOJE,
+    })
+    expect(t3.get('P-01')?.texto).toBe('No evento #0012 Festa a — Clube Primavera, em 04/10')
   })
 })

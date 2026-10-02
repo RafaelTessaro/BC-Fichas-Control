@@ -219,6 +219,8 @@ export function trocarTipoCliente(atual: ClienteInput, tipo: TipoCliente): Clien
       numero: '',
       complemento: '',
       bairro: '',
+      // O avulso não tem campo de UF: sem cidade, a UF que sobrou viraria um endereço "SP" sozinho
+      uf: atual.cidade.trim() ? atual.uf : '',
     }
   }
   if (tipo === 'PF') return { ...atual, ...semDadosDeEmpresa, tipo, documento: mascaraDocumento(atual.documento, 'PF') }

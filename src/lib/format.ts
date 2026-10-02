@@ -86,6 +86,7 @@ export function enderecoCompleto(c: {
 }) {
   const rua = [c.logradouro, c.numero].filter(Boolean).join(', ')
   const ruaComp = [rua, c.complemento].filter(Boolean).join(' - ')
-  const cidade = [c.cidade, c.uf].filter(Boolean).join('/')
+  // A UF sozinha (sem cidade) não diz onde é: fica de fora
+  const cidade = c.cidade ? [c.cidade, c.uf].filter(Boolean).join('/') : ''
   return [ruaComp, c.bairro, cidade].filter(Boolean).join(' — ')
 }

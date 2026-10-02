@@ -36,7 +36,7 @@ import { confirmar } from '../components/ui/Feedback'
 import { ErroApi } from '../lib/api'
 import { AnimatedNumber, Avatar, EmptyState, PageHeader } from '../components/ui/Misc'
 import { calcularEvento, FORMAS_PAGAMENTO, ocupacaoPorDia, STATUS_EVENTO } from '#shared/calc.ts'
-import { bloqueiosMaquinas, maquinasParaTrocar, resumoTrocas } from '../lib/bloqueioMaquinas'
+import { resumoTrocas, trocasMaquinas } from '../lib/bloqueioMaquinas'
 import { cn } from '../lib/cn'
 import { codigoEvento, dataExtensa, hojeISO, moeda, normalizar, numero } from '../lib/format'
 import { CLIENTE_VAZIO, LIMITES } from '#shared/dominio.ts'
@@ -268,22 +268,22 @@ export function EventoForm() {
     const existentes = new Set(maquinas.map((m) => m.id))
     const maquinasIds = f.maquinasIds.filter((x) => existentes.has(x))
     // Máquina em manutenção ou já em outro evento nas mesmas datas não pode ir: explica e não envia
-    const cancelado = f.status === 'CANCELADO'
-    const bloqueios = bloqueiosMaquinas({ maquinas, eventos, clientes, dias: f.dias, eventoId: id, cancelado, hoje })
-    const trocar = maquinasParaTrocar({
+    const trocas = trocasMaquinas({
       selecionadas: maquinasIds,
       maquinas,
       eventos,
+      clientes,
       dias: f.dias,
       eventoId: id,
       salvo: existente,
-      cancelado,
+      cancelado: f.status === 'CANCELADO',
       hoje,
     })
+    const trocar = [...trocas.keys()]
     if (trocar.length) {
-      const itens = ordenarMaquinas(maquinas.filter((m) => trocar.includes(m.id))).map((m) => ({
+      const itens = ordenarMaquinas(maquinas.filter((m) => trocas.has(m.id))).map((m) => ({
         identificacao: m.identificacao,
-        bloqueio: bloqueios.get(m.id)!,
+        bloqueio: trocas.get(m.id)!,
       }))
       const varias = trocar.length > 1
       toast.erro(

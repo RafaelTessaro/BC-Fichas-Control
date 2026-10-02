@@ -15,7 +15,14 @@ import {
   type EstadoMaquina,
 } from '#shared/maquinas.ts'
 import type { DiaEvento, Evento, Maquina } from '#shared/tipos.ts'
-import { agruparBloqueios, agruparTrocas, bloqueiosMaquinas, juntarNomes, maquinasParaTrocar } from '../lib/bloqueioMaquinas'
+import {
+  agruparBloqueios,
+  agruparTrocas,
+  bloqueiosMaquinas,
+  juntarNomes,
+  maquinasParaTrocar,
+  trocasMaquinas,
+} from '../lib/bloqueioMaquinas'
 import { cn } from '../lib/cn'
 import { codigoEvento } from '../lib/format'
 import { useDados } from '../store/dados'
@@ -196,10 +203,10 @@ export function SeletorMaquinas({
   )
   // Versão gravada do evento em edição: o que já estava nele não é cobrado de novo
   const salvo = useMemo(() => (eventoId ? eventos.find((e) => e.id === eventoId) : undefined), [eventos, eventoId])
-  // Marcadas que não podem ir (o salvar não deixa passar enquanto não forem trocadas)
+  // Marcadas que não podem ir, com o motivo (o salvar não deixa passar enquanto não forem trocadas)
   const trocar = useMemo(
-    () => new Set(maquinasParaTrocar({ selecionadas: maquinasIds, maquinas, eventos, dias, eventoId, salvo, cancelado, hoje })),
-    [maquinasIds, maquinas, eventos, dias, eventoId, salvo, cancelado, hoje],
+    () => trocasMaquinas({ selecionadas: maquinasIds, maquinas, eventos, clientes, dias, eventoId, salvo, cancelado, hoje }),
+    [maquinasIds, maquinas, eventos, clientes, dias, eventoId, salvo, cancelado, hoje],
   )
   /** Máquina indisponível que já estava gravada no evento e pode voltar (desmarcada por engano, por exemplo). */
   const podeVoltar = (id: string) =>
@@ -212,10 +219,11 @@ export function SeletorMaquinas({
   const visiveis = ordenadas.filter(
     (m) => m.status !== 'DESATIVADA' || selecionadas.has(m.id) || !!salvo?.maquinasIds.includes(m.id),
   )
-  const livre = (m: Maquina) => m.status === 'DISPONIVEL' && !bloqueios.has(m.id) && !comOS.has(m.id)
-  /** Cor do chip: a do motivo do bloqueio; sem bloqueio, livre (a manutenção só conta de hoje em diante). */
+  // A mesma regra da cor do chip: a manutenção só prende a máquina de hoje em diante (já está em `bloqueios`)
+  const livre = (m: Maquina) => m.status !== 'DESATIVADA' && !bloqueios.has(m.id) && !comOS.has(m.id)
+  /** Cor do chip: a do motivo da troca ou do bloqueio; sem bloqueio, livre (a manutenção só conta de hoje em diante). */
   const estadoNasDatas = (m: Maquina): EstadoMaquina => {
-    const b = bloqueios.get(m.id)
+    const b = trocar.get(m.id) ?? bloqueios.get(m.id)
     if (b) return b.motivo === 'OCUPADA' ? 'LOCADA' : b.motivo
     return m.status === 'DESATIVADA' ? 'DESATIVADA' : 'DISPONIVEL'
   }
@@ -263,7 +271,7 @@ export function SeletorMaquinas({
   const avisos: ItemAviso[] = []
   // Marcadas que precisam ser trocadas: um aviso por motivo ("P-01 e P-02 já estão no evento …")
   const paraTrocar = escolhidas.filter((m) => trocar.has(m.id))
-  for (const g of agruparTrocas(paraTrocar.map((m) => ({ identificacao: m.identificacao, bloqueio: bloqueios.get(m.id)! })))) {
+  for (const g of agruparTrocas(paraTrocar.map((m) => ({ identificacao: m.identificacao, bloqueio: trocar.get(m.id)! })))) {
     const varias = g.maquinas.length > 1
     avisos.push({
       chave: `t-${g.chave}`,
@@ -351,8 +359,9 @@ export function SeletorMaquinas({
 
   const titulo = (m: Maquina) => {
     const nome = `${m.identificacao} (${TIPO_MAQUINA[m.tipo].descricao.toLowerCase()})`
+    const t = trocar.get(m.id)
+    if (t) return `${nome} · ${t.texto}. Clique para desmarcar e escolha outra.`
     const b = bloqueios.get(m.id)
-    if (b && trocar.has(m.id)) return `${nome} · ${b.texto}. Clique para desmarcar e escolha outra.`
     if (b && !selecionadas.has(m.id)) return `${nome} · Indisponível: ${b.texto}`
     if (b) return `${nome} · ${b.texto}`
     if (comOS.has(m.id)) return `${nome} · Com O.S. em aberto: confira se já está pronta`
