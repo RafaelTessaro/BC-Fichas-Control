@@ -1,4 +1,4 @@
-import { CalendarDays, ChartColumn, LayoutDashboard, Settings, Ticket, Users, type LucideIcon } from 'lucide-react'
+import { CalendarDays, ChartColumn, LayoutDashboard, Settings, Ticket, Users, Wrench, type LucideIcon } from 'lucide-react'
 
 export interface ItemNav {
   to: string
@@ -24,7 +24,10 @@ export const NAV: Array<{ grupo: string; itens: ItemNav[] }> = [
   },
   {
     grupo: 'Gestão',
-    itens: [{ to: '/relatorios', label: 'Relatórios', icone: ChartColumn, descricao: 'Faturamento e indicadores' }],
+    itens: [
+      { to: '/manutencao', label: 'Manutenção', icone: Wrench, descricao: 'Máquinas, situação e ordens de serviço' },
+      { to: '/relatorios', label: 'Relatórios', icone: ChartColumn, descricao: 'Faturamento e indicadores' },
+    ],
   },
 ]
 
@@ -32,7 +35,7 @@ export const NAV_CONFIG: ItemNav = {
   to: '/configuracoes',
   label: 'Configurações',
   icone: Settings,
-  descricao: 'Empresa, valores padrão e backup',
+  descricao: 'Valores padrão, quantidade de máquinas e backup',
 }
 
 export const TODAS_PAGINAS = [...NAV.flatMap((g) => g.itens), NAV_CONFIG]

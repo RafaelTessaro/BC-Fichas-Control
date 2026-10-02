@@ -10,6 +10,8 @@ import { Configuracoes } from './pages/Configuracoes'
 import { EventoDetalhe } from './pages/EventoDetalhe'
 import { EventoForm } from './pages/EventoForm'
 import { Eventos } from './pages/Eventos'
+import { Manutencao } from './pages/Manutencao'
+import { MaquinaDetalhe } from './pages/MaquinaDetalhe'
 import { Painel } from './pages/Painel'
 import { Relatorios } from './pages/Relatorios'
 import { TelaConexao } from './components/layout/TelaConexao'
@@ -29,6 +31,8 @@ function Rotas() {
         <Route path="/eventos/novo" element={<EventoForm />} />
         <Route path="/eventos/:id" element={<EventoDetalhe />} />
         <Route path="/eventos/:id/editar" element={<EventoForm />} />
+        <Route path="/manutencao" element={<Manutencao />} />
+        <Route path="/manutencao/:id" element={<MaquinaDetalhe />} />
         <Route path="/relatorios" element={<Relatorios />} />
         <Route path="/configuracoes" element={<Configuracoes />} />
         <Route path="*" element={<Navigate to="/" replace />} />

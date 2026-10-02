@@ -1,13 +1,16 @@
-import { CalendarPlus, CornerDownLeft, Search, Ticket, UserPlus } from 'lucide-react'
+import { CalendarPlus, ClipboardPlus, CornerDownLeft, Cpu, Search, Ticket, UserPlus } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { create } from 'zustand'
 import { calcularEvento } from '#shared/calc.ts'
+import { ESTADO_MAQUINA, localDaLocacao } from '#shared/maquinas.ts'
 import { cn } from '../../lib/cn'
 import { codigoEvento, normalizar, periodo } from '../../lib/format'
+import { maquinaCombina } from '../../lib/manutencao'
 import { useDados } from '../../store/dados'
+import { TipoMaquinaBadge, useSituacoes } from '../Maquinas'
 import { Avatar } from '../ui/Misc'
 import { TODAS_PAGINAS } from './nav'
 
@@ -23,10 +26,12 @@ interface Resultado {
   titulo: string
   detalhe?: string
   icone: ReactNode
+  /** Palavras extras que também encontram o resultado (ações). */
+  chaves?: string
   ir: () => void
 }
 
-/** Busca global (Ctrl/⌘ + K): páginas, ações, clientes e eventos. */
+/** Busca global (Ctrl/⌘ + K): páginas, ações, clientes, eventos e máquinas. */
 export function CommandPalette() {
   const { aberta, abrir, fechar } = usePaleta()
 
@@ -51,6 +56,8 @@ function Paleta({ fechar }: { fechar: () => void }) {
   const navegar = useNavigate()
   const clientes = useDados((s) => s.clientes)
   const eventos = useDados((s) => s.eventos)
+  const maquinas = useDados((s) => s.maquinas)
+  const situacoes = useSituacoes()
   const lista = useRef<HTMLDivElement>(null)
 
   const resultados = useMemo<Resultado[]>(() => {
@@ -77,8 +84,26 @@ function Paleta({ fechar }: { fechar: () => void }) {
         icone: <UserPlus className="h-4 w-4" />,
         ir: ir('/clientes?novo=1'),
       },
+      {
+        id: 'a-os',
+        grupo: 'Ações rápidas',
+        titulo: 'Nova O.S.',
+        detalhe: 'Ordem de serviço de manutenção',
+        chaves: 'os ordem de servico manutencao limpeza conserto',
+        icone: <ClipboardPlus className="h-4 w-4" />,
+        ir: ir('/manutencao?nova=os'),
+      },
+      {
+        id: 'a-maq',
+        grupo: 'Ações rápidas',
+        titulo: 'Nova máquina',
+        chaves: 'cadastrar maquina p g',
+        icone: <Cpu className="h-4 w-4" />,
+        ir: ir('/manutencao?nova=maquina'),
+      },
     ]
-    out.push(...acoes.filter((a) => casa(a.titulo)))
+    // Sem máquinas cadastradas, não dá para abrir O.S.
+    out.push(...acoes.filter((a) => (a.id !== 'a-os' || maquinas.length) && casa(`${a.titulo} ${a.chaves ?? ''}`)))
     out.push(
       ...TODAS_PAGINAS.filter((p) => casa(`${p.label} ${p.descricao}`)).map((p) => ({
         id: `p-${p.to}`,
@@ -121,9 +146,32 @@ function Paleta({ fechar }: { fechar: () => void }) {
             }
           }),
       )
+      out.push(
+        ...maquinas
+          .filter((m) => maquinaCombina(m, q))
+          .slice(0, 6)
+          .map((m) => {
+            const sit = situacoes.get(m.id)
+            const onde = sit?.evento && sit.estado === 'LOCADA' ? ` · ${localDaLocacao(sit.evento)}` : ''
+            return {
+              id: `m-${m.id}`,
+              grupo: 'Máquinas',
+              titulo: m.identificacao,
+              detalhe: [
+                `${ESTADO_MAQUINA[sit?.estado ?? m.status].label}${onde}`,
+                m.modelo,
+                m.numeroSerie && `Série ${m.numeroSerie}`,
+              ]
+                .filter(Boolean)
+                .join(' • '),
+              icone: <TipoMaquinaBadge tipo={m.tipo} />,
+              ir: ir(`/manutencao/${m.id}`),
+            }
+          }),
+      )
     }
     return out
-  }, [q, clientes, eventos, navegar, fechar])
+  }, [q, clientes, eventos, maquinas, situacoes, navegar, fechar])
 
   useEffect(() => {
     lista.current?.querySelector<HTMLElement>(`[data-idx="${ativo}"]`)?.scrollIntoView({ block: 'nearest' })
@@ -171,7 +219,7 @@ function Paleta({ fechar }: { fechar: () => void }) {
                 fechar()
               }
             }}
-            placeholder="Buscar clientes, eventos ou páginas…"
+            placeholder="Buscar clientes, eventos, máquinas ou páginas…"
             className="h-14 flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-muted"
           />
           <kbd className="rounded-md border border-line bg-surface-2 px-1.5 py-0.5 text-[11px] text-muted">Esc</kbd>
