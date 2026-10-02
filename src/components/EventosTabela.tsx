@@ -91,16 +91,21 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
     <Tabela>
       <thead>
         <tr>
-          <Th className="w-20">Código</Th>
+          {/* Em telas menores que 1536 px o código vai para baixo do nome (o "…" precisa caber) */}
+          <Th className="w-20 max-2xl:hidden">Código</Th>
           <Th>Evento</Th>
-          {!ocultarCliente && <Th className="max-md:hidden">Cliente</Th>}
-          <Th>Período</Th>
-          <Th alinhar="right" className="max-lg:hidden">
+          {!ocultarCliente && <Th className="max-xl:hidden">Cliente</Th>}
+          <Th className="max-sm:hidden">Período</Th>
+          <Th alinhar="right" className="max-2xl:hidden">
             Diárias
           </Th>
           <Th alinhar="right">Total</Th>
-          <Th className="max-sm:hidden">Pagamento</Th>
-          <Th className="max-md:hidden">Status</Th>
+          {/* Abaixo de 1280 px a coluna também mostra o status, logo abaixo do pagamento */}
+          <Th className="max-sm:hidden">
+            <span className="xl:hidden">Situação</span>
+            <span className="max-xl:hidden">Pagamento</span>
+          </Th>
+          <Th className="max-xl:hidden">Status</Th>
           <Th className="w-12" />
         </tr>
       </thead>
@@ -109,30 +114,57 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
           const { evento: e, resumo: r, cliente } = it
           return (
             <Linha key={e.id} indice={i} aoClicar={() => navegar(`/eventos/${e.id}`)}>
-              <Td className="tnum text-xs font-medium text-muted">{codigoEvento(e.codigo)}</Td>
+              <Td className="tnum text-xs font-medium text-muted max-2xl:hidden">{codigoEvento(e.codigo)}</Td>
               <Td>
-                <p className="max-w-[260px] truncate font-medium text-ink">{e.nome}</p>
-                <p className="max-w-[260px] truncate text-xs text-muted">
-                  {[
-                    e.cidade || (ocultarCliente ? '' : cliente?.nome),
-                    e.maquinasIds.length ? `${e.maquinasIds.length} ${e.maquinasIds.length === 1 ? 'máquina' : 'máquinas'}` : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' • ')}
+                <p className="max-w-[150px] truncate font-medium text-ink sm:max-w-[200px] 2xl:max-w-[260px]">{e.nome}</p>
+                <p className="max-w-[150px] truncate text-xs text-muted sm:max-w-[200px] 2xl:max-w-[260px]">
+                  {/* No celular o período aparece aqui (a coluna some) */}
+                  <span className="tnum sm:hidden">{periodo(r.dataInicio, r.dataFim)} • </span>
+                  {/* Abaixo de 1536 px o código vem aqui; abaixo de 1280 px, também o cliente (as colunas somem) */}
+                  <span className="tnum 2xl:hidden">{codigoEvento(e.codigo)}</span>
+                  {!ocultarCliente && cliente && <span className="xl:hidden"> • {cliente.nome}</span>}
+                  {e.cidade ? (
+                    <>
+                      <span className="2xl:hidden"> • </span>
+                      {e.cidade}
+                    </>
+                  ) : (
+                    !ocultarCliente &&
+                    cliente && (
+                      // Sem cidade, o cliente faz as vezes do local (abaixo de 1280 px ele já apareceu acima)
+                      <span className="max-xl:hidden">
+                        <span className="2xl:hidden"> • </span>
+                        {cliente.nome}
+                      </span>
+                    )
+                  )}
+                  {e.maquinasIds.length > 0 && (
+                    <>
+                      <span className={e.cidade || (!ocultarCliente && cliente) ? undefined : '2xl:hidden'}> • </span>
+                      {e.maquinasIds.length} {e.maquinasIds.length === 1 ? 'máquina' : 'máquinas'}
+                    </>
+                  )}
                 </p>
               </Td>
-              {!ocultarCliente && <Td className="max-w-[220px] truncate max-md:hidden">{cliente?.nome ?? '—'}</Td>}
-              <Td className="tnum whitespace-nowrap">{periodo(r.dataInicio, r.dataFim)}</Td>
-              <Td alinhar="right" className="max-lg:hidden">
+              {!ocultarCliente && (
+                <Td className="max-w-[150px] truncate max-xl:hidden 2xl:max-w-[220px]">{cliente?.nome ?? '—'}</Td>
+              )}
+              <Td className="tnum whitespace-nowrap max-sm:hidden">{periodo(r.dataInicio, r.dataFim)}</Td>
+              <Td alinhar="right" className="max-2xl:hidden">
                 {numero(r.totalDiarias)}
               </Td>
               <Td alinhar="right" className="font-medium whitespace-nowrap text-ink">
                 {moeda(r.total)}
               </Td>
               <Td className="max-sm:hidden">
-                <PagamentoBadge forma={e.formaPagamento} />
+                <div className="flex flex-col items-start gap-1">
+                  <PagamentoBadge forma={e.formaPagamento} />
+                  <span className="xl:hidden">
+                    <StatusBadge status={e.status} />
+                  </span>
+                </div>
               </Td>
-              <Td className="max-md:hidden">
+              <Td className="max-xl:hidden">
                 <div className="flex items-center gap-1">
                   <StatusBadge status={e.status} />
                   <GoogleSyncBadge evento={e} compacto />

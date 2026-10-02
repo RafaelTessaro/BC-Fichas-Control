@@ -209,6 +209,18 @@ describe('máquinas indisponíveis no evento', () => {
     expect((await req('PUT', `/api/eventos/${b.id}`, novoDia)).status).toBe(409)
   })
 
+  it('reativar um evento cancelado confere as máquinas dele', async () => {
+    const cli = await criarCliente()
+    const p1 = await criarMaquina('P-01')
+    const cancelado = (
+      await req<Evento>('POST', '/api/eventos', { ...eventoCom(cli.id, ['2099-02-01'], [p1.id]), status: 'CANCELADO' }, 201)
+    ).json
+    await req('POST', '/api/eventos', eventoCom(cli.id, ['2099-02-01'], [p1.id]), 201)
+    const r = await req<{ erro: string }>('PATCH', `/api/eventos/${cancelado.id}`, { status: 'EM_ABERTO' })
+    expect(r.status).toBe(409)
+    expect(r.json.erro).toMatch(/P-01 já está no evento/)
+  })
+
   it('conflitos que já estavam gravados não travam outras alterações do evento', async () => {
     const cli = await criarCliente()
     const p1 = await criarMaquina('P-01')

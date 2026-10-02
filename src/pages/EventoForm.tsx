@@ -421,7 +421,7 @@ export function EventoForm() {
                     setErros((x) => ({ ...x, nome: undefined }))
                   }}
                   placeholder="Ex.: Baile da Cidade"
-                  className={cn(erros.nome && 'border-danger')}
+                  className={cn(erros.nome && 'border-danger!')}
                 />
               </Field>
               <Field label="Status" htmlFor="ev-status">
@@ -546,7 +546,7 @@ export function EventoForm() {
                               type="date"
                               value={d.data}
                               onChange={(e) => atualizarDia(d.id, { data: e.target.value })}
-                              className={cn('tnum pr-3', repetida && 'border-danger')}
+                              className={cn('tnum pr-3', repetida && 'border-danger!')}
                               aria-label="Data"
                             />
                           </div>

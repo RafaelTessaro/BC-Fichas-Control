@@ -468,7 +468,7 @@ function FormularioCliente({
                 }
               }}
               placeholder={ehPJ ? '00.000.000/0000-00' : '000.000.000-00'}
-              className={cn(ehPJ && 'pr-[7.25rem]', erroDoc && docChave.length >= (ehPJ ? 14 : 11) && 'border-danger')}
+              className={cn(ehPJ && 'pr-[7.25rem]', erroDoc && docChave.length >= (ehPJ ? 14 : 11) && 'border-danger!')}
             />
             {ehPJ && (
               <div className="absolute inset-y-0 right-1 flex items-center">

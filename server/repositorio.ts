@@ -241,6 +241,8 @@ export class Repositorio {
       if (!anterior) throw naoEncontrado('Evento')
       const patch = validar(normalizarPatch(entrada, anterior))
       const evento: Evento = { ...anterior, ...patch, versao: anterior.versao + 1, atualizadoEm: agora() }
+      // Reativar um evento cancelado confere as máquinas dele de novo (podem ter ido para outro evento)
+      this.verificarMaquinasLivres({ ...evento, id }, anterior)
       this.gravarEvento(evento, false)
       return { evento, anterior, rev: this.incrementarRevisao() }
     })

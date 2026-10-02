@@ -204,8 +204,8 @@ export function Clientes() {
             <thead>
               <tr>
                 <Th>Cliente</Th>
-                <Th className="max-md:hidden">Contato</Th>
-                <Th className="max-lg:hidden">Cidade</Th>
+                <Th className="max-xl:hidden">Contato</Th>
+                <Th className="max-2xl:hidden">Cidade</Th>
                 <Th alinhar="right" className="max-sm:hidden">
                   Eventos
                 </Th>
@@ -219,7 +219,7 @@ export function Clientes() {
                 <Linha key={c.id} indice={i} aoClicar={() => navegar(`/clientes/${c.id}`)}>
                   <Td>
                     {/* No celular o nome é encurtado para o valor faturado caber na tela */}
-                    <div className="flex items-center gap-3 max-sm:max-w-[200px]">
+                    <div className="flex items-center gap-3 max-sm:max-w-[132px]">
                       <Avatar nome={c.nome} />
                       <div className="min-w-0">
                         <div className="flex min-w-0 items-center gap-2">
@@ -238,11 +238,13 @@ export function Clientes() {
                       </div>
                     </div>
                   </Td>
-                  <Td className="max-md:hidden">
+                  <Td className="max-xl:hidden">
                     <p className="truncate text-ink-2">{c.responsavel || '—'}</p>
                     <p className="truncate text-xs text-muted">{c.telefone}</p>
                   </Td>
-                  <Td className="whitespace-nowrap max-lg:hidden">{c.cidade ? `${c.cidade}${c.uf ? ` / ${c.uf}` : ''}` : '—'}</Td>
+                  <Td className="whitespace-nowrap max-2xl:hidden">
+                    {c.cidade ? `${c.cidade}${c.uf ? ` / ${c.uf}` : ''}` : '—'}
+                  </Td>
                   <Td alinhar="right" className="max-sm:hidden">
                     {s.qtd}
                   </Td>

@@ -10,7 +10,8 @@ const variantes: Record<Variante, string> = {
   secondary: 'bg-surface text-ink border border-line-strong/80 shadow-xs hover:bg-surface-2 hover:border-line-strong',
   ghost: 'text-ink-2 hover:bg-surface-2 hover:text-ink',
   soft: 'bg-brand-soft text-brand-ink hover:brightness-[0.97] dark:hover:brightness-125',
-  danger: 'bg-danger text-white shadow-xs hover:brightness-110',
+  // No escuro o vermelho é claro: texto escuro para ter contraste
+  danger: 'bg-danger text-white shadow-xs hover:brightness-110 dark:text-bg',
 }
 
 const tamanhos: Record<Tamanho, string> = {

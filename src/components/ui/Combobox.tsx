@@ -182,7 +182,7 @@ export function Combobox({
         className={cn(
           'flex h-10 w-full cursor-pointer items-center gap-2 rounded-xl border bg-surface px-3.5 text-left text-sm shadow-xs transition-[border-color,box-shadow]',
           aberto ? 'border-brand ring-4 ring-[var(--ring)]' : 'border-line-strong/80 hover:border-line-strong',
-          invalido && !aberto && 'border-danger',
+          invalido && !aberto && 'border-danger!',
         )}
       >
         {selecionada?.icone}
