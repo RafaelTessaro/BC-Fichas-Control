@@ -1,3 +1,4 @@
+import { osEmAberto } from '#shared/maquinas.ts'
 import { Monitor, Moon, PanelLeftClose, PanelLeftOpen, Sun } from 'lucide-react'
 import { motion } from 'motion/react'
 import { useMemo } from 'react'
@@ -128,6 +129,8 @@ export function Sidebar({ mobile, aoNavegar }: { mobile?: boolean; aoNavegar?: (
   const recolhida = !mobile && sidebarRecolhida
   const eventos = useDados((s) => s.eventos)
   const pendentes = useMemo(() => eventos.filter((e) => e.status === 'PENDENTE').length, [eventos])
+  const ordens = useDados((s) => s.ordens)
+  const osAbertas = useMemo(() => ordens.filter(osEmAberto).length, [ordens])
 
   return (
     <motion.aside
@@ -159,7 +162,7 @@ export function Sidebar({ mobile, aoNavegar }: { mobile?: boolean; aoNavegar?: (
                   key={it.to}
                   item={it}
                   recolhida={recolhida}
-                  badge={it.to === '/eventos' ? pendentes : undefined}
+                  badge={it.to === '/eventos' ? pendentes : it.to === '/manutencao' ? osAbertas : undefined}
                   aoNavegar={aoNavegar}
                 />
               ))}

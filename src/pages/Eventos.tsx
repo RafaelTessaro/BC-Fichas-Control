@@ -145,8 +145,13 @@ export function Eventos() {
         descricao="Locações de máquinas com diárias, bobinas e pagamento."
         acoes={
           <>
-            <Button icone={<Download className="h-4 w-4" />} onClick={exportar} disabled={!lista.length}>
-              Exportar
+            <Button
+              icone={<Download className="h-4 w-4" />}
+              onClick={exportar}
+              disabled={!lista.length}
+              title="Baixa uma planilha (CSV) que abre no Excel"
+            >
+              Exportar planilha
             </Button>
             <Button variante="primary" icone={<Plus className="h-4 w-4" />} onClick={() => navegar('/eventos/novo')}>
               Novo evento

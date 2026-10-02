@@ -67,7 +67,7 @@ export function Layout({ children }: { children: ReactNode }) {
             className="group ml-auto flex h-10 w-10 cursor-pointer items-center gap-2.5 rounded-xl border border-line bg-surface px-3 text-sm text-muted shadow-xs transition-colors hover:border-line-strong hover:text-ink-2 sm:w-72 lg:mr-auto lg:ml-0"
           >
             <Search className="h-4 w-4 shrink-0" />
-            <span className="hidden flex-1 text-left sm:block">Buscar clientes, eventos…</span>
+            <span className="hidden flex-1 text-left sm:block">Buscar clientes, eventos, máquinas…</span>
             <kbd className="hidden rounded-md border border-line bg-surface-2 px-1.5 py-0.5 text-[11px] font-medium sm:block">
               {mac ? '⌘' : 'Ctrl'} K
             </kbd>
