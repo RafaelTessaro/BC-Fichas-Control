@@ -25,10 +25,10 @@ Google Agenda — se ela cair, essas duas funções esperam e voltam sozinhas.
 | Visão geral | **Painel** | Faturamento do mês, valores a receber, máquinas em uso hoje, próximos eventos, pagamentos pendentes e bobinas a conferir |
 | | **Agenda** | Calendário mensal com a ocupação das máquinas por dia (e os números das máquinas de cada evento); avisa quando passa de 80% ou do total de máquinas |
 | Cadastros | **Clientes** | Empresa (CNPJ, com consulta automática na Receita), pessoa física (CPF) ou cliente avulso; histórico e total faturado |
-| | **Eventos** | Dias de uso com a quantidade de máquinas em cada dia, cabeçalho e rodapé das fichas, máquinas enviadas, valores, bobinas consignadas/devolvidas, desconto, pagamento, PDF do cliente e recibo (PIX ou dinheiro) |
-| Gestão | **Manutenção** | Máquinas P e G com identificação (P-01, G-03…), situação (disponível, locada, em manutenção, desativada) e onde cada uma está; ordens de serviço (O.S.) com serviços, problema, solução, peças e custo, histórico de cada máquina e O.S. impressa no timbrado |
+| | **Eventos** | Nome (o topo das fichas) e rodapé, dias de uso com a quantidade de máquinas em cada dia (e se as máquinas ficam com o cliente entre um dia e outro), máquinas enviadas, andamento da programação, arquivos anexados (prints, logo, cardápio, PDF), valores, bobinas, desconto, pagamento, PDF do cliente, recibo (PIX ou dinheiro) e envio por e-mail ou WhatsApp |
+| Gestão | **Manutenção** | Máquinas P e G com identificação (P-01, G-03…), situação (disponível, locada, em manutenção, desativada) e onde cada uma está; registro das manutenções (preventiva ou corretiva, serviços feitos, problema relatado, responsável), lista de serviços cadastrados por você, reclamações de clientes e o histórico de cada máquina |
 | | **Relatórios** | Faturamento por mês/semana, recebido × a receber, ticket médio, formas de pagamento, ranking de clientes e planilha (CSV) |
-| | **Configurações** | Disponibilidade de máquinas (quantas P e G), valores padrão, dados do recibo, tema claro/escuro, backups, integração com o Google Agenda e zona de perigo (apagar dados) |
+| | **Configurações** | Disponibilidade de máquinas (quantas P e G), valores padrão, dados do recibo, e-mail para envio de recibos, tema claro/escuro, backups, integração com o Google Agenda e zona de perigo (apagar dados) |
 
 Atalhos: **Ctrl/⌘ + K** abre a busca global e **Ctrl/⌘ + S** salva o evento.
 
@@ -53,7 +53,18 @@ menu de cada evento da lista). O recibo sai em PDF no papel timbrado, com o núm
 valor em algarismos e por extenso, o detalhamento (diárias, bobinas e desconto), a forma e a data
 do pagamento e o espaço para assinatura. O nome, a razão social, o CNPJ e a cidade que aparecem
 no recibo ficam em **Configurações → Dados do recibo**. Para cliente avulso sem nome, o recibo
-deixa o espaço do nome em branco para preencher à mão.
+deixa o espaço do nome em branco para preencher à mão. O texto traz o que um recibo precisa ter:
+quem pagou (com CPF/CNPJ), quem recebeu (com CNPJ), o valor em algarismos e por extenso, a que se
+refere, a forma de pagamento, o local, a data e a quitação do valor.
+
+### Envio por e-mail e por WhatsApp
+
+No detalhe do evento, **Enviar por e-mail** manda o recibo (ou o resumo do evento, com o total)
+em PDF para o e-mail do cliente, já com assunto e mensagem prontos. O envio sai pelo e-mail da
+empresa, configurado uma vez em **Configurações → E-mail** (servidor, usuário e senha; no Gmail e
+no Outlook é preciso criar uma "senha de app"). A senha fica só no servidor.
+**Enviar por WhatsApp** abre o WhatsApp com a mensagem pronta para o telefone do cliente; o PDF é
+baixado para você anexar na conversa (o WhatsApp não aceita anexo pelo link).
 
 ---
 
@@ -150,6 +161,8 @@ use `instalar-servico.ps1 -Porta N`, que também ajusta o Firewall.
 - Em **Configurações → Dados e backup** é possível baixar um backup completo (`.json`),
   restaurar um backup e fazer uma cópia na hora.
 - Recomendado: copiar a pasta `dados/backups` para um pendrive, HD externo ou nuvem uma vez por semana.
+- Os **arquivos anexados** aos eventos ficam em `dados/anexos` e não vão no backup `.json` (que
+  seria grande demais): para guardá-los, copie a pasta `dados` inteira.
 - **Apagar todos os dados** fica separado, no fim de Configurações, na **Zona de perigo**: pede para
   digitar `APAGAR` e o servidor guarda uma cópia automática antes. As configurações continuam.
 - Para voltar uma cópia `.db`, use o `restaurar-copia.ps1` (tabela acima). **Não** copie o arquivo
@@ -184,21 +197,36 @@ Não exponha a porta do servidor para a internet.
   em manutenção ou com eventos de hoje em diante não são retiradas. Também dá para cadastrar uma a
   uma na aba Manutenção.
 - **Onde cada máquina está:** no evento, marque os números das máquinas enviadas. Nos dias do
-  evento a máquina aparece como **Locada**, com o cabeçalho da festa como local. Máquina em outro
+  evento a máquina aparece como **Locada**, com o nome do evento como local. Máquina em outro
   evento nas mesmas datas, em manutenção (para eventos de hoje em diante) ou desativada fica
   apagada e não pode ser marcada; o servidor também recusa. Uma máquina que já estava no evento e
-  depois entrou em manutenção não trava a edição: o sistema só avisa. Máquina com O.S. em aberto
-  ainda pode ser marcada, com um aviso para conferir se está pronta.
+  depois entrou em manutenção não trava a edição: o sistema só avisa. Máquina com manutenção em
+  aberto ainda pode ser marcada, com um aviso para conferir se está pronta.
+- **Máquinas que ficam com o cliente:** para quem usa só nos fins de semana do mês mas não devolve
+  as máquinas no meio da semana, marque no evento **"As máquinas ficam com o cliente entre os dias
+  de uso"**. Elas passam a contar como ocupadas do primeiro ao último dia (na agenda, na
+  disponibilidade e na escolha das máquinas de outros eventos); as diárias continuam só nos dias
+  de uso.
 - **Identificação:** no cadastro da máquina, a letra vem do tipo (P ou G) e o número é livre
   (P-07, G-12…). O sistema não aceita duas máquinas com a mesma identificação.
-- **Cabeçalho e rodapé das fichas:** no evento, os textos que são programados nas máquinas e
-  saem impressos em cada ficha. O rodapé também fecha o resumo em PDF do cliente. Eventos
-  cadastrados antes desta versão tinham o campo "Local": o texto dele foi guardado no início das
-  observações do evento.
-- **Ordens de serviço:** cada manutenção (limpeza completa, higienização, revisão, conserto…)
-  vira uma O.S. numerada na ficha da máquina, preventiva ou corretiva. Ao abrir a O.S., a máquina
-  pode ir para "Em manutenção"; ao concluir, volta para "Disponível". O histórico da máquina junta
-  as O.S. e as locações, para consultar problemas antigos e revisões.
+- **Texto das fichas:** o **nome do evento** é o que sai no topo das fichas programadas nas
+  máquinas, e o **rodapé** sai no fim de cada ficha (também fecha o resumo em PDF do cliente).
+  Eventos antigos que tinham "Local" ou um "Cabeçalho" diferente do nome: o texto foi guardado no
+  início das observações do evento.
+- **Programação:** cada evento mostra o andamento da programação das máquinas (não iniciada, em
+  programação, enviada ao cliente, concluída). O Painel lista os próximos eventos com a programação
+  pendente, para a secretária acompanhar.
+- **Arquivos do evento:** no evento dá para anexar prints da conversa (até colando com Ctrl+V),
+  PDFs, imagens, logo e cardápio que o cliente mandou. Imagens e PDFs abrem na própria tela e
+  qualquer arquivo pode ser baixado. Ficam no servidor, na pasta `dados/anexos` (até 25 MB cada).
+- **Manutenções:** cada serviço feito numa máquina fica registrado na ficha dela: preventiva ou
+  corretiva, situação (iniciada, em andamento, concluída ou cancelada), data, os serviços feitos,
+  o problema relatado e o responsável. Os serviços são os que você cadastra (ex.: troca de
+  cabeçote, higienização, revisão) — dá para cadastrar um novo na hora. Ao registrar a manutenção,
+  a máquina pode ir para "Em manutenção"; ao concluir, volta para "Disponível".
+- **Reclamações de clientes:** quando a máquina volta de um evento, registre o que o cliente
+  relatou (ex.: "estava travando"). A reclamação fica no histórico da máquina, com o evento e o
+  cliente, e dela dá para abrir uma manutenção corretiva.
 
 ## Cadastro de clientes: empresa, pessoa física ou avulso
 
