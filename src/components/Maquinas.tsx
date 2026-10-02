@@ -63,6 +63,7 @@ export function MaquinaChip({
   selecionada,
   aoClicar,
   aviso,
+  desabilitado,
   titulo,
   className,
 }: {
@@ -72,6 +73,8 @@ export function MaquinaChip({
   aoClicar?: () => void
   /** Marca de atenção (ex.: em uso em outro evento nas mesmas datas). */
   aviso?: boolean
+  /** Não pode ser escolhida (em manutenção, em outro evento…): fica apagada e não responde ao clique. */
+  desabilitado?: boolean
   titulo?: string
   className?: string
 }) {
@@ -79,7 +82,9 @@ export function MaquinaChip({
     'relative inline-flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-semibold tnum transition-colors',
     selecionada ? 'border-brand bg-brand text-white shadow-xs' : CORES_ESTADO[estado],
     aoClicar &&
+      !desabilitado &&
       'cursor-pointer hover:brightness-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand',
+    desabilitado && 'cursor-not-allowed opacity-45 saturate-50',
     className,
   )
   const conteudo: ReactNode = (
@@ -98,7 +103,14 @@ export function MaquinaChip({
     )
   }
   return (
-    <button type="button" className={classes} title={titulo} aria-pressed={!!selecionada} onClick={aoClicar}>
+    <button
+      type="button"
+      className={classes}
+      title={titulo}
+      aria-pressed={!!selecionada}
+      disabled={desabilitado}
+      onClick={aoClicar}
+    >
       {conteudo}
     </button>
   )

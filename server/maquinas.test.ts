@@ -163,6 +163,65 @@ describe('evento com cabeçalho e máquinas enviadas', () => {
   })
 })
 
+describe('máquinas indisponíveis no evento', () => {
+  it('recusa máquina em manutenção ou desativada em evento de hoje em diante', async () => {
+    const cli = await criarCliente()
+    const manut = await criarMaquina('P-01', { status: 'MANUTENCAO' })
+    const desat = await criarMaquina('P-02', { status: 'DESATIVADA' })
+    const r = await req<{ erro: string }>('POST', '/api/eventos', eventoCom(cli.id, ['2099-01-10'], [manut.id]))
+    expect(r.status).toBe(409)
+    expect(r.json.erro).toMatch(/P-01 está em manutenção/)
+    const d = await req<{ erro: string }>('POST', '/api/eventos', eventoCom(cli.id, ['2020-01-10'], [desat.id]))
+    expect(d.status).toBe(409)
+    expect(d.json.erro).toMatch(/P-02 está desativada/)
+    // Evento só no passado (lançamento atrasado): a manutenção de hoje não impede
+    await req('POST', '/api/eventos', eventoCom(cli.id, ['2020-01-10'], [manut.id]), 201)
+    // Evento cancelado não é cobrado
+    await req('POST', '/api/eventos', { ...eventoCom(cli.id, ['2099-01-10'], [manut.id]), status: 'CANCELADO' }, 201)
+  })
+
+  it('recusa a mesma máquina em outro evento nas mesmas datas, dizendo qual', async () => {
+    const cli = await criarCliente()
+    const p1 = await criarMaquina('P-01')
+    const p2 = await criarMaquina('P-02')
+    const a = (
+      await req<Evento>(
+        'POST',
+        '/api/eventos',
+        { ...eventoCom(cli.id, ['2099-01-10', '2099-01-11'], [p1.id]), nome: 'Festa A' },
+        201,
+      )
+    ).json
+    const r = await req<{ erro: string; conflitos: unknown[] }>(
+      'POST',
+      '/api/eventos',
+      eventoCom(cli.id, ['2099-01-11'], [p2.id, p1.id]),
+    )
+    expect(r.status).toBe(409)
+    expect(r.json.erro).toBe(
+      `A máquina P-01 já está no evento #${String(a.codigo).padStart(4, '0')} Festa A (Barraca) em 11/01. Escolha outra máquina.`,
+    )
+    expect(r.json.conflitos).toHaveLength(1)
+    // Outra data: pode
+    const b = (await req<Evento>('POST', '/api/eventos', eventoCom(cli.id, ['2099-01-12'], [p1.id]), 201)).json
+    // Acrescentar ao evento B um dia em que a P-01 está na Festa A: recusa
+    const novoDia = { ...b, dias: [...b.dias, { id: 'x', data: '2099-01-10', maquinas: 1 }] }
+    expect((await req('PUT', `/api/eventos/${b.id}`, novoDia)).status).toBe(409)
+  })
+
+  it('conflitos que já estavam gravados não travam outras alterações do evento', async () => {
+    const cli = await criarCliente()
+    const p1 = await criarMaquina('P-01')
+    const backup = (await req<Backup>('GET', '/api/backup')).json
+    // Dois eventos com a mesma máquina no mesmo dia (vindos de uma versão sem a trava)
+    const evento = (id: string, codigo: number) => ({ ...eventoCom(cli.id, ['2099-03-01'], [p1.id]), id, codigo })
+    await req('POST', '/api/backup/restaurar', { ...backup, eventos: [evento('a', 1), evento('b', 2)] }, 200)
+    const [, b] = (await dados()).eventos
+    await req('PUT', `/api/eventos/${b.id}`, { ...b, nome: 'Renomeado' }, 200)
+    await req('PATCH', `/api/eventos/${b.id}`, { status: 'PENDENTE' }, 200)
+  })
+})
+
 describe('ordens de serviço', () => {
   it('numera, muda a situação da máquina junto e valida as datas', async () => {
     const m = await criarMaquina('G-04')

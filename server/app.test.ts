@@ -252,7 +252,7 @@ describe('API de dados', () => {
     expect(r.statusCode, r.body).toBe(200)
     const dados = (await app.inject({ url: '/api/dados' })).json()
     expect(dados.clientes[0]).toMatchObject({ logradouro: 'Rua 1, 10', versao: 1 })
-    expect(dados.config).toEqual({ valorDiariaPadrao: 90, valorBobinaPadrao: 5, frotaMaquinas: 12, rodapePadrao: 'OBRIGADO' })
+    expect(dados.config).toMatchObject({ valorDiariaPadrao: 90, valorBobinaPadrao: 5, frotaMaquinas: 12, rodapePadrao: 'OBRIGADO' })
     expect((await criarEvento('c1')).codigo).toBe(8)
   })
 

@@ -13,7 +13,14 @@ import {
   validarBackup,
 } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
-import { chaveIdentificacao, ordenarMaquinas, planoAjuste, STATUS_MAQUINA_LISTA, TIPOS_MAQUINA } from '#shared/maquinas.ts'
+import {
+  chaveIdentificacao,
+  conflitosMaquinas,
+  ordenarMaquinas,
+  planoAjuste,
+  STATUS_MAQUINA_LISTA,
+  TIPOS_MAQUINA,
+} from '#shared/maquinas.ts'
 import { gerarDadosExemplo } from '#shared/seed.ts'
 import type {
   Backup,
@@ -201,6 +208,7 @@ export class Repositorio {
     const { evento, rev } = transacao(this.db, () => {
       this.exigirCliente(dados.clienteId)
       this.exigirMaquinas(dados.maquinasIds)
+      this.verificarMaquinasLivres({ ...dados, id: undefined })
       const codigo = this.proximoCodigo()
       const ts = agora()
       const evento: Evento = { ...dados, id: novoId(), versao: 1, codigo, criadoEm: ts, atualizadoEm: ts }
@@ -218,6 +226,7 @@ export class Repositorio {
       this.verificarVersao(anterior, versaoEsperada, 'evento')
       this.exigirCliente(dados.clienteId)
       this.exigirMaquinas(dados.maquinasIds)
+      this.verificarMaquinasLivres({ ...dados, id }, anterior)
       const evento: Evento = { ...anterior, ...dados, versao: anterior.versao + 1, atualizadoEm: agora() }
       this.gravarEvento(evento, false)
       return { evento, anterior, rev: this.incrementarRevisao() }
@@ -667,6 +676,56 @@ export class Repositorio {
     if (ids.some((id) => !existentes.has(id))) {
       throw new ErroApi(400, 'Uma das máquinas selecionadas não existe mais. Confira a lista de máquinas enviadas.')
     }
+  }
+
+  /**
+   * Recusa (409) mandar para o evento uma máquina que não pode ir: desativada; em manutenção
+   * (se o evento tem dias de hoje em diante); ou em outro evento nas mesmas datas. Vale para
+   * máquinas acrescentadas e para dias acrescentados — o que já estava gravado não é cobrado de
+   * novo, para não travar a edição de eventos antigos.
+   */
+  private verificarMaquinasLivres(
+    evento: Pick<Evento, 'dias' | 'maquinasIds' | 'status'> & { id: string | undefined },
+    anterior?: Evento,
+  ) {
+    if (evento.status === 'CANCELADO' || !evento.maquinasIds.length) return
+    const antes = new Set(anterior?.status === 'CANCELADO' ? [] : (anterior?.maquinasIds ?? []))
+    const novas = evento.maquinasIds.filter((id) => !antes.has(id))
+    const maquinas = new Map(this.listarMaquinas().map((m) => [m.id, m]))
+    const temFuturo = evento.dias.some((d) => d.data >= hojeLocalIso())
+    for (const id of novas) {
+      const m = maquinas.get(id)
+      if (m?.status === 'DESATIVADA') throw new ErroApi(409, `A máquina ${m.identificacao} está desativada. Escolha outra.`)
+      if (m?.status === 'MANUTENCAO' && temFuturo) {
+        throw new ErroApi(409, `A máquina ${m.identificacao} está em manutenção. Escolha outra ou conclua a manutenção antes.`)
+      }
+    }
+    // Máquinas novas em todos os dias; as que já estavam, só nos dias acrescentados
+    const diasAntes = new Set(anterior?.status === 'CANCELADO' ? [] : (anterior?.dias ?? []).map((d) => d.data))
+    const diasNovos = evento.dias.filter((d) => !diasAntes.has(d.data))
+    const eventos = this.listarEventosBrutos()
+    const conflitos = [
+      ...conflitosMaquinas({ id: evento.id, dias: evento.dias, maquinasIds: novas }, eventos),
+      ...conflitosMaquinas(
+        { id: evento.id, dias: diasNovos, maquinasIds: evento.maquinasIds.filter((id) => antes.has(id)) },
+        eventos,
+      ),
+    ]
+    if (!conflitos.length) return
+    const [maquinaId, outros] = conflitos[0]
+    const outro = outros[0]
+    const datas = new Set(evento.dias.map((d) => d.data))
+    const emComum = outro.dias
+      .map((d) => d.data)
+      .filter((d) => datas.has(d))
+      .sort()
+      .map((d) => `${d.slice(8, 10)}/${d.slice(5, 7)}`)
+    const cliente = this.obterCliente(outro.clienteId)?.nome
+    throw new ErroApi(
+      409,
+      `A máquina ${maquinas.get(maquinaId)?.identificacao ?? ''} já está no evento #${String(outro.codigo).padStart(4, '0')} ${outro.nome}${cliente ? ` (${cliente})` : ''} em ${emComum.join(', ')}. Escolha outra máquina.`,
+      { conflitos: conflitos.map(([id, evs]) => ({ maquinaId: id, eventos: evs.map((e) => e.id) })) },
+    )
   }
 
   /** Grava a nova situação da máquina (dentro da transação de quem chama); `undefined` se nada mudou. */

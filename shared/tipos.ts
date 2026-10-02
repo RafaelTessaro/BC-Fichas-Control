@@ -95,6 +95,11 @@ export interface Configuracoes {
    */
   frotaMaquinas: number
   rodapePadrao: string
+  /** Empresa que emite o recibo (nome fantasia, razão social, CNPJ e cidade do recibo). */
+  empresaNome: string
+  empresaRazaoSocial: string
+  empresaCnpj: string
+  empresaCidade: string
 }
 
 // ---- Máquinas e manutenção ---------------------------------------------------

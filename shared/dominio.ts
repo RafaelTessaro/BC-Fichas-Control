@@ -26,6 +26,10 @@ export const CONFIG_PADRAO: Configuracoes = {
   valorBobinaPadrao: 6,
   frotaMaquinas: 10,
   rodapePadrao: 'AGRADECEMOS SUA PRESENÇA!',
+  empresaNome: 'Balanças.com',
+  empresaRazaoSocial: 'FABIO DE GODOY LIMA LTDA',
+  empresaCnpj: '12.403.843/0001-18',
+  empresaCidade: 'Rio Claro - SP',
 }
 
 export const CLIENTE_VAZIO: ClienteInput = {
@@ -420,14 +424,21 @@ export function migrarOS(entrada: unknown): OrdemServico {
 
 export function normalizarConfig(entrada: unknown): Resultado<Configuracoes> {
   const r = { ...CONFIG_PADRAO, ...obj(entrada) }
+  const erros: string[] = []
+  const cnpj = normalizarCnpj(texto(r.empresaCnpj))
+  if (cnpj && !cnpjValido(cnpj)) erros.push('CNPJ da empresa inválido. Confira o número digitado.')
   return {
     valor: {
       valorDiariaPadrao: dinheiro(r.valorDiariaPadrao),
       valorBobinaPadrao: dinheiro(r.valorBobinaPadrao),
       frotaMaquinas: inteiro(r.frotaMaquinas, LIMITES.maquinas, 1),
-      rodapePadrao: texto(r.rodapePadrao),
+      rodapePadrao: multilinha(r.rodapePadrao),
+      empresaNome: texto(r.empresaNome),
+      empresaRazaoSocial: texto(r.empresaRazaoSocial),
+      empresaCnpj: cnpj ? mascaraCnpj(cnpj) : '',
+      empresaCidade: texto(r.empresaCidade),
     },
-    erros: [],
+    erros,
   }
 }
 
