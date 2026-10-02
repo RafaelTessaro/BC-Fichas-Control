@@ -1,6 +1,7 @@
-// Cadastro e edição de uma máquina (P ou G).
+// Cadastro e edição de uma máquina (P ou G): tipo, identificação e situação.
+// Modelo, nº de série, aquisição e observações saíram da tela; os valores já gravados continuam.
 
-import { CircleAlert, Cpu } from 'lucide-react'
+import { CircleAlert } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
@@ -24,7 +25,8 @@ import { useDados } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
 import { Button } from './ui/Button'
 import { confirmar } from './ui/Feedback'
-import { Field, Input, Textarea } from './ui/Form'
+import { IconeMaquinaFichas } from './IconeMaquinaFichas'
+import { Field, Input } from './ui/Form'
 import { Segmented } from './ui/Misc'
 import { Modal } from './ui/Modal'
 
@@ -47,13 +49,13 @@ export function MaquinaFormModal({
     <Modal
       aberto={aberto}
       aoFechar={aoFechar}
-      largura="max-w-xl"
-      icone={<Cpu className="h-5 w-5" />}
+      largura="max-w-lg"
+      icone={<IconeMaquinaFichas className="h-5 w-5" />}
       titulo={maquina ? `Editar máquina ${maquina.identificacao}` : 'Nova máquina'}
       descricao={
         maquina
-          ? 'Identificação, situação e dados de cadastro.'
-          : 'A letra (P ou G) vem do tipo: digite só o número escrito na máquina. Os outros campos são opcionais.'
+          ? 'Tipo, identificação e situação da máquina.'
+          : 'A letra (P ou G) vem do tipo: digite só o número escrito na máquina.'
       }
       rodape={
         <>
@@ -135,6 +137,7 @@ function FormularioMaquina({
 
   const [f, setF] = useState<MaquinaInput>(() => {
     if (maquina) {
+      // Leva junto os campos que saíram da tela (modelo, série…): salvar não apaga o que já estava gravado
       const { id: _i, versao: _v, criadoEm: _c, atualizadoEm: _a, ...resto } = maquina
       return { ...MAQUINA_VAZIA, ...resto }
     }
@@ -175,8 +178,10 @@ function FormularioMaquina({
   const n = Number(numero || 0)
   const identificacao = n > 0 ? identificacaoPadrao(f.tipo, n) : ''
   const erroNumero = !numero ? 'Digite o número da máquina.' : n === 0 ? 'Use um número a partir de 1.' : null
-  const { valor, erros } = normalizarMaquina({ ...f, identificacao })
-  const erroData = erros.find((e) => /aquisi/i.test(e))
+  const { valor, erros: errosCadastro } = normalizarMaquina({ ...f, identificacao })
+  // Uma data de aquisição antiga inválida não tem como ser corrigida (o campo saiu da tela):
+  // a normalização já a descarta, então ela não impede salvar
+  const erros = errosCadastro.filter((e) => !/aquisi/i.test(e))
   const chave = chaveIdentificacao(identificacao)
   const repetida = chave ? outras.find((m) => chaveIdentificacao(m.identificacao) === chave) : undefined
   const repetidaNoServidor = repetidaServidor && chaveIdentificacao(repetidaServidor.texto) === chave ? repetidaServidor : null
@@ -326,8 +331,8 @@ function FormularioMaquina({
         />
       </Field>
 
-      <Field label="Identificação" htmlFor="maq-id" className="sm:col-span-3" hint={dica}>
-        <div className="relative">
+      <Field label="Identificação" htmlFor="maq-id" className="sm:col-span-6" hint={dica}>
+        <div className="relative sm:max-w-[220px]">
           {/* Prefixo fixo do tipo: faz parte do campo, mas não dá para apagar */}
           <span
             aria-hidden="true"
@@ -364,15 +369,6 @@ function FormularioMaquina({
           </span>
         </div>
       </Field>
-      <Field label="Modelo" htmlFor="maq-modelo" className="sm:col-span-3">
-        <Input
-          id="maq-modelo"
-          value={f.modelo}
-          onChange={(e) => set('modelo', e.target.value)}
-          placeholder="Ex.: Compacta 2 vias"
-        />
-      </Field>
-
       <Field
         label="Situação"
         className="sm:col-span-6"
@@ -383,27 +379,6 @@ function FormularioMaquina({
           valor={f.status}
           aoMudar={(v: StatusMaquina) => set('status', v)}
           opcoes={STATUS_MAQUINA_LISTA.map((s) => ({ valor: s, label: ESTADO_MAQUINA[s].label }))}
-        />
-      </Field>
-
-      <Field label="Nº de série" htmlFor="maq-serie" className="sm:col-span-3">
-        <Input id="maq-serie" value={f.numeroSerie} onChange={(e) => set('numeroSerie', e.target.value)} autoComplete="off" />
-      </Field>
-      <Field label="Data de aquisição" htmlFor="maq-aquisicao" className="sm:col-span-3" erro={erroData}>
-        <Input
-          id="maq-aquisicao"
-          type="date"
-          value={f.dataAquisicao}
-          max={hojeISO()}
-          onChange={(e) => set('dataAquisicao', e.target.value)}
-        />
-      </Field>
-      <Field label="Observações" htmlFor="maq-obs" className="sm:col-span-6">
-        <Textarea
-          id="maq-obs"
-          value={f.observacoes}
-          onChange={(e) => set('observacoes', e.target.value)}
-          placeholder="Ex.: comprada usada, acompanha capa de proteção…"
         />
       </Field>
     </form>

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { calcularEvento, FORMAS_PAGAMENTO, STATUS_EVENTO } from '#shared/calc.ts'
+import { datasOcupadas } from '#shared/maquinas.ts'
 import type { Cliente, Evento, StatusEvento } from '#shared/tipos.ts'
 
 /**
@@ -113,17 +114,21 @@ export interface OpcoesMapeamento {
   maquinas?: ReadonlyMap<string, string>
 }
 
+/**
+ * Cidade do evento: a dele, nos eventos antigos que tinham uma; senão, a do cadastro do cliente
+ * (o formulário não pede mais a cidade do evento).
+ */
+export const cidadeDoEvento = (evento: Pick<Evento, 'cidade'>, cliente: Pick<Cliente, 'cidade'> | undefined) =>
+  evento.cidade.trim() || cliente?.cidade?.trim() || ''
+
 /** Descrição em texto do evento (igual em todos os blocos). */
 export function descricaoEvento(evento: Evento, cliente: Cliente | undefined, opcoes: OpcoesMapeamento): string {
+  // O nome do evento (no título) é o que sai no topo das fichas: o antigo cabeçalho não vai mais
   const linhas: string[] = [`Evento ${codigo(evento.codigo)}`]
   linhas.push(`Cliente: ${cliente?.nome || 'Cliente removido'}`)
   if (cliente?.telefone) linhas.push(`Telefone: ${cliente.telefone}`)
-  if (evento.cidade) linhas.push(`Cidade: ${evento.cidade}`)
-  const cabecalho = evento.cabecalho
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
-  if (cabecalho.length) linhas.push(`Cabeçalho das fichas: ${cabecalho.join(' / ')}`)
+  const cidade = cidadeDoEvento(evento, cliente)
+  if (cidade) linhas.push(`Cidade: ${cidade}`)
   const maquinas = evento.maquinasIds.map((id) => opcoes.maquinas?.get(id)).filter((m): m is string => !!m)
   if (maquinas.length) linhas.push(`Máquinas enviadas: ${maquinas.join(', ')}`)
 
@@ -135,6 +140,15 @@ export function descricaoEvento(evento: Evento, cliente: Cliente | undefined, op
         `• ${dataBR(d.data)} (${SEMANA[new Date(paraUTC(d.data)).getUTCDay()]}): ${plural(d.maquinas, 'máquina', 'máquinas')}`,
       )
     }
+  }
+  // Período corrido: as máquinas não voltam entre os dias de uso (no Google aparecem só os dias de uso)
+  const ocupadas = evento.periodoCorrido ? datasOcupadas(evento) : []
+  if (ocupadas.length > todos.length) {
+    linhas.push(
+      '',
+      `As máquinas ficam com o cliente de ${dataBR(ocupadas[0])} a ${dataBR(ocupadas[ocupadas.length - 1])} ` +
+        `(${plural(ocupadas.length, 'dia', 'dias')}), também entre os dias de uso.`,
+    )
   }
 
   linhas.push('', `Bobinas consignadas: ${inteiro.format(evento.bobinasConsignadas || 0)}`)
@@ -150,7 +164,7 @@ export function descricaoEvento(evento: Evento, cliente: Cliente | undefined, op
 export function montarEventosGoogle(evento: Evento, cliente: Cliente | undefined, opcoes: OpcoesMapeamento): EventoGoogle[] {
   if (evento.status === 'CANCELADO') return []
   const description = descricaoEvento(evento, cliente, opcoes)
-  const location = evento.cidade
+  const location = cidadeDoEvento(evento, cliente)
   const nomeCliente = cliente?.nome || 'Cliente removido'
   return blocosDeDatas(evento.dias).map((bloco, i) => {
     const g: EventoGoogle = {

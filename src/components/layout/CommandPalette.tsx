@@ -1,15 +1,16 @@
-import { CalendarPlus, ClipboardPlus, CornerDownLeft, Cpu, Search, Ticket, UserPlus } from 'lucide-react'
+import { CalendarPlus, ClipboardPlus, CornerDownLeft, Search, Ticket, UserPlus } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { create } from 'zustand'
 import { calcularEvento } from '#shared/calc.ts'
-import { cabecalhoEmLinha, ESTADO_MAQUINA } from '#shared/maquinas.ts'
+import { ESTADO_MAQUINA, localDaLocacao, TIPO_MAQUINA } from '#shared/maquinas.ts'
 import { cn } from '../../lib/cn'
 import { codigoEvento, normalizar, periodo } from '../../lib/format'
 import { maquinaCombina } from '../../lib/manutencao'
 import { useDados } from '../../store/dados'
+import { IconeMaquinaFichas } from '../IconeMaquinaFichas'
 import { TipoMaquinaBadge, useSituacoes } from '../Maquinas'
 import { Avatar } from '../ui/Misc'
 import { TODAS_PAGINAS } from './nav'
@@ -87,9 +88,9 @@ function Paleta({ fechar }: { fechar: () => void }) {
       {
         id: 'a-os',
         grupo: 'Ações rápidas',
-        titulo: 'Nova O.S.',
-        detalhe: 'Ordem de serviço de manutenção',
-        chaves: 'os ordem de servico manutencao limpeza conserto',
+        titulo: 'Nova manutenção',
+        detalhe: 'Registrar um serviço feito numa máquina',
+        chaves: 'os o.s. ordem de servico manutencao registrar limpeza higienizacao revisao conserto',
         icone: <ClipboardPlus className="h-4 w-4" />,
         ir: ir('/manutencao?nova=os'),
       },
@@ -98,11 +99,11 @@ function Paleta({ fechar }: { fechar: () => void }) {
         grupo: 'Ações rápidas',
         titulo: 'Nova máquina',
         chaves: 'cadastrar maquina p g',
-        icone: <Cpu className="h-4 w-4" />,
+        icone: <IconeMaquinaFichas className="h-4 w-4" />,
         ir: ir('/manutencao?nova=maquina'),
       },
     ]
-    // Sem máquinas cadastradas, não dá para abrir O.S.
+    // Sem máquinas cadastradas, não dá para registrar manutenção
     out.push(...acoes.filter((a) => (a.id !== 'a-os' || maquinas.length) && casa(`${a.titulo} ${a.chaves ?? ''}`)))
     out.push(
       ...TODAS_PAGINAS.filter((p) => casa(`${p.label} ${p.descricao}`)).map((p) => ({
@@ -131,7 +132,7 @@ function Paleta({ fechar }: { fechar: () => void }) {
       )
       out.push(
         ...eventos
-          .filter((e) => casa(`${e.nome} ${codigoEvento(e.codigo)} ${nomeCliente.get(e.clienteId) ?? ''} ${e.cabecalho}`))
+          .filter((e) => casa(`${e.nome} ${codigoEvento(e.codigo)} ${nomeCliente.get(e.clienteId) ?? ''}`))
           .sort((a, b) => b.codigo - a.codigo)
           .slice(0, 8)
           .map((e) => {
@@ -152,18 +153,12 @@ function Paleta({ fechar }: { fechar: () => void }) {
           .slice(0, 6)
           .map((m) => {
             const sit = situacoes.get(m.id)
-            const onde = sit?.evento && sit.estado === 'LOCADA' ? ` · ${cabecalhoEmLinha(sit.evento)}` : ''
+            const onde = sit?.evento && sit.estado === 'LOCADA' ? ` · ${localDaLocacao(sit.evento)}` : ''
             return {
               id: `m-${m.id}`,
               grupo: 'Máquinas',
               titulo: m.identificacao,
-              detalhe: [
-                `${ESTADO_MAQUINA[sit?.estado ?? m.status].label}${onde}`,
-                m.modelo,
-                m.numeroSerie && `Série ${m.numeroSerie}`,
-              ]
-                .filter(Boolean)
-                .join(' • '),
+              detalhe: [`${ESTADO_MAQUINA[sit?.estado ?? m.status].label}${onde}`, TIPO_MAQUINA[m.tipo].label].join(' • '),
               icone: <TipoMaquinaBadge tipo={m.tipo} />,
               ir: ir(`/manutencao/${m.id}`),
             }

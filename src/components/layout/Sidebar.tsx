@@ -13,7 +13,7 @@ function ativoPara(pathname: string, to: string) {
   return to === '/' ? pathname === '/' : pathname === to || pathname.startsWith(to + '/')
 }
 
-/** Contador ao lado de um item do menu (eventos pendentes, O.S. em aberto) e o que ele significa. */
+/** Contador ao lado de um item do menu (eventos pendentes, manutenções em aberto) e o que ele significa. */
 interface ContadorNav {
   valor: number
   /** Ex.: "11 eventos pendentes". */
@@ -165,7 +165,10 @@ export function Sidebar({ mobile, aoNavegar }: { mobile?: boolean; aoNavegar?: (
   const osAbertas = useMemo(() => ordens.filter(osEmAberto).length, [ordens])
   const contadores: Record<string, ContadorNav> = {
     '/eventos': { valor: pendentes, descricao: `${pendentes} ${pendentes === 1 ? 'evento pendente' : 'eventos pendentes'}` },
-    '/manutencao': { valor: osAbertas, descricao: `${osAbertas} O.S. em aberto` },
+    '/manutencao': {
+      valor: osAbertas,
+      descricao: `${osAbertas} ${osAbertas === 1 ? 'manutenção em aberto' : 'manutenções em aberto'}`,
+    },
   }
 
   return (

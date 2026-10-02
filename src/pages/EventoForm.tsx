@@ -7,10 +7,10 @@ import {
   Clock,
   CreditCard,
   Landmark,
+  MoveHorizontal,
   Package,
   Plus,
   QrCode,
-  ReceiptText,
   RotateCcw,
   Save,
   Trash2,
@@ -19,14 +19,15 @@ import {
   UserRound,
   Users,
   Wallet,
-  WandSparkles,
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useCallback, useEffect, useMemo, useRef, useState, type ButtonHTMLAttributes, type ReactNode } from 'react'
 import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom'
+import { AnexosEvento } from '../components/AnexosEvento'
 import { ConferenciaBadge } from '../components/Badges'
 import { ClienteFormModal } from '../components/ClienteFormModal'
 import { SeletorMaquinas } from '../components/MaquinasEvento'
+import { SeletorProgramacao } from '../components/Programacao'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Combobox, type AcaoCombo } from '../components/ui/Combobox'
@@ -36,11 +37,12 @@ import { confirmar } from '../components/ui/Feedback'
 import { ErroApi } from '../lib/api'
 import { AnimatedNumber, Avatar, EmptyState, PageHeader } from '../components/ui/Misc'
 import { calcularEvento, FORMAS_PAGAMENTO, ocupacaoPorDia, STATUS_EVENTO } from '#shared/calc.ts'
-import { resumoTrocas, trocasMaquinas } from '../lib/bloqueioMaquinas'
+import { enviarPendentes } from '../lib/anexos'
+import { listaDatas, resumoTrocas, trocasMaquinas } from '../lib/bloqueioMaquinas'
 import { cn } from '../lib/cn'
 import { codigoEvento, dataExtensa, hojeISO, moeda, normalizar, numero } from '../lib/format'
 import { CLIENTE_VAZIO, LIMITES } from '#shared/dominio.ts'
-import { capacidade, ordenarMaquinas } from '#shared/maquinas.ts'
+import { capacidade, diasOcupados, ordenarMaquinas, STATUS_PROGRAMACAO, type DiaOcupado } from '#shared/maquinas.ts'
 import { novoId } from '../lib/storage'
 import type { DiaEvento, Evento, FormaPagamento, StatusEvento, TipoCliente } from '#shared/tipos.ts'
 import { useDados, type EventoInput } from '../store/dados'
@@ -63,7 +65,7 @@ export function EventoForm() {
   const { id } = useParams()
   const [params] = useSearchParams()
   const navegar = useNavigate()
-  const { eventos, clientes, maquinas, config, salvarEvento } = useDados()
+  const { eventos, clientes, maquinas, config, salvarEvento, enviarAnexo } = useDados()
   const existente = id ? eventos.find((e) => e.id === id) : undefined
 
   const [f, setF] = useState<EventoInput>(() => {
@@ -93,7 +95,10 @@ export function EventoForm() {
     }
   })
   const [erros, setErros] = useState<Erros>({})
-  const [salvando, setSalvando] = useState(false)
+  // 'arquivos': o evento novo já foi criado e os arquivos escolhidos estão sendo enviados
+  const [salvando, setSalvando] = useState<false | 'evento' | 'arquivos'>(false)
+  // Evento novo: os arquivos escolhidos esperam o evento ser criado para serem enviados
+  const [pendentes, setPendentes] = useState<File[]>([])
   // Versão aberta para edição; se outra pessoa salvar antes, o servidor recusa e avisamos
   const [versaoBase, setVersaoBase] = useState(existente?.versao)
   const [clienteModal, setClienteModal] = useState<{ aberto: boolean; nome?: string; tipo?: TipoCliente }>({ aberto: false })
@@ -109,6 +114,10 @@ export function EventoForm() {
   const hoje = useHoje()
   const emManutencao = (data: string) => (data >= hoje ? cap.manutencao : 0)
   const cliente = clientes.find((c) => c.id === f.clienteId)
+  // Cidade e telefone, embaixo do cliente. A cidade é a do cadastro dele (o evento não tem mais
+  // cidade própria; os antigos mantêm a que tinham)
+  const cidade = f.cidade.trim() || (cliente?.cidade ? [cliente.cidade, cliente.uf].filter(Boolean).join(' - ') : '')
+  const contatoCliente = [cidade, cliente?.telefone].filter(Boolean).join(' • ')
 
   const irParaMaquinas = () =>
     document.getElementById('maquinas-enviadas')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
@@ -121,14 +130,9 @@ export function EventoForm() {
     return () => clearTimeout(t)
   }, [secao])
 
-  // ---- Cabeçalho e rodapé das fichas ------------------------------------------
-  const nomeMaiusculo = f.nome.trim().toLocaleUpperCase('pt-BR')
-  const linhasCabecalho = f.cabecalho.split('\n')
-  /** Coloca o nome do evento em maiúsculas na primeira linha do cabeçalho (as outras linhas ficam). */
-  const usarNomeNoCabecalho = () => set('cabecalho', [nomeMaiusculo, ...linhasCabecalho.slice(1)].join('\n'))
+  // ---- Rodapé das fichas (o topo é o nome do evento) ----------------------------
   const rodapePadrao = config.rodapePadrao.trim()
-  // Mesma altura nos dois campos, para ficarem alinhados lado a lado
-  const linhasTexto = Math.min(8, Math.max(3, linhasCabecalho.length, f.rodape.split('\n').length))
+  const linhasRodape = Math.min(6, Math.max(2, f.rodape.split('\n').length))
 
   const opcoesClientes = useMemo(
     () =>
@@ -144,9 +148,10 @@ export function EventoForm() {
   )
 
   // ---- Seletor de cliente: cadastro completo (modal) ou cliente avulso na hora ----
+  // A cidade não é mais preenchida: vale a do cadastro do cliente (eventos antigos mantêm a sua)
   const salvarCliente = useDados((s) => s.salvarCliente)
-  const selecionarCliente = (c: { id: string; cidade: string }) => {
-    setF((s) => ({ ...s, clienteId: c.id, cidade: s.cidade || c.cidade }))
+  const selecionarCliente = (c: { id: string }) => {
+    setF((s) => ({ ...s, clienteId: c.id }))
     setErros((e) => ({ ...e, cliente: undefined }))
   }
   // Trava contra duplo clique (ou Enter seguido de clique): cada execução criaria outro avulso
@@ -205,6 +210,20 @@ export function EventoForm() {
     }
     return rep
   }, [f.dias])
+
+  // ---- Dias ocupados: com período corrido, também os do meio (com a maior quantidade) ----
+  const ocupados = useMemo(() => diasOcupados({ dias: f.dias, periodoCorrido: f.periodoCorrido }), [f.dias, f.periodoCorrido])
+  const qtdOcupada = useMemo(() => new Map(ocupados.map((d) => [d.data, d.maquinas])), [ocupados])
+  /** Datas de uso distintas, em ordem. */
+  const datasUso = useMemo(() => [...new Set(f.dias.map((d) => d.data).filter(Boolean))].sort(), [f.dias])
+  // Há dias sem uso entre o primeiro e o último: aí faz sentido perguntar se as máquinas voltam
+  const temIntervalo =
+    datasUso.length >= 2 &&
+    differenceInCalendarDays(parseISO(datasUso[datasUso.length - 1]), parseISO(datasUso[0])) + 1 > datasUso.length
+  /** Máquinas livres na data (sem as deste evento), descontando as em manutenção de hoje em diante. */
+  const livresEm = (data: string) => totalMaquinas - emManutencao(data) - (ocupacao.get(data) ?? 0)
+  // Dias do meio (só com o cliente) sem máquinas suficientes para as deste evento
+  const faltasNoMeio = ocupados.filter((d) => !d.uso && d.maquinas > livresEm(d.data))
 
   const atualizarDia = (diaId: string, patch: Partial<DiaEvento>) =>
     set(
@@ -276,6 +295,7 @@ export function EventoForm() {
       eventos,
       clientes,
       dias: f.dias,
+      periodoCorrido: f.periodoCorrido,
       eventoId: id,
       salvo: existente,
       cancelado: f.status === 'CANCELADO',
@@ -301,10 +321,24 @@ export function EventoForm() {
       maquinasIds,
       dataPagamento: f.formaPagamento === 'NAO_PAGO' ? '' : f.dataPagamento || hojeISO(),
     }
-    setSalvando(true)
+    setSalvando('evento')
     try {
       const salvo = await salvarEvento(dados, id && versaoBase !== undefined ? { id, versao: versaoBase } : undefined)
       toast.sucesso(id ? 'Evento atualizado' : 'Evento cadastrado', `${codigoEvento(salvo.codigo)} • ${salvo.nome}`)
+      // Evento novo: agora que ele existe, envia os arquivos escolhidos (um de cada vez)
+      if (!id && pendentes.length) {
+        setSalvando('arquivos')
+        const falhas = await enviarPendentes(salvo.id, pendentes, enviarAnexo)
+        if (falhas.length) {
+          const um = falhas.length === 1
+          toast.erro(
+            um ? 'Um arquivo não foi anexado' : `${falhas.length} arquivos não foram anexados`,
+            `${falhas.map((x) => `${x.nome}: ${x.motivo}`).join(' · ')}. O evento foi salvo; anexe ${um ? 'o arquivo' : 'os arquivos'} de novo nele.`,
+          )
+        } else {
+          toast.sucesso(pendentes.length === 1 ? '1 arquivo anexado' : `${pendentes.length} arquivos anexados`)
+        }
+      }
       navegar(`/eventos/${salvo.id}`, { replace: !!id })
     } catch (err) {
       if (err instanceof ErroApi && err.status === 409 && !err.dados.atual) {
@@ -327,7 +361,22 @@ export function EventoForm() {
     } finally {
       setSalvando(false)
     }
-  }, [salvando, validar, salvarEvento, f, id, versaoBase, navegar, maquinas, eventos, clientes, existente, hoje])
+  }, [
+    salvando,
+    validar,
+    salvarEvento,
+    f,
+    id,
+    versaoBase,
+    navegar,
+    maquinas,
+    eventos,
+    clientes,
+    existente,
+    hoje,
+    pendentes,
+    enviarAnexo,
+  ])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -368,8 +417,8 @@ export function EventoForm() {
         acoes={
           <>
             <Button onClick={() => navegar(-1)}>Cancelar</Button>
-            <Button variante="primary" icone={<Save className="h-4 w-4" />} onClick={salvar} disabled={salvando}>
-              {salvando ? 'Salvando…' : 'Salvar evento'}
+            <Button variante="primary" icone={<Save className="h-4 w-4" />} onClick={salvar} disabled={!!salvando}>
+              {textoSalvar(salvando)}
             </Button>
           </>
         }
@@ -377,46 +426,40 @@ export function EventoForm() {
 
       <div className="grid grid-cols-1 items-start gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="flex min-w-0 flex-col gap-6">
-          {/* 1. Cliente e evento (com o texto programado nas fichas) */}
+          {/* 1. Cliente e evento (o nome e o rodapé são o texto programado nas fichas) */}
           <Card>
             <CardHeader
               icone={<Users className="h-4 w-4" />}
               titulo="Cliente e evento"
               descricao="Quem contratou e o que sai impresso nas fichas das máquinas."
             />
-            {/* Cidade ao lado do cliente (vem do cadastro dele); status ao lado do nome */}
-            <div className="grid grid-cols-1 gap-4 px-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.9fr)]">
+            {/* Cliente, nome e rodapé à esquerda; status e programação à direita (no celular, no fim) */}
+            <div className="grid grid-cols-1 gap-4 px-5 pb-5 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_minmax(0,0.9fr)]">
               <Field
                 label="Cliente"
                 htmlFor="ev-cliente"
                 erro={erros.cliente}
-                hint={!f.clienteId && 'Sem cadastro? Escolha “Cliente avulso”, no fim da lista.'}
-                className="sm:col-span-2"
+                hint={!f.clienteId ? 'Sem cadastro? Escolha “Cliente avulso”, no fim da lista.' : contatoCliente || undefined}
+                className="sm:col-span-2 sm:row-start-1"
               >
                 <Combobox
                   id="ev-cliente"
                   opcoes={opcoesClientes}
                   valor={f.clienteId}
-                  aoMudar={(v) => {
-                    // Preenche a cidade com a do cliente quando estiver vazia
-                    const escolhido = clientes.find((c) => c.id === v)
-                    selecionarCliente({ id: v, cidade: escolhido?.cidade ?? '' })
-                  }}
+                  aoMudar={(v) => selecionarCliente({ id: v })}
                   placeholder="Selecione ou cadastre um cliente"
                   vazio="Nenhum cliente encontrado"
                   invalido={!!erros.cliente}
                   acoes={acoesCliente}
                 />
               </Field>
-              <Field label="Cidade" htmlFor="ev-cidade">
-                <Input
-                  id="ev-cidade"
-                  value={f.cidade}
-                  onChange={(e) => set('cidade', e.target.value)}
-                  placeholder="Ex.: Rio Claro"
-                />
-              </Field>
-              <Field label="Nome do evento" htmlFor="ev-nome" erro={erros.nome} className="sm:col-span-2">
+              <Field
+                label="Nome do evento"
+                htmlFor="ev-nome"
+                erro={erros.nome}
+                hint="É o que sai no topo de cada ficha."
+                className="sm:col-span-2 sm:row-start-2"
+              >
                 <Input
                   id="ev-nome"
                   value={f.nome}
@@ -424,11 +467,41 @@ export function EventoForm() {
                     set('nome', e.target.value)
                     setErros((x) => ({ ...x, nome: undefined }))
                   }}
-                  placeholder="Ex.: Baile da Cidade"
+                  placeholder="Ex.: Festa da Primavera"
+                  maxLength={LIMITES.texto}
                   className={cn(erros.nome && 'border-danger!')}
                 />
               </Field>
-              <Field label="Status" htmlFor="ev-status">
+              <Field
+                label="Rodapé das fichas"
+                htmlFor="ev-rodape"
+                hint="Sai no fim de cada ficha e também fecha o resumo em PDF."
+                className="sm:col-span-2 sm:row-start-3"
+                extra={
+                  rodapePadrao &&
+                  f.rodape.trim() !== rodapePadrao && (
+                    <BotaoTexto
+                      icone={<RotateCcw className="h-3.5 w-3.5" />}
+                      onClick={() => set('rodape', config.rodapePadrao)}
+                      title={`Volta para o rodapé padrão: “${rodapePadrao}”`}
+                    >
+                      Usar o padrão
+                    </BotaoTexto>
+                  )
+                }
+              >
+                <Textarea
+                  id="ev-rodape"
+                  value={f.rodape}
+                  onChange={(e) => set('rodape', e.target.value)}
+                  placeholder={rodapePadrao || 'Ex.: AGRADECEMOS SUA PRESENÇA!'}
+                  rows={linhasRodape}
+                  maxLength={LIMITES.texto}
+                  spellCheck={false}
+                  className="min-h-0! font-mono text-[13px] leading-relaxed"
+                />
+              </Field>
+              <Field label="Status" htmlFor="ev-status" className="sm:col-start-3 sm:row-start-1">
                 <Select id="ev-status" value={f.status} onChange={(e) => set('status', e.target.value as StatusEvento)}>
                   {(Object.keys(STATUS_EVENTO) as StatusEvento[]).map((s) => (
                     <option key={s} value={s}>
@@ -437,75 +510,14 @@ export function EventoForm() {
                   ))}
                 </Select>
               </Field>
-            </div>
-
-            {/* Texto programado nas máquinas: cabeçalho e rodapé lado a lado quando há espaço */}
-            <div className="@container mx-5 mt-5 border-t border-line pt-4 pb-5">
-              <div className="mb-4 flex items-start gap-2.5">
-                <ReceiptText className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
-                <div className="min-w-0">
-                  <p className="text-[13px] font-semibold text-ink">Fichas impressas</p>
-                  <p className="text-xs text-muted">
-                    Texto para programar nas máquinas. Sai em cada ficha, no layout de cada máquina.
-                  </p>
-                </div>
-              </div>
-              <div className="grid grid-cols-1 items-start gap-4 @lg:grid-cols-2 @lg:gap-5">
-                <Field
-                  label="Cabeçalho"
-                  htmlFor="ev-cabecalho"
-                  hint="Sai no topo de cada ficha. Pode ter mais de uma linha."
-                  extra={
-                    <BotaoTexto
-                      icone={<WandSparkles className="h-3.5 w-3.5" />}
-                      onClick={usarNomeNoCabecalho}
-                      disabled={!nomeMaiusculo || linhasCabecalho[0].trim() === nomeMaiusculo}
-                      title="Coloca o nome do evento, em letras maiúsculas, na primeira linha do cabeçalho"
-                    >
-                      Usar nome do evento
-                    </BotaoTexto>
-                  }
-                >
-                  <Textarea
-                    id="ev-cabecalho"
-                    value={f.cabecalho}
-                    onChange={(e) => set('cabecalho', e.target.value)}
-                    placeholder={'Ex.: FESTA DA PRIMAVERA\nCLUBE RECREATIVO'}
-                    rows={linhasTexto}
-                    maxLength={LIMITES.texto}
-                    spellCheck={false}
-                    className="min-h-0! font-mono text-[13px] leading-relaxed"
-                  />
-                </Field>
-                <Field
-                  label="Rodapé"
-                  htmlFor="ev-rodape"
-                  hint="Sai no fim de cada ficha e também fecha o resumo em PDF."
-                  extra={
-                    rodapePadrao &&
-                    f.rodape.trim() !== rodapePadrao && (
-                      <BotaoTexto
-                        icone={<RotateCcw className="h-3.5 w-3.5" />}
-                        onClick={() => set('rodape', config.rodapePadrao)}
-                        title={`Volta para o rodapé padrão: “${rodapePadrao}”`}
-                      >
-                        Usar o padrão
-                      </BotaoTexto>
-                    )
-                  }
-                >
-                  <Textarea
-                    id="ev-rodape"
-                    value={f.rodape}
-                    onChange={(e) => set('rodape', e.target.value)}
-                    placeholder={rodapePadrao || 'Ex.: AGRADECEMOS SUA PRESENÇA!'}
-                    rows={linhasTexto}
-                    maxLength={LIMITES.texto}
-                    spellCheck={false}
-                    className="min-h-0! font-mono text-[13px] leading-relaxed"
-                  />
-                </Field>
-              </div>
+              <Field
+                label="Programação"
+                htmlFor="ev-programacao"
+                hint={STATUS_PROGRAMACAO[f.programacao].descricao}
+                className="sm:col-start-3 sm:row-start-2"
+              >
+                <SeletorProgramacao id="ev-programacao" valor={f.programacao} aoMudar={(v) => set('programacao', v)} />
+              </Field>
             </div>
           </Card>
 
@@ -514,7 +526,7 @@ export function EventoForm() {
             <CardHeader
               icone={<CalendarDays className="h-4 w-4" />}
               titulo="Dias de utilização"
-              descricao="Cada máquina em cada dia conta como uma diária."
+              descricao="Cada máquina em cada dia de uso conta como uma diária."
               acoes={
                 <span className="tnum rounded-lg bg-brand-soft px-2.5 py-1 text-xs font-semibold text-brand-ink">
                   {numero(resumo.totalDiarias)} {resumo.totalDiarias === 1 ? 'diária' : 'diárias'}
@@ -531,9 +543,10 @@ export function EventoForm() {
               <motion.div layout className="flex flex-col gap-2">
                 <AnimatePresence initial={false}>
                   {f.dias.map((d) => {
-                    const usadas = ocupacao.get(d.data) ?? 0
-                    const livres = totalMaquinas - emManutencao(d.data) - usadas
-                    const excede = d.maquinas > livres
+                    const livres = livresEm(d.data)
+                    // Com período corrido, o cliente fica com a maior quantidade em todos os dias
+                    const fora = qtdOcupada.get(d.data) ?? d.maquinas
+                    const excede = fora > livres
                     const repetida = datasRepetidas.has(d.data)
                     return (
                       <motion.div
@@ -582,7 +595,7 @@ export function EventoForm() {
                                         : undefined
                                     }
                                   >
-                                    {livres - d.maquinas} de {totalMaquinas} livres
+                                    {livres - fora} de {totalMaquinas} livres
                                   </span>
                                 )}
                               </>
@@ -617,6 +630,28 @@ export function EventoForm() {
                   Adicionar período
                 </Button>
               </div>
+
+              {/* As máquinas ficam com o cliente entre os dias de uso: só faz sentido com dias soltos */}
+              <AnimatePresence initial={false}>
+                {(temIntervalo || f.periodoCorrido) && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+                    className="overflow-hidden"
+                  >
+                    <PeriodoCorrido
+                      ligado={f.periodoCorrido}
+                      aoMudar={(v) => set('periodoCorrido', v)}
+                      temIntervalo={temIntervalo}
+                      ocupados={ocupados}
+                      diasDeUso={datasUso.length}
+                      faltas={faltasNoMeio.map((d) => ({ data: d.data, livres: livresEm(d.data), precisa: d.maquinas }))}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </Card>
 
@@ -626,6 +661,7 @@ export function EventoForm() {
             maquinasIds={f.maquinasIds}
             aoMudar={(ids) => set('maquinasIds', ids)}
             dias={f.dias}
+            periodoCorrido={f.periodoCorrido}
             eventoId={id}
             cancelado={f.status === 'CANCELADO'}
           />
@@ -751,6 +787,9 @@ export function EventoForm() {
               </Field>
             </div>
           </Card>
+
+          {/* 6. Arquivos (prints da conversa, logo, cardápio…). Num evento novo, vão depois de salvar */}
+          <AnexosEvento eventoId={id} pendentes={pendentes} aoMudarPendentes={setPendentes} id="anexos" />
         </div>
 
         {/* Resumo financeiro (fixo ao rolar) */}
@@ -794,9 +833,9 @@ export function EventoForm() {
                 className="w-full"
                 icone={<Save className="h-4 w-4" />}
                 onClick={salvar}
-                disabled={salvando}
+                disabled={!!salvando}
               >
-                {salvando ? 'Salvando…' : 'Salvar evento'}
+                {textoSalvar(salvando)}
               </Button>
               <p className="mt-2.5 text-center text-xs text-muted">
                 Atalho: <kbd className="rounded border border-line bg-surface-2 px-1">Ctrl</kbd> +{' '}
@@ -819,6 +858,9 @@ export function EventoForm() {
   )
 }
 
+const textoSalvar = (etapa: false | 'evento' | 'arquivos') =>
+  etapa === 'arquivos' ? 'Enviando arquivos…' : etapa ? 'Salvando…' : 'Salvar evento'
+
 /** Botão pequeno e discreto ao lado do rótulo de um campo. */
 function BotaoTexto({
   icone,
@@ -838,6 +880,122 @@ function BotaoTexto({
     >
       {icone}
       {children}
+    </button>
+  )
+}
+
+/** "03/10" a partir de "2026-10-03". */
+const diaMes = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}`
+
+/**
+ * Opção "as máquinas ficam com o cliente entre os dias de uso" (período corrido): o período em que
+ * elas ficam ocupadas e o aviso dos dias do meio sem máquinas livres suficientes.
+ */
+function PeriodoCorrido({
+  ligado,
+  aoMudar,
+  temIntervalo,
+  ocupados,
+  diasDeUso,
+  faltas,
+}: {
+  ligado: boolean
+  aoMudar: (v: boolean) => void
+  /** Há dias sem uso entre o primeiro e o último. */
+  temIntervalo: boolean
+  ocupados: DiaOcupado[]
+  diasDeUso: number
+  /** Dias do meio em que faltam máquinas livres. */
+  faltas: Array<{ data: string; livres: number; precisa: number }>
+}) {
+  const inicio = ocupados[0]?.data
+  const fim = ocupados[ocupados.length - 1]?.data
+  const pior = Math.min(...faltas.map((x) => x.livres))
+  const precisa = Math.max(0, ...faltas.map((x) => x.precisa))
+  return (
+    <div
+      className={cn(
+        'mt-4 rounded-xl border p-3.5 transition-colors duration-200',
+        ligado ? 'border-brand/35 bg-brand-soft/50' : 'border-line bg-surface-2/50',
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <div
+          className={cn(
+            'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-colors duration-200 max-sm:hidden',
+            ligado ? 'bg-brand text-white' : 'bg-surface text-ink-2 ring-1 ring-line',
+          )}
+        >
+          <MoveHorizontal className="h-4 w-4" />
+        </div>
+        <label htmlFor="ev-periodo-corrido" className="min-w-0 flex-1 cursor-pointer">
+          <span className="block text-[13px] font-semibold text-ink">As máquinas ficam com o cliente entre os dias de uso</span>
+          <span className="mt-0.5 block text-xs leading-relaxed text-muted">
+            Para quem usa só em alguns dias (ex.: nos fins de semana do mês) e não devolve as máquinas no meio da semana. Elas
+            contam como ocupadas o período todo, na agenda e na escolha das máquinas.
+          </span>
+        </label>
+        <Interruptor id="ev-periodo-corrido" ligado={ligado} aoMudar={aoMudar} />
+      </div>
+      <AnimatePresence initial={false}>
+        {ligado && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="flex flex-col gap-2 pt-3 sm:pl-11">
+              {temIntervalo && inicio && fim ? (
+                <p className="tnum rounded-lg bg-surface px-3 py-2 text-xs leading-relaxed text-ink-2 ring-1 ring-line">
+                  Ocupadas de <b className="font-semibold text-ink">{diaMes(inicio)}</b> a{' '}
+                  <b className="font-semibold text-ink">{diaMes(fim)}</b>, {ocupados.length} dias; as diárias continuam só{' '}
+                  {diasDeUso === 1 ? 'no dia de uso' : `nos ${diasDeUso} dias de uso`}.
+                </p>
+              ) : (
+                <p className="text-xs text-muted">
+                  Os dias de uso já são seguidos: não há dias entre eles para as máquinas ficarem com o cliente.
+                </p>
+              )}
+              {faltas.length > 0 && (
+                <p className="tnum flex items-start gap-1.5 text-xs font-medium text-warning">
+                  <TriangleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    Faltam máquinas em {listaDatas(faltas.map((x) => x.data))}, entre os dias de uso:{' '}
+                    {pior <= 0 ? 'nenhuma livre' : `só ${pior} ${pior === 1 ? 'livre' : 'livres'}`}
+                    {faltas.length > 1 ? ' no pior dia' : ''} para as {precisa} deste evento.
+                  </span>
+                </p>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  )
+}
+
+/** Chave liga/desliga (o rótulo fica fora, ligado pelo `id`). */
+function Interruptor({ id, ligado, aoMudar }: { id: string; ligado: boolean; aoMudar: (v: boolean) => void }) {
+  return (
+    <button
+      id={id}
+      type="button"
+      role="switch"
+      aria-checked={ligado}
+      onClick={() => aoMudar(!ligado)}
+      className={cn(
+        'relative mt-1 inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full p-0.5 transition-colors duration-200',
+        'focus-visible:ring-4 focus-visible:ring-[var(--ring)] focus-visible:outline-none',
+        ligado ? 'justify-end bg-brand' : 'justify-start bg-surface-3 ring-1 ring-line-strong ring-inset',
+      )}
+    >
+      <motion.span
+        layout
+        transition={{ type: 'spring', stiffness: 700, damping: 35 }}
+        className="h-5 w-5 rounded-full bg-white shadow-xs"
+      />
     </button>
   )
 }

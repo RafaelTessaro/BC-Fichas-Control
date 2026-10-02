@@ -214,3 +214,82 @@ describe('máquinas bloqueadas no evento', () => {
     expect(t3.get('P-01')?.texto).toBe('No evento #0012 Festa a — Clube Primavera, em 04/10')
   })
 })
+
+// As mesmas situações de server/novidades23.test.ts ("com período corrido, a máquina fica presa
+// também nos dias do meio"), para a tela recusar exatamente o que o servidor recusa.
+describe('período corrido (as máquinas ficam com o cliente entre os dias de uso)', () => {
+  // Feira nos fins de semana de 03/10 e 10/10; em período corrido, ocupa de 03/10 a 11/10
+  const feira = (extra: Partial<Evento> = {}) =>
+    ev('f', 30, ['2026-10-03', '2026-10-04', '2026-10-10', '2026-10-11'], ['P-01'], { periodoCorrido: true, ...extra })
+  const trocar = (selecionadas: string[], eventos: Evento[], d: { data: string }[], extra = {}) =>
+    maquinasParaTrocar({ selecionadas, maquinas, eventos, dias: d, eventoId: 'e', hoje: HOJE, ...extra })
+
+  it('a máquina fica presa nos dias do meio do outro evento (e livre depois do último dia)', () => {
+    const b = bloqueiosMaquinas({ maquinas, eventos: [feira()], clientes, dias: dias('2026-10-07'), hoje: HOJE })
+    expect(b.get('P-01')?.texto).toBe('No evento #0030 Festa f — Clube Primavera, em 07/10')
+    expect(trocar(['P-01'], [feira()], dias('2026-10-07'))).toEqual(['P-01'])
+    // Sem o período corrido, livre no meio da semana
+    expect(
+      bloqueiosMaquinas({
+        maquinas,
+        eventos: [feira({ periodoCorrido: false })],
+        clientes,
+        dias: dias('2026-10-07'),
+        hoje: HOJE,
+      }).has('P-01'),
+    ).toBe(false)
+    expect(trocar(['P-01'], [feira({ periodoCorrido: false })], dias('2026-10-07'))).toEqual([])
+    // Depois do último dia (e antes do primeiro), livre
+    expect(trocar(['P-01'], [feira()], dias('2026-10-12'))).toEqual([])
+    expect(trocar(['P-01'], [feira()], dias('2026-10-02'))).toEqual([])
+  })
+
+  it('o evento com período corrido também não pode levar máquina presa no meio do período', () => {
+    const outro = ev('a', 12, ['2026-10-07'], ['P-02'])
+    const d = dias('2026-10-03', '2026-10-11')
+    expect(trocar(['P-02'], [outro], d)).toEqual([])
+    expect(trocar(['P-02'], [outro], d, { periodoCorrido: true })).toEqual(['P-02'])
+    const b = bloqueiosMaquinas({ maquinas, eventos: [outro], clientes, dias: d, periodoCorrido: true, hoje: HOJE })
+    expect(b.get('P-02')?.texto).toBe('No evento #0012 Festa a — Clube Primavera, em 07/10')
+    // O resumo das indisponíveis cita o dia do meio
+    expect(agruparBloqueios(maquinas, b, clientes, d, true).map((g) => g.titulo)).toEqual([
+      '#0012 Festa a — Clube Primavera, em 07/10',
+      'Em manutenção',
+    ])
+  })
+
+  it('ligar o período corrido num evento gravado cobra só os dias acrescentados (os do meio)', () => {
+    const d = dias('2026-10-03', '2026-10-04', '2026-10-10', '2026-10-11')
+    const salvo = feira({ id: 'e', periodoCorrido: false, maquinasIds: ['P-01', 'P-03'] })
+    const meio = ev('a', 12, ['2026-10-08'], ['P-01'])
+    // Como estava: nada a trocar (P-03 entrou em manutenção depois de gravada)
+    expect(trocar(['P-01', 'P-03'], [meio, salvo], d, { salvo })).toEqual([])
+    // Ligando: 05/10 a 09/10 entram; P-01 está em outro evento em 08/10 e P-03 em manutenção
+    const t = trocasMaquinas({
+      selecionadas: ['P-01', 'P-03'],
+      maquinas,
+      eventos: [meio, salvo],
+      clientes,
+      dias: d,
+      periodoCorrido: true,
+      eventoId: 'e',
+      salvo,
+      hoje: HOJE,
+    })
+    expect(t.get('P-01')?.texto).toBe('No evento #0012 Festa a — Clube Primavera, em 08/10')
+    expect(t.get('P-03')?.motivo).toBe('MANUTENCAO')
+    // Já gravado com período corrido: manter não cobra nada; desligar também não (só tira dias)
+    const corrido = { ...salvo, periodoCorrido: true }
+    expect(trocar(['P-01', 'P-03'], [corrido], d, { salvo: corrido, periodoCorrido: true })).toEqual([])
+    expect(trocar(['P-01', 'P-03'], [meio, corrido], d, { salvo: corrido })).toEqual([])
+  })
+
+  it('num evento que já passou, ligar o período corrido só trava conflito nos dias do meio', () => {
+    const d = dias('2026-09-05', '2026-09-12')
+    const salvo = ev('e', 20, ['2026-09-05', '2026-09-12'], ['P-01', 'P-03'])
+    const meio = ev('a', 12, ['2026-09-08'], ['P-01'])
+    // P-03 em manutenção não conta (os dias acrescentados já passaram); P-01 em outro evento no meio, sim
+    expect(trocar(['P-01', 'P-03'], [meio], d, { salvo, periodoCorrido: true })).toEqual(['P-01'])
+    expect(trocar(['P-01', 'P-03'], [], d, { salvo, periodoCorrido: true })).toEqual([])
+  })
+})

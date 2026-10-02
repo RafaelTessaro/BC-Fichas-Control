@@ -1,22 +1,28 @@
 import { endOfMonth, endOfYear, format, startOfMonth, startOfYear, subMonths } from 'date-fns'
 import { Download, Plus, Ticket } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { EventosTabela } from '../components/EventosTabela'
 import { Button } from '../components/ui/Button'
 import { Card } from '../components/ui/Card'
 import { Select } from '../components/ui/Form'
 import { EmptyState, PageHeader, SearchInput, Segmented } from '../components/ui/Misc'
 import { FORMAS_PAGAMENTO, STATUS_EVENTO } from '#shared/calc.ts'
+import { periodoEvento, STATUS_PROGRAMACAO, STATUS_PROGRAMACAO_LISTA } from '#shared/maquinas.ts'
 import { exportarCSV } from '../lib/csv'
 import { codigoEvento, dataCurta, hojeISO, moeda, normalizar, numero } from '../lib/format'
+import { useHoje } from '../lib/hoje'
 import { porDataDesc, useEventosCompletos } from '../lib/hooks'
 import { useDados } from '../store/dados'
-import type { StatusEvento } from '#shared/tipos.ts'
+import type { StatusEvento, StatusProgramacao } from '#shared/tipos.ts'
 
 type FiltroStatus = 'todos' | StatusEvento
 type FiltroPeriodo = 'todos' | 'proximos' | 'mes' | 'mes-passado' | 'ano'
 type FiltroPagamento = 'todos' | 'pagos' | 'nao-pagos'
+/** "pendente": eventos de hoje em diante, não cancelados, com a programação ainda não concluída. */
+type FiltroProgramacao = 'todos' | 'pendente' | StatusProgramacao
+
+const FILTROS_PROGRAMACAO: FiltroProgramacao[] = ['todos', 'pendente', ...STATUS_PROGRAMACAO_LISTA]
 
 function intervalo(p: FiltroPeriodo): [string, string] | null {
   const hoje = new Date()
@@ -49,10 +55,17 @@ export function Eventos() {
     [identificacoes],
   )
   const navegar = useNavigate()
+  const hoje = useHoje()
+  const [params] = useSearchParams()
   const [status, setStatus] = useState<FiltroStatus>('todos')
   const [busca, setBusca] = useState('')
   const [periodoSel, setPeriodo] = useState<FiltroPeriodo>('todos')
   const [pagamento, setPagamento] = useState<FiltroPagamento>('todos')
+  // Vindo do painel ("Programação das máquinas"), já abre com as pendentes
+  const [programacao, setProgramacao] = useState<FiltroProgramacao>(() => {
+    const p = params.get('programacao') as FiltroProgramacao | null
+    return p && FILTROS_PROGRAMACAO.includes(p) ? p : 'todos'
+  })
 
   // Filtros exceto status (para as contagens das abas)
   const base = useMemo(() => {
@@ -63,12 +76,19 @@ export function Eventos() {
         ({ evento: e, cliente }) =>
           !q ||
           normalizar(
-            `${e.nome} ${codigoEvento(e.codigo)} ${cliente?.nome ?? ''} ${e.cabecalho} ${e.cidade} ${nomesMaquinas(e.maquinasIds)}`,
+            `${e.nome} ${codigoEvento(e.codigo)} ${cliente?.nome ?? ''} ${e.cidade || cliente?.cidade || ''} ${nomesMaquinas(e.maquinasIds)}`,
           ).includes(q),
       )
       .filter(({ resumo: r }) => !iv || ((r.dataFim ?? '') >= iv[0] && (r.dataInicio ?? '') <= iv[1]))
       .filter(({ resumo: r }) => pagamento === 'todos' || (pagamento === 'pagos' ? r.pago : !r.pago))
-  }, [todos, busca, periodoSel, pagamento, nomesMaquinas])
+      .filter(({ evento: e, resumo: r }) =>
+        programacao === 'todos'
+          ? true
+          : programacao === 'pendente'
+            ? e.status !== 'CANCELADO' && e.programacao !== 'CONCLUIDA' && (r.dataFim ?? '') >= hoje
+            : e.programacao === programacao,
+      )
+  }, [todos, busca, periodoSel, pagamento, programacao, hoje, nomesMaquinas])
 
   const contagem = useMemo(() => {
     const c: Record<string, number> = { todos: base.length }
@@ -78,9 +98,10 @@ export function Eventos() {
 
   const lista = useMemo(() => {
     const l = base.filter(({ evento }) => status === 'todos' || evento.status === status)
-    if (periodoSel === 'proximos') return [...l].sort((a, b) => -porDataDesc(a, b))
+    // Próximos e programação pendente: do mais próximo ao mais distante
+    if (periodoSel === 'proximos' || programacao === 'pendente') return [...l].sort((a, b) => -porDataDesc(a, b))
     return [...l].sort(porDataDesc)
-  }, [base, status, periodoSel])
+  }, [base, status, periodoSel, programacao])
 
   const totais = useMemo(
     () =>
@@ -115,28 +136,36 @@ export function Eventos() {
         'Total',
         'Pagamento',
         'Status',
+        'Programação',
         'Máquinas enviadas',
+        'Máquinas com o cliente',
       ],
-      lista.map(({ evento: e, resumo: r, cliente }) => [
-        codigoEvento(e.codigo),
-        e.nome,
-        cliente?.nome ?? '',
-        e.cidade,
-        dataCurta(r.dataInicio),
-        dataCurta(r.dataFim),
-        r.totalDiarias,
-        r.valorDiarias,
-        r.bobinasUtilizadas ?? '',
-        r.valorBobinas,
-        r.desconto,
-        r.total,
-        FORMAS_PAGAMENTO[e.formaPagamento].label,
-        STATUS_EVENTO[e.status].label,
-        nomesMaquinas(e.maquinasIds),
-      ]),
+      lista.map(({ evento: e, resumo: r, cliente }) => {
+        // Período corrido: de quando a quando as máquinas ficam com o cliente
+        const p = e.periodoCorrido ? periodoEvento(e) : null
+        return [
+          codigoEvento(e.codigo),
+          e.nome,
+          cliente?.nome ?? '',
+          e.cidade || cliente?.cidade || '',
+          dataCurta(r.dataInicio),
+          dataCurta(r.dataFim),
+          r.totalDiarias,
+          r.valorDiarias,
+          r.bobinasUtilizadas ?? '',
+          r.valorBobinas,
+          r.desconto,
+          r.total,
+          FORMAS_PAGAMENTO[e.formaPagamento].label,
+          STATUS_EVENTO[e.status].label,
+          STATUS_PROGRAMACAO[e.programacao].label,
+          nomesMaquinas(e.maquinasIds),
+          p && p.inicio !== p.fim ? `De ${dataCurta(p.inicio)} a ${dataCurta(p.fim)}` : '',
+        ]
+      }),
     )
 
-  const algumFiltro = busca || periodoSel !== 'todos' || pagamento !== 'todos'
+  const algumFiltro = busca || periodoSel !== 'todos' || pagamento !== 'todos' || programacao !== 'todos'
 
   return (
     <>
@@ -189,9 +218,15 @@ export function Eventos() {
       </div>
 
       <Card className="overflow-hidden">
-        <div className="flex flex-col gap-3 border-b border-line p-4 lg:flex-row lg:items-center">
-          <SearchInput valor={busca} aoMudar={setBusca} placeholder="Buscar evento, cliente, máquina…" className="lg:w-80" />
-          <div className="grid grid-cols-2 gap-3 lg:flex lg:[&>*]:w-56">
+        {/* Busca e filtros numa linha só a partir de 1280 px; antes, os filtros vão para baixo */}
+        <div className="flex flex-col gap-3 border-b border-line p-4 xl:flex-row xl:items-center">
+          <SearchInput
+            valor={busca}
+            aoMudar={setBusca}
+            placeholder="Buscar evento, cliente, máquina…"
+            className="xl:max-w-80 xl:min-w-0 xl:flex-1"
+          />
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:flex xl:shrink-0 xl:[&>*]:w-52">
             <Select value={periodoSel} onChange={(e) => setPeriodo(e.target.value as FiltroPeriodo)} aria-label="Período">
               <option value="todos">Todo o período</option>
               <option value="proximos">Próximos (a partir de hoje)</option>
@@ -204,6 +239,22 @@ export function Eventos() {
               <option value="pagos">Pagos</option>
               <option value="nao-pagos">Não pagos</option>
             </Select>
+            <div className="col-span-2 sm:col-span-1">
+              <Select
+                value={programacao}
+                onChange={(e) => setProgramacao(e.target.value as FiltroProgramacao)}
+                aria-label="Programação das máquinas"
+                title="Andamento da programação das máquinas"
+              >
+                <option value="todos">Qualquer programação</option>
+                <option value="pendente">Programação pendente</option>
+                {STATUS_PROGRAMACAO_LISTA.map((p) => (
+                  <option key={p} value={p}>
+                    Programação: {STATUS_PROGRAMACAO[p].label.toLowerCase()}
+                  </option>
+                ))}
+              </Select>
+            </div>
           </div>
         </div>
         {lista.length === 0 ? (

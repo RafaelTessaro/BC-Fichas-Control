@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf'
 import timbradoUrl from '../assets/timbrado.jpg'
 import { calcularEvento, FORMAS_PAGAMENTO } from '#shared/calc.ts'
-import { ordenarMaquinas } from '#shared/maquinas.ts'
+import { datasOcupadas, ordenarMaquinas } from '#shared/maquinas.ts'
 import { parseISO } from 'date-fns'
 import { codigoEvento, dataCurta, hojeISO, moeda, numero, periodo } from './format'
 import { nomeArquivoSeguro } from './storage'
@@ -99,38 +99,20 @@ export async function gerarResumoPDF(
   const meio = L + W / 2 + 4
   let extra = Math.max(campo('Cliente', cliente?.nome ?? '—', L, W / 2 - 6), campo('Evento', evento.nome, meio, W / 2 - 4))
   y += PASSO + extra
-  extra = Math.max(
-    campo('Período', periodo(r.dataInicio, r.dataFim), L, W / 2 - 6),
-    campo('Cidade', evento.cidade, meio, W / 2 - 4),
-  )
+  // A cidade do evento (só os antigos têm uma própria) ou a do cadastro do cliente
+  const cidade = evento.cidade.trim() || (cliente?.cidade ? [cliente.cidade, cliente.uf].filter(Boolean).join(' - ') : '')
+  extra = Math.max(campo('Período', periodo(r.dataInicio, r.dataFim), L, W / 2 - 6), campo('Cidade', cidade, meio, W / 2 - 4))
   y += PASSO + extra
 
-  // Cabeçalho das fichas e máquinas enviadas (só o que estiver preenchido), lado a lado
-  const blocos: Array<{ rotulo: string; linhas: string[]; fonte: 'courier' | 'helvetica'; tamanho: number; entrelinha: number }> =
-    []
+  // Máquinas enviadas e, com período corrido, de quando a quando ficam com o cliente (só o que
+  // houver, lado a lado). O nome do evento, acima, é o que sai no topo das fichas.
+  const blocos: Array<{ rotulo: string; linhas: string[] }> = []
   const larguraBloco = (i: number) => (i === 0 ? W / 2 - 6 : W / 2 - 4)
-  const cabecalho = evento.cabecalho.trim()
-  if (cabecalho) {
-    // Fonte de máquina de escrever, como na ficha impressa; sem as linhas em branco e com até 5 linhas
-    doc.setFont('courier', 'bold').setFontSize(9.5)
-    const linhas = cabecalho
-      .split('\n')
-      .map((l) => txt(l.trim()))
-      .filter(Boolean)
-      .flatMap((l) => doc.splitTextToSize(l, larguraBloco(blocos.length)) as string[])
-    blocos.push({
-      rotulo: 'Cabeçalho das fichas',
-      linhas: linhas.length > 5 ? [...linhas.slice(0, 4), `${linhas[4].replace(/\s+$/, '')}…`] : linhas,
-      fonte: 'courier',
-      tamanho: 9.5,
-      entrelinha: 4.1,
-    })
-  }
+  doc.setFont('helvetica', 'normal').setFontSize(11)
   const porId = new Map(maquinas.map((m) => [m.id, m]))
   const enviadas = ordenarMaquinas(evento.maquinasIds.map((id) => porId.get(id)).filter((m): m is Maquina => !!m))
   if (enviadas.length) {
     // "P-01, P-02, G-03 (3 máquinas)"; se passar de 4 linhas, "… e mais N (total)"
-    doc.setFont('helvetica', 'normal').setFontSize(11)
     const total = `(${enviadas.length} ${enviadas.length === 1 ? 'máquina' : 'máquinas'})`
     const ids = enviadas.map((m) => m.identificacao)
     let linhas: string[] = []
@@ -140,11 +122,20 @@ export async function gerarResumoPDF(
       linhas = doc.splitTextToSize(txt(texto), larguraBloco(blocos.length)) as string[]
       if (linhas.length <= 4) break
     }
-    blocos.push({ rotulo: 'Máquinas enviadas', linhas: linhas.slice(0, 4), fonte: 'helvetica', tamanho: 11, entrelinha: 4.5 })
+    blocos.push({ rotulo: 'Máquinas enviadas', linhas: linhas.slice(0, 4) })
+  }
+  // Período corrido: as máquinas ficam com o cliente também entre os dias de uso (as diárias, não)
+  const ocupadas = evento.periodoCorrido ? datasOcupadas(evento) : []
+  if (ocupadas.length > new Set(evento.dias.map((d) => d.data)).size) {
+    const texto = `De ${dataCurta(ocupadas[0])} a ${dataCurta(ocupadas[ocupadas.length - 1])} (${ocupadas.length} dias)`
+    blocos.push({
+      rotulo: 'Máquinas com o cliente',
+      linhas: (doc.splitTextToSize(txt(texto), larguraBloco(blocos.length)) as string[]).slice(0, 2),
+    })
   }
   if (blocos.length) {
-    const alturaBloco = (b: (typeof blocos)[number]) => (b.linhas.length - 1) * b.entrelinha
-    const altura = Math.max(...blocos.map(alturaBloco))
+    const ENTRELINHA = 4.5
+    const altura = Math.max(...blocos.map((b) => (b.linhas.length - 1) * ENTRELINHA))
     garantirEspaco(5.5 + altura + 3)
     blocos.forEach((b, i) => {
       const x = i === 0 ? L : meio
@@ -154,10 +145,10 @@ export async function gerarResumoPDF(
         .setTextColor(...SECUNDARIO)
       doc.text(b.rotulo.toUpperCase(), x, y)
       doc
-        .setFont(b.fonte, b.fonte === 'courier' ? 'bold' : 'normal')
-        .setFontSize(b.tamanho)
+        .setFont('helvetica', 'normal')
+        .setFontSize(11)
         .setTextColor(...TINTA)
-      b.linhas.forEach((linha, j) => doc.text(linha, x, y + 5.5 + j * b.entrelinha))
+      b.linhas.forEach((linha, j) => doc.text(linha, x, y + 5.5 + j * ENTRELINHA))
     })
     y += PASSO + altura
   }

@@ -1,4 +1,4 @@
-// Aba Manutenção: as máquinas P e G, onde cada uma está hoje e as ordens de serviço em aberto.
+// Aba Manutenção: as máquinas P e G, onde cada uma está hoje e as manutenções em aberto.
 
 import {
   CalendarClock,
@@ -6,8 +6,9 @@ import {
   ClipboardCheck,
   ClipboardList,
   ClipboardPlus,
-  Cpu,
+  ListChecks,
   MapPin,
+  MessageSquareWarning,
   Pencil,
   Plus,
   Settings,
@@ -20,7 +21,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   codigoOS,
   ESTADO_MAQUINA,
-  cabecalhoEmLinha,
+  localDaLocacao,
   osEmAberto,
   periodoEvento,
   TIPO_MAQUINA,
@@ -29,9 +30,11 @@ import {
   type SituacaoMaquina,
 } from '#shared/maquinas.ts'
 import type { Maquina, OrdemServico, TipoMaquina } from '#shared/tipos.ts'
+import { IconeMaquinaFichas } from '../components/IconeMaquinaFichas'
 import { MaquinaChip, SituacaoBadge, StatusOSBadge, TipoMaquinaBadge, useSituacoes } from '../components/Maquinas'
 import { MaquinaFormModal } from '../components/MaquinaFormModal'
-import { BotaoImprimirOS, OrdemServicoModal } from '../components/OrdemServicoModal'
+import { OrdemServicoModal } from '../components/OrdemServicoModal'
+import { ServicosManutencaoModal } from '../components/ServicosManutencaoModal'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
@@ -39,7 +42,7 @@ import { Select } from '../components/ui/Form'
 import { EmptyState, PageHeader, SearchInput, Segmented, StatCard } from '../components/ui/Misc'
 import { cn } from '../lib/cn'
 import { dataCurta, numero, periodo } from '../lib/format'
-import { haQuantoTempo, indicesOrdens, maquinaCombina, nomeAlemDoLocal, ordenarOrdens } from '../lib/manutencao'
+import { haQuantoTempo, indicesOrdens, maquinaCombina, ordenarOrdens, reclamacoesPorMaquina } from '../lib/manutencao'
 import { useDados } from '../store/dados'
 import { useHoje } from '../lib/hoje'
 
@@ -47,12 +50,14 @@ type FiltroSituacao = 'todas' | EstadoMaquina
 
 const ORDEM_ESTADOS: EstadoMaquina[] = ['DISPONIVEL', 'LOCADA', 'MANUTENCAO', 'DESATIVADA']
 
-/** Estado do modal de O.S.: nova, edição ou conclusão. */
+/** Estado do formulário de manutenção: nova, edição ou conclusão. */
 type ModalOS = { ordem?: OrdemServico; concluir?: boolean }
 
 export function Manutencao() {
   const maquinas = useDados((s) => s.maquinas)
   const ordens = useDados((s) => s.ordens)
+  const reclamacoes = useDados((s) => s.reclamacoes)
+  const servicosCadastrados = useDados((s) => s.config.servicosManutencao.length)
   const situacoes = useSituacoes()
   const navegar = useNavigate()
   const [params, setParams] = useSearchParams()
@@ -63,8 +68,9 @@ export function Manutencao() {
   const [situacao, setSituacao] = useState<FiltroSituacao>('todas')
   const [maquinaLocal, setMaquinaLocal] = useState(false)
   const [osLocal, setOsLocal] = useState<ModalOS | null>(null)
+  const [servicosAberto, setServicosAberto] = useState(false)
 
-  // `?nova=maquina` e `?nova=os` (vindos da busca global) abrem o cadastro direto
+  // `?nova=maquina` e `?nova=os` (vindos da busca global) abrem o cadastro da máquina ou da manutenção
   const pedido = params.get('nova')
   const modalMaquina = maquinaLocal || pedido === 'maquina'
   const modalOS: ModalOS | null = osLocal ?? (pedido === 'os' && maquinas.length ? {} : null)
@@ -96,6 +102,7 @@ export function Manutencao() {
   }, [maquinas, situacoes])
 
   const indices = useMemo(() => indicesOrdens(ordens), [ordens])
+  const queixas = useMemo(() => reclamacoesPorMaquina(reclamacoes), [reclamacoes])
   const abertas = useMemo(() => ordenarOrdens(ordens.filter(osEmAberto)), [ordens])
   const porId = useMemo(() => new Map(maquinas.map((m) => [m.id, m])), [maquinas])
 
@@ -121,11 +128,24 @@ export function Manutencao() {
     <>
       <PageHeader
         titulo="Manutenção"
-        descricao="Suas máquinas, onde cada uma está hoje e as ordens de serviço (O.S.)."
+        descricao="Suas máquinas, onde cada uma está hoje e as manutenções feitas nelas."
         acoes={
           <>
             <Button icone={<Plus className="h-4 w-4" />} onClick={() => setMaquinaLocal(true)}>
               Nova máquina
+            </Button>
+            <Button
+              icone={<ListChecks className="h-4 w-4" />}
+              onClick={() => setServicosAberto(true)}
+              title="Os serviços que aparecem para marcar nas manutenções"
+            >
+              <span className="max-sm:hidden">Serviços cadastrados</span>
+              <span className="sm:hidden">Serviços</span>
+              {servicosCadastrados > 0 && (
+                <span className="tnum rounded-md bg-surface-3 px-1.5 text-[11px] leading-5 text-muted">
+                  {servicosCadastrados}
+                </span>
+              )}
             </Button>
             <Button
               variante="primary"
@@ -134,7 +154,7 @@ export function Manutencao() {
               disabled={!maquinas.length}
               title={maquinas.length ? undefined : 'Cadastre uma máquina primeiro'}
             >
-              Nova O.S.
+              Nova manutenção
             </Button>
           </>
         }
@@ -143,7 +163,7 @@ export function Manutencao() {
       {!maquinas.length ? (
         <Card>
           <EmptyState
-            icone={<Cpu className="h-6 w-6" />}
+            icone={<IconeMaquinaFichas className="h-6 w-6" />}
             titulo="Nenhuma máquina cadastrada"
             descricao={`Cadastre suas máquinas uma a uma aqui, com a identificação de cada uma (ex.: P-01), ou informe quantas Máquinas P e G você tem em Configurações › Disponibilidade de máquinas: elas são criadas já numeradas. Hoje a agenda considera ${numero(frotaAntiga)} máquinas; a partir da primeira máquina cadastrada, passa a contar só as cadastradas.`}
             acao={
@@ -166,7 +186,7 @@ export function Manutencao() {
                 rotulo="Máquinas"
                 valor={contagem.total}
                 formatar={(v) => numero(Math.round(v))}
-                icone={<Cpu className="h-4 w-4" />}
+                icone={<IconeMaquinaFichas className="h-4 w-4" />}
                 destaque
                 detalhe={`${numero(contagem.P)} P + ${numero(contagem.G)} G`}
               />
@@ -196,7 +216,8 @@ export function Manutencao() {
               delay={0.12}
             />
             <StatCard
-              rotulo="O.S. em aberto"
+              // Rótulo curto para caber numa linha (o cartão logo abaixo diz "Manutenções em aberto")
+              rotulo="Em aberto"
               valor={abertas.length}
               formatar={(v) => numero(Math.round(v))}
               icone={<ClipboardList className="h-4 w-4" />}
@@ -208,7 +229,7 @@ export function Manutencao() {
           <Card className="mb-6">
             <CardHeader
               icone={<ClipboardList className="h-4 w-4" />}
-              titulo="Ordens de serviço em aberto"
+              titulo="Manutenções em aberto"
               descricao={
                 abertas.length
                   ? `${abertas.length} ${abertas.length === 1 ? 'aguardando conclusão' : 'aguardando conclusão, da mais antiga para a mais nova'}`
@@ -233,7 +254,7 @@ export function Manutencao() {
             ) : (
               <p className="mx-5 mb-5 flex items-center gap-2 rounded-xl bg-success-soft px-3.5 py-2.5 text-[13px] font-medium text-success">
                 <CircleCheck className="h-4 w-4 shrink-0" />
-                Nenhuma O.S. em aberto. Todas as máquinas estão em dia.
+                Nenhuma manutenção em aberto. Todas as máquinas estão em dia.
               </p>
             )}
           </Card>
@@ -251,7 +272,7 @@ export function Manutencao() {
               <SearchInput
                 valor={busca}
                 aoMudar={setBusca}
-                placeholder="Buscar máquina, modelo ou série…"
+                placeholder="Buscar máquina (ex.: P-01)…"
                 className="sm:min-w-56 sm:flex-1"
               />
               <Segmented
@@ -290,13 +311,14 @@ export function Manutencao() {
                     situacao={situacoes.get(m.id) ?? { estado: estadoDe(m) }}
                     ultimaManutencao={indices.ultima.get(m.id)}
                     emAberto={indices.abertas.get(m.id) ?? 0}
+                    reclamacoes={queixas.get(m.id) ?? 0}
                   />
                 ))}
               </div>
             ) : (
               <Card>
                 <EmptyState
-                  icone={<Cpu className="h-6 w-6" />}
+                  icone={<IconeMaquinaFichas className="h-6 w-6" />}
                   titulo="Nenhuma máquina encontrada"
                   descricao={filtrando ? 'Tente ajustar a busca ou os filtros.' : undefined}
                   acao={filtrando && <Button onClick={limparFiltros}>Limpar filtros</Button>}
@@ -321,11 +343,12 @@ export function Manutencao() {
         fixarMaquina={!!modalOS?.ordem}
         concluir={modalOS?.concluir}
       />
+      <ServicosManutencaoModal aberto={servicosAberto} aoFechar={() => setServicosAberto(false)} />
     </>
   )
 }
 
-/** Uma O.S. em aberto, com acesso rápido para concluir. */
+/** Uma manutenção em aberto, com acesso rápido para concluir. */
 function LinhaOS({
   ordem,
   indice,
@@ -365,7 +388,7 @@ function LinhaOS({
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-            <span className="tnum text-sm font-semibold text-ink">{codigoOS(ordem.numero)}</span>
+            <span className="tnum text-sm font-semibold text-ink">Manutenção {codigoOS(ordem.numero)}</span>
             <span className="text-[13px] text-muted">{TIPO_OS[ordem.tipo].label}</span>
             <StatusOSBadge status={ordem.status} />
           </div>
@@ -380,12 +403,11 @@ function LinhaOS({
         </div>
       </div>
       <div className="flex shrink-0 items-center gap-1 max-sm:justify-end">
-        <BotaoImprimirOS ordem={ordem} maquina={maquina} />
         <Button
           variante="ghost"
           tamanho="icon-sm"
           onClick={aoEditar}
-          aria-label={`Editar ${codigoOS(ordem.numero)}`}
+          aria-label={`Editar a manutenção ${codigoOS(ordem.numero)}`}
           title="Editar"
         >
           <Pencil className="h-4 w-4" />
@@ -398,19 +420,22 @@ function LinhaOS({
   )
 }
 
-/** Cartão de uma máquina na grade: identificação, situação, onde está e manutenção. */
+/** Cartão de uma máquina na grade: identificação, situação, onde está, manutenção e reclamações. */
 function CartaoMaquina({
   maquina,
   indice,
   situacao,
   ultimaManutencao,
   emAberto,
+  reclamacoes,
 }: {
   maquina: Maquina
   indice: number
   situacao: SituacaoMaquina
   ultimaManutencao: string | undefined
   emAberto: number
+  /** Reclamações de clientes registradas para a máquina. */
+  reclamacoes: number
 }) {
   const desativada = situacao.estado === 'DESATIVADA'
   return (
@@ -438,7 +463,9 @@ function CartaoMaquina({
             </span>
             <TipoMaquinaBadge tipo={maquina.tipo} />
           </div>
-          <p className="truncate text-xs text-muted">{maquina.modelo || TIPO_MAQUINA[maquina.tipo].label}</p>
+          <p className="truncate text-xs text-muted">
+            {TIPO_MAQUINA[maquina.tipo].label} · {TIPO_MAQUINA[maquina.tipo].descricao.toLowerCase()}
+          </p>
         </div>
         <SituacaoBadge estado={situacao.estado} />
       </div>
@@ -454,11 +481,23 @@ function CartaoMaquina({
             {ultimaManutencao ? `Última manutenção: ${dataCurta(ultimaManutencao)}` : 'Nenhuma manutenção concluída'}
           </span>
         </span>
-        {emAberto > 0 && (
-          <Badge tom="warning" ponto={false} className="h-5 px-2 text-[11px]">
-            {emAberto} O.S. em aberto
-          </Badge>
-        )}
+        <span className="flex shrink-0 items-center gap-1.5">
+          {reclamacoes > 0 && (
+            <span
+              className="tnum inline-flex items-center gap-1 text-muted"
+              title={`${reclamacoes} ${reclamacoes === 1 ? 'reclamação de cliente' : 'reclamações de clientes'}`}
+            >
+              <MessageSquareWarning className="h-3.5 w-3.5" />
+              {reclamacoes}
+              <span className="sr-only">{reclamacoes === 1 ? 'reclamação' : 'reclamações'}</span>
+            </span>
+          )}
+          {emAberto > 0 && (
+            <Badge tom="warning" ponto={false} className="h-5 px-2 text-[11px]">
+              {emAberto} em aberto
+            </Badge>
+          )}
+        </span>
       </div>
     </motion.div>
   )
@@ -468,7 +507,9 @@ function CartaoMaquina({
 function OndeEsta({ situacao }: { situacao: SituacaoMaquina }) {
   const { estado, evento, proxima, dataProxima } = situacao
   if (estado === 'DESATIVADA') {
-    return <LinhaInfo icone={<Cpu className="h-3.5 w-3.5" />}>Fora de uso. O histórico continua guardado.</LinhaInfo>
+    return (
+      <LinhaInfo icone={<IconeMaquinaFichas className="h-3.5 w-3.5" />}>Fora de uso. O histórico continua guardado.</LinhaInfo>
+    )
   }
   if (evento) {
     const p = periodoEvento(evento)
@@ -477,22 +518,20 @@ function OndeEsta({ situacao }: { situacao: SituacaoMaquina }) {
       <LinhaInfo
         icone={emManutencao ? <TriangleAlert className="h-3.5 w-3.5" /> : <MapPin className="h-3.5 w-3.5" />}
         tom={emManutencao ? 'text-warning' : 'text-info'}
-        detalhe={p && [periodo(p.inicio, p.fim), nomeAlemDoLocal(evento)].filter(Boolean).join(' · ')}
+        detalhe={
+          p && [periodo(p.inicio, p.fim), evento.periodoCorrido && 'período todo com o cliente'].filter(Boolean).join(' · ')
+        }
       >
         {emManutencao ? 'Em manutenção, mas marcada em ' : 'Locada · '}
-        <LinkEvento id={evento.id}>{cabecalhoEmLinha(evento)}</LinkEvento>
+        <LinkEvento id={evento.id}>{localDaLocacao(evento)}</LinkEvento>
       </LinhaInfo>
     )
   }
   if (proxima) {
     return (
-      <LinhaInfo
-        icone={<CalendarClock className="h-3.5 w-3.5" />}
-        tom={estado === 'MANUTENCAO' ? 'text-warning' : undefined}
-        detalhe={nomeAlemDoLocal(proxima)}
-      >
+      <LinhaInfo icone={<CalendarClock className="h-3.5 w-3.5" />} tom={estado === 'MANUTENCAO' ? 'text-warning' : undefined}>
         Próxima locação: {dataProxima ? dataCurta(dataProxima).slice(0, 5) : '—'} ·{' '}
-        <LinkEvento id={proxima.id}>{cabecalhoEmLinha(proxima)}</LinkEvento>
+        <LinkEvento id={proxima.id}>{localDaLocacao(proxima)}</LinkEvento>
       </LinhaInfo>
     )
   }

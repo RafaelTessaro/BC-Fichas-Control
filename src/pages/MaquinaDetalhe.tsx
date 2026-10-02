@@ -1,4 +1,4 @@
-// Ficha da máquina: situação, onde está, dados, ordens de serviço e histórico.
+// Ficha da máquina: situação, onde está, manutenções, reclamações de clientes e histórico.
 
 import {
   ArrowLeft,
@@ -6,13 +6,13 @@ import {
   Ban,
   CalendarClock,
   CircleCheck,
-  CircleDollarSign,
   ClipboardCheck,
   ClipboardList,
   ClipboardPlus,
-  Cpu,
   History,
   MapPin,
+  MessageSquarePlus,
+  MessageSquareWarning,
   Pencil,
   ShieldCheck,
   Ticket,
@@ -22,6 +22,7 @@ import {
 import { motion } from 'motion/react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { hojeLocalIso } from '#shared/dominio.ts'
 import {
   codigoOS,
   ESTADO_MAQUINA,
@@ -34,10 +35,12 @@ import {
   TIPO_OS,
   type SituacaoMaquina,
 } from '#shared/maquinas.ts'
-import type { Evento, Maquina, OrdemServico, StatusMaquina } from '#shared/tipos.ts'
+import type { Evento, OrdemServico, OrdemServicoInput, Reclamacao, StatusMaquina } from '#shared/tipos.ts'
+import { IconeMaquinaFichas } from '../components/IconeMaquinaFichas'
 import { SituacaoBadge, StatusOSBadge, TipoMaquinaBadge, useSituacoes } from '../components/Maquinas'
 import { MaquinaFormModal } from '../components/MaquinaFormModal'
-import { BotaoImprimirOS, OrdemServicoModal } from '../components/OrdemServicoModal'
+import { OrdemServicoModal } from '../components/OrdemServicoModal'
+import { ReclamacaoModal } from '../components/ReclamacaoModal'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
@@ -45,45 +48,52 @@ import { confirmar } from '../components/ui/Feedback'
 import { EmptyState, PageHeader, Segmented, StatCard } from '../components/ui/Misc'
 import { ErroApi } from '../lib/api'
 import { cn } from '../lib/cn'
-import { codigoEvento, dataCurta, moeda, numero, periodo } from '../lib/format'
+import { codigoEvento, dataCurta, numero, periodo } from '../lib/format'
+import { useHoje } from '../lib/hoje'
 import {
   avisoLocacoes,
   diasEntre,
   historicoMaquina,
   locacoesDeHojeEmDiante,
-  nomeAlemDoLocal,
   ordenarOrdens,
   perguntaSituacao,
+  problemaDaReclamacao,
   resumoMaquina,
   type ItemHistorico,
   type Locacao,
 } from '../lib/manutencao'
 import { useDados } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
-import { useHoje } from '../lib/hoje'
-import { hojeLocalIso } from '#shared/dominio.ts'
 
-type ModalOS = { ordem?: OrdemServico; concluir?: boolean }
+/** Estado do formulário de manutenção: nova (talvez já preenchida), edição ou conclusão. */
+type ModalOS = { ordem?: OrdemServico; concluir?: boolean; inicial?: Partial<OrdemServicoInput> }
+/** Formulário de reclamação: nova (`{}`) ou edição. */
+type ModalReclamacao = { reclamacao?: Reclamacao }
 type Aba = 'manutencoes' | 'historico'
-type FiltroHistorico = 'tudo' | 'os' | 'locacao'
+type FiltroHistorico = 'tudo' | ItemHistorico['tipo']
 
-/** Quantas O.S. aparecem antes de "Mostrar mais". */
+/** Quantas manutenções aparecem antes de "Mostrar mais". */
 const POR_PAGINA = 8
+/** Quantas reclamações aparecem antes de "Mostrar todas". */
+const RECLAMACOES_VISIVEIS = 4
 
 export function MaquinaDetalhe() {
   const { id } = useParams()
   const navegar = useNavigate()
   const maquina = useDados((s) => s.maquinas.find((m) => m.id === id))
   const todasOrdens = useDados((s) => s.ordens)
+  const todasReclamacoes = useDados((s) => s.reclamacoes)
   const eventos = useDados((s) => s.eventos)
   const clientes = useDados((s) => s.clientes)
   const salvarMaquina = useDados((s) => s.salvarMaquina)
   const excluirMaquina = useDados((s) => s.excluirMaquina)
   const excluirOrdem = useDados((s) => s.excluirOrdem)
+  const excluirReclamacao = useDados((s) => s.excluirReclamacao)
   const situacao = useSituacoes().get(id ?? '')
 
   const [editando, setEditando] = useState(false)
   const [modalOS, setModalOS] = useState<ModalOS | null>(null)
+  const [modalReclamacao, setModalReclamacao] = useState<ModalReclamacao | null>(null)
   const [mudando, setMudando] = useState(false)
   const [aba, setAba] = useState<Aba>('manutencoes')
   const [filtro, setFiltro] = useState<FiltroHistorico>('tudo')
@@ -91,15 +101,24 @@ export function MaquinaDetalhe() {
 
   const hoje = useHoje()
   const ordens = useMemo(() => ordenarOrdens(todasOrdens.filter((o) => o.maquinaId === id)), [todasOrdens, id])
-  const resumo = useMemo(() => resumoMaquina(id ?? '', todasOrdens, eventos, hoje), [id, todasOrdens, eventos, hoje])
-  const historico = useMemo(() => historicoMaquina(id ?? '', todasOrdens, eventos, hoje), [id, todasOrdens, eventos, hoje])
+  // A lista da loja já vem da mais recente para a mais antiga
+  const reclamacoes = useMemo(() => todasReclamacoes.filter((r) => r.maquinaId === id), [todasReclamacoes, id])
+  const resumo = useMemo(
+    () => resumoMaquina(id ?? '', todasOrdens, eventos, todasReclamacoes, hoje),
+    [id, todasOrdens, eventos, todasReclamacoes, hoje],
+  )
+  const historico = useMemo(
+    () => historicoMaquina(id ?? '', todasOrdens, eventos, todasReclamacoes, hoje),
+    [id, todasOrdens, eventos, todasReclamacoes, hoje],
+  )
   const locacoes = useMemo(() => locacoesDeHojeEmDiante(id ?? '', eventos, hoje), [id, eventos, hoje])
   const nomeCliente = useMemo(() => new Map(clientes.map((c) => [c.id, c.nome])), [clientes])
+  const eventoPorId = useMemo(() => new Map(eventos.map((e) => [e.id, e])), [eventos])
 
   if (!maquina || !situacao) {
     return (
       <EmptyState
-        icone={<Cpu className="h-6 w-6" />}
+        icone={<IconeMaquinaFichas className="h-6 w-6" />}
         titulo="Máquina não encontrada"
         descricao="Ela pode ter sido excluída."
         acao={<Button onClick={() => navegar('/manutencao')}>Voltar para a manutenção</Button>}
@@ -108,6 +127,7 @@ export function MaquinaDetalhe() {
   }
 
   const ident = maquina.identificacao
+  const desativada = maquina.status === 'DESATIVADA'
   // Locações de hoje em diante, sem a que está acontecendo agora (já aparece em destaque)
   const proximas = locacoes.filter((l) => l.evento.id !== situacao.evento?.id)
 
@@ -124,9 +144,11 @@ export function MaquinaDetalhe() {
       await salvarMaquina({ ...dados, status: nova }, { id: idMaquina, versao })
       const textos: Record<StatusMaquina, string> = {
         DISPONIVEL: resumo.emAberto
-          ? `Ela ainda tem ${resumo.emAberto === 1 ? 'uma O.S. em aberto' : `${resumo.emAberto} O.S. em aberto`}.`
+          ? `Ela ainda tem ${resumo.emAberto === 1 ? 'uma manutenção em aberto' : `${resumo.emAberto} manutenções em aberto`}.`
           : 'Pronta para ser locada.',
-        MANUTENCAO: resumo.emAberto ? 'Fica fora dos eventos até ser liberada.' : 'Abra uma O.S. para registrar o serviço.',
+        MANUTENCAO: resumo.emAberto
+          ? 'Fica fora dos eventos até ser liberada.'
+          : 'Registre a manutenção para acompanhar o serviço.',
         DESATIVADA: 'O histórico continua guardado.',
       }
       toast.sucesso(`${ident}: ${ESTADO_MAQUINA[nova].label.toLowerCase()}`, textos[nova])
@@ -140,7 +162,7 @@ export function MaquinaDetalhe() {
   /** Oferece desativar no lugar de excluir (máquina com histórico). `motivo`: o que ela já tem registrado. */
   const oferecerDesativar = async (motivo: string) => {
     const regra = 'Para não perder esse histórico, ela não pode ser excluída'
-    if (maquina.status === 'DESATIVADA') {
+    if (desativada) {
       return void toast.info('Esta máquina não pode ser excluída', `${motivo} ${regra}; ela já está desativada.`)
     }
     const ok = await confirmar({
@@ -158,12 +180,14 @@ export function MaquinaDetalhe() {
 
   const excluir = async () => {
     const eventosComEla = eventos.filter((e) => e.maquinasIds.includes(maquina.id)).length
-    if (ordens.length || eventosComEla) {
+    if (ordens.length || reclamacoes.length || eventosComEla) {
       const partes = [
-        ordens.length && `${ordens.length} ${ordens.length === 1 ? 'ordem de serviço' : 'ordens de serviço'}`,
+        ordens.length && `${ordens.length} ${ordens.length === 1 ? 'manutenção' : 'manutenções'}`,
+        reclamacoes.length && `${reclamacoes.length} ${reclamacoes.length === 1 ? 'reclamação' : 'reclamações'}`,
         eventosComEla && `${eventosComEla} ${eventosComEla === 1 ? 'evento' : 'eventos'}`,
-      ].filter(Boolean)
-      return oferecerDesativar(`Ela já tem ${partes.join(' e ')} registrados.`)
+      ].filter(Boolean) as string[]
+      const lista = partes.length > 1 ? `${partes.slice(0, -1).join(', ')} e ${partes[partes.length - 1]}` : partes[0]
+      return oferecerDesativar(`Ela já tem ${lista} registrados.`)
     }
     const ok = await confirmar({
       titulo: `Excluir a máquina ${ident}?`,
@@ -186,22 +210,45 @@ export function MaquinaDetalhe() {
 
   const excluirOS = async (o: OrdemServico) => {
     const ok = await confirmar({
-      titulo: `Excluir a ${codigoOS(o.numero)}?`,
+      titulo: `Excluir a manutenção ${codigoOS(o.numero)}?`,
       descricao:
-        'Ela sai do histórico da máquina. Se a O.S. só não foi feita, prefira marcá-la como “Cancelada”. Esta ação não pode ser desfeita.',
-      confirmar: 'Excluir O.S.',
+        'Ela sai do histórico da máquina. Se o serviço só não vai mais ser feito, prefira marcar a manutenção como “Cancelada”. Esta ação não pode ser desfeita.',
+      confirmar: 'Excluir manutenção',
       perigo: true,
     })
     if (!ok) return
     try {
       await excluirOrdem(o.id)
-      toast.sucesso(`${codigoOS(o.numero)} excluída`)
+      toast.sucesso(`Manutenção ${codigoOS(o.numero)} excluída`)
     } catch (e) {
-      avisarErro('Não foi possível excluir a O.S.', e)
+      avisarErro('Não foi possível excluir a manutenção', e)
     }
   }
 
+  const apagarReclamacao = async (r: Reclamacao) => {
+    const ok = await confirmar({
+      titulo: 'Apagar esta reclamação?',
+      descricao: `“${r.descricao}” sai do histórico da máquina ${ident}. Esta ação não pode ser desfeita.`,
+      confirmar: 'Apagar reclamação',
+      perigo: true,
+    })
+    if (!ok) return
+    try {
+      await excluirReclamacao(r.id)
+      toast.sucesso('Reclamação apagada')
+    } catch (e) {
+      avisarErro('Não foi possível apagar a reclamação', e)
+    }
+  }
+
+  /** Abre uma manutenção corretiva já com o relato do cliente como problema. */
+  const manutencaoDaReclamacao = (r: Reclamacao) =>
+    setModalOS({
+      inicial: { tipo: 'CORRETIVA', problema: problemaDaReclamacao(r, r.eventoId ? eventoPorId.get(r.eventoId) : undefined) },
+    })
+
   const filtrado = historico.filter((h) => filtro === 'tudo' || h.tipo === filtro)
+  const semManutencao = desativada ? 'Reative a máquina para registrar uma manutenção' : undefined
 
   return (
     <>
@@ -222,9 +269,7 @@ export function MaquinaDetalhe() {
             <SituacaoBadge estado={situacao.estado} className="tracking-normal" />
           </span>
         }
-        descricao={[`${TIPO_MAQUINA[maquina.tipo].label} (${TIPO_MAQUINA[maquina.tipo].descricao.toLowerCase()})`, maquina.modelo]
-          .filter(Boolean)
-          .join(' · ')}
+        descricao={`${TIPO_MAQUINA[maquina.tipo].label} (${TIPO_MAQUINA[maquina.tipo].descricao.toLowerCase()}) · cadastrada em ${dataCurta(hojeLocalIso(new Date(maquina.criadoEm)))}`}
         acoes={
           <>
             <Button
@@ -240,14 +285,17 @@ export function MaquinaDetalhe() {
             <Button icone={<Pencil className="h-4 w-4" />} onClick={() => setEditando(true)}>
               Editar
             </Button>
+            <Button icone={<MessageSquarePlus className="h-4 w-4" />} onClick={() => setModalReclamacao({})}>
+              Registrar reclamação
+            </Button>
             <Button
               variante="primary"
               icone={<ClipboardPlus className="h-4 w-4" />}
               onClick={() => setModalOS({})}
-              disabled={maquina.status === 'DESATIVADA'}
-              title={maquina.status === 'DESATIVADA' ? 'Reative a máquina para abrir uma O.S.' : undefined}
+              disabled={desativada}
+              title={semManutencao}
             >
-              Nova O.S.
+              Nova manutenção
             </Button>
           </>
         }
@@ -260,14 +308,20 @@ export function MaquinaDetalhe() {
           formatar={(v) => numero(Math.round(v))}
           icone={<ShieldCheck className="h-4 w-4" />}
           destaque
-          detalhe={resumo.ultimaManutencao ? `Última em ${dataCurta(resumo.ultimaManutencao)}` : 'Nenhuma concluída ainda'}
+          detalhe={
+            resumo.emAberto
+              ? `${resumo.emAberto} em aberto`
+              : resumo.ultimaManutencao
+                ? `Última em ${dataCurta(resumo.ultimaManutencao)}`
+                : 'Nenhuma concluída ainda'
+          }
         />
         <StatCard
-          rotulo="Gasto com manutenção"
-          valor={resumo.gasto}
-          formatar={moeda}
-          icone={<CircleDollarSign className="h-4 w-4" />}
-          detalhe={resumo.emAberto ? `${resumo.emAberto} O.S. em aberto` : 'Peças e mão de obra'}
+          rotulo="Reclamações"
+          valor={resumo.reclamacoes}
+          formatar={(v) => numero(Math.round(v))}
+          icone={<MessageSquareWarning className="h-4 w-4" />}
+          detalhe={resumo.ultimaReclamacao ? `Última em ${dataCurta(resumo.ultimaReclamacao)}` : 'Nenhuma registrada'}
           delay={0.04}
         />
         <StatCard
@@ -290,7 +344,7 @@ export function MaquinaDetalhe() {
         />
       </div>
 
-      {/* No celular: onde está → manutenções → dados; no computador, os dois cartões menores à esquerda */}
+      {/* No celular: onde está → manutenções → reclamações; no computador, os dois cartões menores à esquerda */}
       <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-3 lg:grid-rows-[auto_1fr]">
         <Card className="lg:col-start-1 lg:row-start-1">
           <CardHeader icone={<MapPin className="h-4 w-4" />} titulo="Onde está" descricao="Situação de hoje" />
@@ -315,30 +369,16 @@ export function MaquinaDetalhe() {
         </Card>
 
         <Card className="max-lg:order-2 lg:col-start-1 lg:row-start-2">
-          <CardHeader
-            icone={<Cpu className="h-4 w-4" />}
-            titulo="Dados da máquina"
-            acoes={
-              <Button variante="ghost" tamanho="sm" icone={<Pencil className="h-3.5 w-3.5" />} onClick={() => setEditando(true)}>
-                Editar
-              </Button>
-            }
+          <Reclamacoes
+            reclamacoes={reclamacoes}
+            eventoPorId={eventoPorId}
+            nomeCliente={nomeCliente}
+            podeAbrirManutencao={!desativada}
+            aoRegistrar={() => setModalReclamacao({})}
+            aoEditar={(r) => setModalReclamacao({ reclamacao: r })}
+            aoApagar={(r) => void apagarReclamacao(r)}
+            aoAbrirManutencao={manutencaoDaReclamacao}
           />
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-4 px-5 pb-5 text-sm">
-            <Dado rotulo="Identificação">{ident}</Dado>
-            <Dado rotulo="Tipo">{TIPO_MAQUINA[maquina.tipo].label}</Dado>
-            <Dado rotulo="Modelo">{maquina.modelo}</Dado>
-            <Dado rotulo="Nº de série">{maquina.numeroSerie}</Dado>
-            <Dado rotulo="Aquisição">{maquina.dataAquisicao && dataCurta(maquina.dataAquisicao)}</Dado>
-            <Dado rotulo="Cadastrada em">{dataCurta(hojeLocalIso(new Date(maquina.criadoEm)))}</Dado>
-            {maquina.observacoes && (
-              <div className="col-span-2">
-                <Dado rotulo="Observações">
-                  <span className="whitespace-pre-line">{maquina.observacoes}</span>
-                </Dado>
-              </div>
-            )}
-          </dl>
         </Card>
 
         <Card className="overflow-hidden max-lg:order-1 lg:col-span-2 lg:col-start-2 lg:row-span-2 lg:row-start-1">
@@ -376,6 +416,7 @@ export function MaquinaDetalhe() {
                 opcoes={[
                   { valor: 'tudo', label: 'Tudo' },
                   { valor: 'os', label: 'Manutenções' },
+                  { valor: 'reclamacao', label: 'Reclamações' },
                   { valor: 'locacao', label: 'Locações' },
                 ]}
               />
@@ -386,11 +427,10 @@ export function MaquinaDetalhe() {
             ordens.length ? (
               <div className="flex flex-col gap-3 border-t border-line p-4 sm:p-5">
                 {ordens.slice(0, limite).map((o, i) => (
-                  <CartaoOS
+                  <CartaoManutencao
                     key={o.id}
                     ordem={o}
                     indice={i}
-                    maquina={maquina}
                     aoEditar={() => setModalOS({ ordem: o })}
                     aoConcluir={() => setModalOS({ ordem: o, concluir: true })}
                     aoExcluir={() => void excluirOS(o)}
@@ -406,12 +446,12 @@ export function MaquinaDetalhe() {
               <EmptyState
                 className="border-t border-line"
                 icone={<Wrench className="h-6 w-6" />}
-                titulo="Nenhuma ordem de serviço"
+                titulo="Nenhuma manutenção registrada"
                 descricao="Registre limpezas, higienizações, revisões e consertos para acompanhar a saúde desta máquina."
                 acao={
-                  maquina.status !== 'DESATIVADA' && (
+                  !desativada && (
                     <Button variante="primary" icone={<ClipboardPlus className="h-4 w-4" />} onClick={() => setModalOS({})}>
-                      Abrir a primeira O.S.
+                      Registrar a primeira manutenção
                     </Button>
                   )
                 }
@@ -424,16 +464,20 @@ export function MaquinaDetalhe() {
               className="border-t border-line"
               icone={<History className="h-6 w-6" />}
               titulo={
-                filtro === 'locacao'
-                  ? 'Nenhuma locação ainda'
-                  : filtro === 'os'
-                    ? 'Nenhuma manutenção ainda'
-                    : 'Sem histórico ainda'
+                {
+                  tudo: 'Sem histórico ainda',
+                  os: 'Nenhuma manutenção ainda',
+                  reclamacao: 'Nenhuma reclamação',
+                  locacao: 'Nenhuma locação ainda',
+                }[filtro]
               }
               descricao={
-                filtro === 'os'
-                  ? 'As ordens de serviço desta máquina aparecem aqui.'
-                  : 'Os eventos para os quais ela for enviada aparecem aqui, junto com as manutenções.'
+                {
+                  tudo: 'Os eventos para os quais ela for enviada aparecem aqui, junto com as manutenções e as reclamações.',
+                  os: 'As manutenções desta máquina aparecem aqui.',
+                  reclamacao: 'As reclamações dos clientes sobre esta máquina aparecem aqui.',
+                  locacao: 'Os eventos para os quais ela for enviada aparecem aqui.',
+                }[filtro]
               }
             />
           )}
@@ -448,12 +492,19 @@ export function MaquinaDetalhe() {
         maquinaId={maquina.id}
         fixarMaquina
         concluir={modalOS?.concluir}
+        inicial={modalOS?.inicial}
+      />
+      <ReclamacaoModal
+        aberto={!!modalReclamacao}
+        aoFechar={() => setModalReclamacao(null)}
+        reclamacao={modalReclamacao?.reclamacao}
+        maquinaId={maquina.id}
       />
     </>
   )
 }
 
-/** Situação de hoje em destaque: locada (com o local do evento), disponível, em manutenção ou desativada. */
+/** Situação de hoje em destaque: locada (com o evento), disponível, em manutenção ou desativada. */
 function OndeEsta({
   situacao,
   ordemAberta,
@@ -493,7 +544,7 @@ function OndeEsta({
         <>
           {ordemAberta ? (
             <p className="mt-1 text-sm text-ink-2">
-              {codigoOS(ordemAberta.numero)} · {STATUS_OS[ordemAberta.status].label.toLowerCase()} desde{' '}
+              Manutenção {codigoOS(ordemAberta.numero)} · {STATUS_OS[ordemAberta.status].label.toLowerCase()} desde{' '}
               {dataCurta(ordemAberta.abertura)}
               {(ordemAberta.servicos[0] || ordemAberta.problema) && (
                 <span className="block truncate text-[13px] text-muted">
@@ -503,7 +554,7 @@ function OndeEsta({
             </p>
           ) : (
             <div className="mt-1 text-sm text-ink-2">
-              <p>Nenhuma O.S. aberta para registrar o serviço.</p>
+              <p>Nenhuma manutenção em aberto registrando o serviço.</p>
               <Button
                 variante="secondary"
                 tamanho="sm"
@@ -511,7 +562,7 @@ function OndeEsta({
                 icone={<ClipboardPlus className="h-3.5 w-3.5" />}
                 onClick={aoAbrirOS}
               >
-                Abrir O.S.
+                Registrar manutenção
               </Button>
             </div>
           )}
@@ -530,26 +581,22 @@ function OndeEsta({
   )
 }
 
-/** Local (cabeçalho das fichas), evento, cliente e período. */
+/** Nome do evento, período, cliente e o link para abri-lo. */
 function DadosEvento({ evento, nomeCliente }: { evento: Evento; nomeCliente: Map<string, string> }) {
   const p = periodoEvento(evento)
-  const linhas = evento.cabecalho
-    .split('\n')
-    .map((l) => l.trim())
-    .filter(Boolean)
   return (
     <div className="mt-1">
       <p className="text-base leading-snug font-semibold break-words text-ink">{localDaLocacao(evento)}</p>
-      {linhas.length > 1 && <p className="text-[13px] break-words text-ink-2">{linhas.slice(1, 3).join(' · ')}</p>}
-      <p className="mt-1.5 text-[13px] text-ink-2">
+      <p className="mt-1 text-[13px] text-ink-2">
         {p && <span className="tnum">{periodo(p.inicio, p.fim)}</span>}
         {nomeCliente.get(evento.clienteId) && ` · ${nomeCliente.get(evento.clienteId)}`}
       </p>
+      {evento.periodoCorrido && <p className="text-xs text-ink-2">Fica com o cliente o período todo.</p>}
       <Link
         to={`/eventos/${evento.id}`}
         className="mt-2 inline-flex items-center gap-1 text-[13px] font-medium underline-offset-2 hover:underline"
       >
-        {evento.nome} {codigoEvento(evento.codigo)}
+        Abrir o evento {codigoEvento(evento.codigo)}
         <ArrowRight className="h-3.5 w-3.5" />
       </Link>
     </div>
@@ -567,7 +614,7 @@ function ProximasLocacoes({ locacoes }: { locacoes: Locacao[] }) {
           <li key={l.evento.id}>
             <Link
               to={`/eventos/${l.evento.id}`}
-              className="flex items-center gap-2.5 rounded-lg px-2 py-1.5 -mx-2 transition-colors hover:bg-surface-2"
+              className="-mx-2 flex items-center gap-2.5 rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-2"
             >
               <CalendarClock className="h-4 w-4 shrink-0 text-muted" />
               <span className="min-w-0 flex-1">
@@ -626,18 +673,156 @@ function TrocaSituacao({
   )
 }
 
-/** Uma ordem de serviço com todos os detalhes e as ações. */
-function CartaoOS({
+/** Cartão "Reclamações de clientes": o que os clientes relataram sobre a máquina. */
+function Reclamacoes({
+  reclamacoes,
+  eventoPorId,
+  nomeCliente,
+  podeAbrirManutencao,
+  aoRegistrar,
+  aoEditar,
+  aoApagar,
+  aoAbrirManutencao,
+}: {
+  reclamacoes: Reclamacao[]
+  eventoPorId: Map<string, Evento>
+  nomeCliente: Map<string, string>
+  podeAbrirManutencao: boolean
+  aoRegistrar: () => void
+  aoEditar: (r: Reclamacao) => void
+  aoApagar: (r: Reclamacao) => void
+  aoAbrirManutencao: (r: Reclamacao) => void
+}) {
+  const [todas, setTodas] = useState(false)
+  const visiveis = todas ? reclamacoes : reclamacoes.slice(0, RECLAMACOES_VISIVEIS)
+  return (
+    <>
+      <CardHeader
+        icone={<MessageSquareWarning className="h-4 w-4" />}
+        titulo="Reclamações de clientes"
+        descricao={
+          reclamacoes.length
+            ? `${reclamacoes.length} ${reclamacoes.length === 1 ? 'registrada' : 'registradas'}`
+            : 'O que os clientes relataram'
+        }
+        acoes={
+          <Button
+            variante="ghost"
+            tamanho="icon-sm"
+            onClick={aoRegistrar}
+            aria-label="Registrar reclamação"
+            title="Registrar reclamação"
+            className="-mt-1 -mr-1.5"
+          >
+            <MessageSquarePlus className="h-4 w-4" />
+          </Button>
+        }
+      />
+      {reclamacoes.length ? (
+        <>
+          <ul className="divide-y divide-line border-t border-line">
+            {visiveis.map((r, i) => {
+              const evento = r.eventoId ? eventoPorId.get(r.eventoId) : undefined
+              const cliente = evento && nomeCliente.get(evento.clienteId)
+              return (
+                <motion.li
+                  key={r.id}
+                  initial={{ opacity: 0, y: 4 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: Math.min(i, 6) * 0.03, duration: 0.22 }}
+                  className="px-5 py-3.5"
+                >
+                  <div className="flex items-start gap-2">
+                    <p className="min-w-0 flex-1 text-sm break-words whitespace-pre-line text-ink">{r.descricao}</p>
+                    <div className="-mt-1 -mr-2 flex shrink-0 items-center">
+                      <Button
+                        variante="ghost"
+                        tamanho="icon-sm"
+                        onClick={() => aoEditar(r)}
+                        aria-label="Editar reclamação"
+                        title="Editar"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
+                      <Button
+                        variante="ghost"
+                        tamanho="icon-sm"
+                        onClick={() => aoApagar(r)}
+                        aria-label="Apagar reclamação"
+                        title="Apagar"
+                        className="hover:bg-danger-soft hover:text-danger"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                  <p className="mt-1 text-xs text-muted">
+                    <span className="tnum">{dataCurta(r.data)}</span>
+                    {evento ? (
+                      <>
+                        {' · '}
+                        <Link
+                          to={`/eventos/${evento.id}`}
+                          className="font-medium text-ink-2 underline decoration-current/30 underline-offset-2 hover:text-brand-ink hover:decoration-current"
+                        >
+                          <span className="tnum">{codigoEvento(evento.codigo)}</span> {evento.nome}
+                        </Link>
+                      </>
+                    ) : r.eventoId ? (
+                      ' · Evento excluído'
+                    ) : (
+                      ' · Sem evento'
+                    )}
+                    {cliente && ` · ${cliente}`}
+                  </p>
+                  {podeAbrirManutencao && (
+                    <Button
+                      variante="soft"
+                      tamanho="sm"
+                      icone={<Wrench className="h-3.5 w-3.5" />}
+                      onClick={() => aoAbrirManutencao(r)}
+                      className="mt-2.5 h-7 px-2.5 text-xs"
+                      title="Registrar uma manutenção corretiva com este relato"
+                    >
+                      Abrir manutenção
+                    </Button>
+                  )}
+                </motion.li>
+              )
+            })}
+          </ul>
+          {reclamacoes.length > RECLAMACOES_VISIVEIS && (
+            <div className="border-t border-line px-5 py-2.5">
+              <button
+                type="button"
+                onClick={() => setTodas((t) => !t)}
+                className="cursor-pointer text-[13px] font-medium text-brand-ink hover:underline"
+              >
+                {todas ? 'Mostrar menos' : `Mostrar todas (${reclamacoes.length})`}
+              </button>
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="mx-5 mb-5 rounded-xl bg-surface-2 px-3.5 py-3 text-[13px] text-ink-2">
+          Nenhuma reclamação registrada. Quando a máquina voltar de um evento e o cliente tiver relatado algum problema (ex.:
+          “estava travando”), registre aqui.
+        </p>
+      )}
+    </>
+  )
+}
+
+/** Uma manutenção com todos os detalhes e as ações. */
+function CartaoManutencao({
   ordem,
   indice,
-  maquina,
   aoEditar,
   aoConcluir,
   aoExcluir,
 }: {
   ordem: OrdemServico
   indice: number
-  maquina: Maquina
   aoEditar: () => void
   aoConcluir: () => void
   aoExcluir: () => void
@@ -658,7 +843,7 @@ function CartaoOS({
       <header className="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="tnum text-[15px] font-semibold text-ink">{codigoOS(ordem.numero)}</span>
+            <span className="tnum text-[15px] font-semibold text-ink">Manutenção {codigoOS(ordem.numero)}</span>
             <Badge tom={ordem.tipo === 'CORRETIVA' ? 'danger' : 'brand'} ponto={false}>
               {TIPO_OS[ordem.tipo].label}
             </Badge>
@@ -686,17 +871,16 @@ function CartaoOS({
             variante="ghost"
             tamanho="icon-sm"
             onClick={aoEditar}
-            aria-label={`Editar ${codigoOS(ordem.numero)}`}
+            aria-label={`Editar a manutenção ${codigoOS(ordem.numero)}`}
             title="Editar"
           >
             <Pencil className="h-4 w-4" />
           </Button>
-          <BotaoImprimirOS ordem={ordem} maquina={maquina} />
           <Button
             variante="ghost"
             tamanho="icon-sm"
             onClick={aoExcluir}
-            aria-label={`Excluir ${codigoOS(ordem.numero)}`}
+            aria-label={`Excluir a manutenção ${codigoOS(ordem.numero)}`}
             title="Excluir"
             className="hover:bg-danger-soft hover:text-danger"
           >
@@ -718,18 +902,38 @@ function CartaoOS({
         </ul>
       )}
 
-      <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-2">
-        {ordem.problema && <Dado rotulo="Problema relatado">{ordem.problema}</Dado>}
-        {ordem.solucao && <Dado rotulo="Serviço realizado">{ordem.solucao}</Dado>}
-        {ordem.pecas && <Dado rotulo="Peças trocadas">{ordem.pecas}</Dado>}
-        {ordem.responsavel && <Dado rotulo="Responsável">{ordem.responsavel}</Dado>}
-        {ordem.custo > 0 && <Dado rotulo="Custo">{moeda(ordem.custo)}</Dado>}
-      </dl>
+      {(ordem.problema || ordem.responsavel) && (
+        <dl className="mt-3 grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
+          {ordem.problema && <Dado rotulo="Problema relatado">{ordem.problema}</Dado>}
+          {ordem.responsavel && <Dado rotulo="Responsável">{ordem.responsavel}</Dado>}
+        </dl>
+      )}
+      <RegistroAntigo ordem={ordem} />
     </motion.article>
   )
 }
 
-/** Linha do tempo com O.S. e locações, separada por ano. */
+/** Serviço realizado e peças de manutenções antigas (campos que saíram da tela), em letra miúda. */
+function RegistroAntigo({ ordem, className }: { ordem: OrdemServico; className?: string }) {
+  if (!ordem.solucao && !ordem.pecas) return null
+  return (
+    <p className={cn('mt-2 text-xs break-words text-muted', className)}>
+      {ordem.solucao && (
+        <>
+          <span className="font-medium">Feito:</span> {ordem.solucao}
+        </>
+      )}
+      {ordem.solucao && ordem.pecas && ' · '}
+      {ordem.pecas && (
+        <>
+          <span className="font-medium">Peças:</span> {ordem.pecas}
+        </>
+      )}
+    </p>
+  )
+}
+
+/** Linha do tempo com manutenções, reclamações e locações, separada por ano. */
 function LinhaDoTempo({ itens, hoje, nomeCliente }: { itens: ItemHistorico[]; hoje: string; nomeCliente: Map<string, string> }) {
   return (
     <ol className="border-t border-line px-5 pt-4 pb-5">
@@ -747,7 +951,13 @@ function LinhaDoTempo({ itens, hoje, nomeCliente }: { itens: ItemHistorico[]; ho
               className="relative flex gap-3 pb-5"
             >
               {!ultimo && <span aria-hidden className="absolute top-9 bottom-1 left-[15px] w-px bg-line" />}
-              {item.tipo === 'os' ? <ItemOS item={item} /> : <ItemLocacao item={item} hoje={hoje} nomeCliente={nomeCliente} />}
+              {item.tipo === 'os' ? (
+                <ItemManutencao item={item} />
+              ) : item.tipo === 'reclamacao' ? (
+                <ItemReclamacao item={item} nomeCliente={nomeCliente} />
+              ) : (
+                <ItemLocacao item={item} hoje={hoje} nomeCliente={nomeCliente} />
+              )}
             </motion.div>
           </li>
         )
@@ -764,7 +974,7 @@ function Marcador({ icone, classe }: { icone: ReactNode; classe: string }) {
   )
 }
 
-function ItemOS({ item }: { item: Extract<ItemHistorico, { tipo: 'os' }> }) {
+function ItemManutencao({ item }: { item: Extract<ItemHistorico, { tipo: 'os' }> }) {
   const o = item.ordem
   const corretiva = o.tipo === 'CORRETIVA'
   return (
@@ -776,14 +986,13 @@ function ItemOS({ item }: { item: Extract<ItemHistorico, { tipo: 'os' }> }) {
       <div className="min-w-0 flex-1 pt-0.5">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <p className="text-sm font-medium text-ink">
-            {codigoOS(o.numero)} · {TIPO_OS[o.tipo].label}
+            Manutenção {TIPO_OS[o.tipo].label.toLowerCase()} · {codigoOS(o.numero)}
           </p>
           <StatusOSBadge status={o.status} />
         </div>
         <p className="tnum text-xs text-muted">
           {dataCurta(o.abertura)}
           {o.conclusao && o.conclusao !== o.abertura && ` a ${dataCurta(o.conclusao)}`}
-          {o.custo > 0 && ` · ${moeda(o.custo)}`}
           {o.responsavel && ` · ${o.responsavel}`}
         </p>
         {o.servicos.length > 0 && <p className="mt-1 text-[13px] text-ink-2">{o.servicos.join(', ')}</p>}
@@ -793,12 +1002,42 @@ function ItemOS({ item }: { item: Extract<ItemHistorico, { tipo: 'os' }> }) {
             {o.problema}
           </p>
         )}
-        {o.solucao && (
-          <p className="mt-0.5 text-[13px] break-words text-ink-2">
-            <span className="text-muted">Feito: </span>
-            {o.solucao}
-          </p>
-        )}
+        <RegistroAntigo ordem={o} className="mt-1" />
+      </div>
+    </>
+  )
+}
+
+function ItemReclamacao({
+  item,
+  nomeCliente,
+}: {
+  item: Extract<ItemHistorico, { tipo: 'reclamacao' }>
+  nomeCliente: Map<string, string>
+}) {
+  const { reclamacao: r, evento } = item
+  const cliente = evento && nomeCliente.get(evento.clienteId)
+  return (
+    <>
+      <Marcador icone={<MessageSquareWarning className="h-4 w-4" />} classe="bg-warning-soft text-warning" />
+      <div className="min-w-0 flex-1 pt-0.5">
+        <p className="text-sm font-medium text-ink">
+          Reclamação do cliente
+          {evento && (
+            <>
+              {' · '}
+              <Link to={`/eventos/${evento.id}`} className="break-words hover:text-brand-ink hover:underline">
+                {evento.nome}
+              </Link>
+            </>
+          )}
+        </p>
+        <p className="tnum text-xs text-muted">
+          {dataCurta(r.data)}
+          {evento && ` · ${codigoEvento(evento.codigo)}`}
+          {cliente && ` · ${cliente}`}
+        </p>
+        <p className="mt-1 text-[13px] break-words whitespace-pre-line text-ink-2">“{r.descricao}”</p>
       </div>
     </>
   )
@@ -833,8 +1072,8 @@ function ItemLocacao({
         <p className="tnum text-xs text-muted">
           {periodo(item.data, item.fim)} · {codigoEvento(e.codigo)}
           {cliente && ` · ${cliente}`}
+          {e.periodoCorrido && ' · período todo com o cliente'}
         </p>
-        {nomeAlemDoLocal(e) && <p className="mt-1 text-[13px] text-ink-2">{e.nome}</p>}
       </div>
     </>
   )
@@ -844,7 +1083,7 @@ function Dado({ rotulo, children }: { rotulo: string; children: ReactNode }) {
   return (
     <div className="min-w-0">
       <dt className="text-xs text-muted">{rotulo}</dt>
-      <dd className="mt-0.5 break-words text-ink-2">{children || <span className="text-muted">—</span>}</dd>
+      <dd className="mt-0.5 break-words whitespace-pre-line text-ink-2">{children || <span className="text-muted">—</span>}</dd>
     </div>
   )
 }

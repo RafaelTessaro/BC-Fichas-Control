@@ -39,7 +39,8 @@ export function nomeEvento(e: Pick<Evento, 'codigo' | 'nome' | 'clienteId'>, cli
 /**
  * Motivo de cada máquina que não pode ser marcada no evento, considerando as datas do formulário:
  * desativada; em manutenção (se o evento tem algum dia de hoje em diante); ou em outro evento
- * não cancelado em alguma das mesmas datas. Evento cancelado não bloqueia nada.
+ * não cancelado em alguma das mesmas datas. As datas são os dias ocupados dos dois eventos (ver
+ * `diasOcupados`): com período corrido, também os dias do meio. Evento cancelado não bloqueia nada.
  */
 export function bloqueiosMaquinas({
   maquinas,
@@ -96,6 +97,8 @@ function bloqueioOcupada(outros: Evento[], datas: Set<string>, clientes: Map<str
  * servidor (verificarMaquinasLivres em server/repositorio.ts):
  * - máquina acrescentada agora: não pode estar desativada, nem em manutenção (se o evento tem algum
  *   dia de hoje em diante), nem em outro evento em alguma das datas;
+ * - os dias são os ocupados, dos dois lados (com período corrido, também os do meio): ligar o
+ *   período corrido num evento gravado acrescenta os dias do meio;
  * - máquina que já estava gravada: só é cobrada nos dias acrescentados (conflito nesses dias, ou
  *   manutenção/desativação se algum desses dias é de hoje em diante). O que já foi gravado — por
  *   exemplo, uma máquina que entrou em manutenção durante o evento — não trava a edição.
@@ -153,9 +156,10 @@ export function trocasMaquinas({
     } else if (st === 'MANUTENCAO' && futuro) {
       mapa.set(id, { motivo: 'MANUTENCAO', eventos: [], texto: 'Em manutenção' })
     } else {
-      // A que já estava gravada só conta nos dias acrescentados (e o texto cita só esses dias)
+      // A que já estava gravada só conta nos dias acrescentados (e o texto cita só esses dias). Do
+      // lado do outro evento também valem os dias ocupados: com período corrido, os do meio também
       const alvo = nova ? datas : diasNovos
-      const outros = (ocupadas.get(id) ?? []).filter((e) => e.dias.some((d) => alvo.has(d.data)))
+      const outros = (ocupadas.get(id) ?? []).filter((e) => datasEmComum(e, alvo).length > 0)
       if (outros.length) mapa.set(id, bloqueioOcupada(outros, alvo, porId))
     }
   }
@@ -222,16 +226,19 @@ export interface GrupoBloqueio {
 
 /**
  * Agrupa as máquinas bloqueadas para explicar o motivo de forma compacta: uma linha por evento
- * que as ocupa e uma para as que estão em manutenção (as desativadas ficam escondidas).
+ * que as ocupa e uma para as que estão em manutenção (as desativadas ficam escondidas). As datas
+ * citadas são as que os dois eventos ocupam juntos (com período corrido, também as do meio).
  */
 export function agruparBloqueios(
   maquinas: Maquina[],
   bloqueios: Map<string, Bloqueio>,
   clientes: Cliente[],
   dias: Pick<DiaEvento, 'data'>[],
+  /** As máquinas deste evento ficam com o cliente entre os dias de uso. */
+  periodoCorrido?: boolean,
 ): GrupoBloqueio[] {
   const porId = new Map(clientes.map((c) => [c.id, c]))
-  const datas = new Set(dias.map((d) => d.data))
+  const datas = new Set(datasOcupadas({ dias, periodoCorrido }))
   const grupos = new Map<string, GrupoBloqueio>()
   const manutencao: Maquina[] = []
   for (const m of maquinas) {

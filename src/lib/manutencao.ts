@@ -1,27 +1,31 @@
-// Cálculos da aba Manutenção: busca de máquinas, resumo, histórico e sugestões da O.S.
+// Cálculos da aba Manutenção: busca de máquinas, resumo, histórico, reclamações, serviços
+// cadastrados e sugestões do formulário de manutenção ("ordem de serviço" no código).
 // Funções puras (sem React), testadas em manutencao.test.ts.
 
-import { differenceInCalendarDays, parseISO } from 'date-fns'
-import { chaveIdentificacao, localDaLocacao, numeroDaIdentificacao, osEmAberto, periodoEvento } from '#shared/maquinas.ts'
-import type { Evento, Maquina, OrdemServico, StatusMaquina, StatusOS } from '#shared/tipos.ts'
-import { normalizar, periodo } from './format'
+import { addDays, differenceInCalendarDays, format, parseISO } from 'date-fns'
+import { LIMITES } from '#shared/dominio.ts'
+import {
+  chaveIdentificacao,
+  chaveServico,
+  localDaLocacao,
+  numeroDaIdentificacao,
+  osEmAberto,
+  periodoEvento,
+} from '#shared/maquinas.ts'
+import type { Evento, Maquina, OrdemServico, Reclamacao, StatusMaquina, StatusOS } from '#shared/tipos.ts'
+import { codigoEvento, dataCurta, normalizar, periodo } from './format'
 
-/** A máquina combina com a busca pela identificação ("p1" acha "P-01"), modelo ou nº de série. */
-export function maquinaCombina(m: Pick<Maquina, 'tipo' | 'identificacao' | 'modelo' | 'numeroSerie'>, busca: string) {
+/** A máquina combina com a busca pela identificação ("p1" acha "P-01", "máquina 1" acha P-01 e G-01). */
+export function maquinaCombina(m: Pick<Maquina, 'tipo' | 'identificacao'>, busca: string) {
   const termo = normalizar(busca)
   if (!termo) return true
-  if (normalizar(`${m.identificacao} ${m.modelo} ${m.numeroSerie}`).includes(termo)) return true
+  if (normalizar(m.identificacao).includes(termo)) return true
   if (chaveIdentificacao(m.identificacao) === chaveIdentificacao(busca)) return true
   const n = numeroDaIdentificacao(busca, m.tipo)
   if (n !== null && n === numeroDaIdentificacao(m.identificacao, m.tipo)) return true
   // "máquina 01" / "maq 1": o número vale para os dois tipos (P-01 e G-01)
   const resto = /^\s*m[aá]q(?:uina)?\.?\s*(\d{1,6})\s*$/i.exec(busca)
   return !!resto && Number(resto[1]) === numeroDaIdentificacao(m.identificacao, m.tipo)
-}
-
-/** Nome do evento, quando diz algo além do local (a 1ª linha do cabeçalho costuma ser o próprio nome). */
-export function nomeAlemDoLocal(evento: Pick<Evento, 'nome' | 'cabecalho'>) {
-  return normalizar(evento.nome) === normalizar(localDaLocacao(evento)) ? undefined : evento.nome
 }
 
 /** Dias corridos de `de` até `ate` (datas `yyyy-MM-dd`). */
@@ -46,7 +50,7 @@ export function ordenarOrdens<T extends Pick<OrdemServico, 'status' | 'abertura'
   })
 }
 
-/** Por máquina: data da última manutenção concluída e quantas O.S. estão em aberto. */
+/** Por máquina: data da última manutenção concluída e quantas manutenções estão em aberto. */
 export function indicesOrdens(ordens: OrdemServico[]) {
   const ultima = new Map<string, string>()
   const abertas = new Map<string, number>()
@@ -59,13 +63,22 @@ export function indicesOrdens(ordens: OrdemServico[]) {
   return { ultima, abertas }
 }
 
+/** Quantas reclamações de clientes cada máquina tem (id da máquina → quantidade). */
+export function reclamacoesPorMaquina(reclamacoes: Pick<Reclamacao, 'maquinaId'>[]) {
+  const mapa = new Map<string, number>()
+  for (const r of reclamacoes) mapa.set(r.maquinaId, (mapa.get(r.maquinaId) ?? 0) + 1)
+  return mapa
+}
+
 export interface ResumoMaquina {
   concluidas: number
   emAberto: number
-  /** Soma do custo das O.S. que não foram canceladas. */
-  gasto: number
-  /** Data da última O.S. concluída. */
+  /** Data da última manutenção concluída. */
   ultimaManutencao: string | null
+  /** Reclamações de clientes registradas para a máquina. */
+  reclamacoes: number
+  /** Data da reclamação mais recente. */
+  ultimaReclamacao: string | null
   /** Eventos (não cancelados) para os quais a máquina foi enviada. */
   eventos: number
   /** Dias desses eventos até hoje: cada dia com a máquina conta uma diária (os futuros ficam de fora). */
@@ -74,12 +87,26 @@ export interface ResumoMaquina {
   agendados: number
 }
 
-export function resumoMaquina(maquinaId: string, ordens: OrdemServico[], eventos: Evento[], hoje: string): ResumoMaquina {
-  const r: ResumoMaquina = { concluidas: 0, emAberto: 0, gasto: 0, ultimaManutencao: null, eventos: 0, diarias: 0, agendados: 0 }
+export function resumoMaquina(
+  maquinaId: string,
+  ordens: OrdemServico[],
+  eventos: Evento[],
+  reclamacoes: Reclamacao[],
+  hoje: string,
+): ResumoMaquina {
+  const r: ResumoMaquina = {
+    concluidas: 0,
+    emAberto: 0,
+    ultimaManutencao: null,
+    reclamacoes: 0,
+    ultimaReclamacao: null,
+    eventos: 0,
+    diarias: 0,
+    agendados: 0,
+  }
   for (const o of ordens) {
     if (o.maquinaId !== maquinaId) continue
     if (osEmAberto(o)) r.emAberto++
-    if (o.status !== 'CANCELADA') r.gasto += o.custo
     if (o.status === 'CONCLUIDA') {
       r.concluidas++
       if (o.conclusao && o.conclusao > (r.ultimaManutencao ?? '')) r.ultimaManutencao = o.conclusao
@@ -92,7 +119,11 @@ export function resumoMaquina(maquinaId: string, ordens: OrdemServico[], eventos
     const p = periodoEvento(e)
     if (p && p.inicio > hoje) r.agendados++
   }
-  r.gasto = Math.round(r.gasto * 100) / 100
+  for (const rec of reclamacoes) {
+    if (rec.maquinaId !== maquinaId) continue
+    r.reclamacoes++
+    if (rec.data > (r.ultimaReclamacao ?? '')) r.ultimaReclamacao = rec.data
+  }
   return r
 }
 
@@ -116,15 +147,35 @@ export function locacoesDeHojeEmDiante(maquinaId: string, eventos: Evento[], hoj
 export type ItemHistorico =
   | { tipo: 'os'; id: string; data: string; ordem: OrdemServico }
   | { tipo: 'locacao'; id: string; data: string; fim: string; evento: Evento; quando: 'passada' | 'agora' | 'futura' }
+  | { tipo: 'reclamacao'; id: string; data: string; reclamacao: Reclamacao; evento?: Evento }
 
 /**
- * Linha do tempo da máquina: O.S. (pela data de abertura) e locações (pelo primeiro dia do evento;
- * eventos cancelados ficam de fora), da mais recente para a mais antiga.
+ * No mesmo dia, a ordem mais provável dos acontecimentos: a locação começa, o cliente reclama e
+ * a manutenção é aberta. A lista vai da mais recente para a mais antiga, então a manutenção vem antes.
  */
-export function historicoMaquina(maquinaId: string, ordens: OrdemServico[], eventos: Evento[], hoje: string): ItemHistorico[] {
+const PESO_NO_DIA: Record<ItemHistorico['tipo'], number> = { os: 2, reclamacao: 1, locacao: 0 }
+
+/**
+ * Linha do tempo da máquina: manutenções (pela data de abertura), reclamações de clientes (pela
+ * data da reclamação) e locações (pelo primeiro dia do evento; eventos cancelados ficam de fora),
+ * da mais recente para a mais antiga.
+ */
+export function historicoMaquina(
+  maquinaId: string,
+  ordens: OrdemServico[],
+  eventos: Evento[],
+  reclamacoes: Reclamacao[],
+  hoje: string,
+): ItemHistorico[] {
   const itens: ItemHistorico[] = []
   for (const ordem of ordens) {
     if (ordem.maquinaId === maquinaId) itens.push({ tipo: 'os', id: ordem.id, data: ordem.abertura, ordem })
+  }
+  const porId = new Map(eventos.map((e) => [e.id, e]))
+  for (const reclamacao of reclamacoes) {
+    if (reclamacao.maquinaId !== maquinaId) continue
+    const evento = reclamacao.eventoId ? porId.get(reclamacao.eventoId) : undefined
+    itens.push({ tipo: 'reclamacao', id: reclamacao.id, data: reclamacao.data, reclamacao, evento })
   }
   for (const evento of eventos) {
     if (evento.status === 'CANCELADO' || !evento.maquinasIds.includes(maquinaId)) continue
@@ -133,16 +184,120 @@ export function historicoMaquina(maquinaId: string, ordens: OrdemServico[], even
     const quando = p.inicio > hoje ? 'futura' : p.fim < hoje ? 'passada' : 'agora'
     itens.push({ tipo: 'locacao', id: evento.id, data: p.inicio, fim: p.fim, evento, quando })
   }
-  const desempate = (x: ItemHistorico) => (x.tipo === 'os' ? x.ordem.numero : x.evento.codigo)
-  return itens.sort((a, b) => b.data.localeCompare(a.data) || desempate(b) - desempate(a))
+  const desempate = (a: ItemHistorico, b: ItemHistorico) => {
+    if (a.tipo === 'os' && b.tipo === 'os') return b.ordem.numero - a.ordem.numero
+    if (a.tipo === 'locacao' && b.tipo === 'locacao') return b.evento.codigo - a.evento.codigo
+    if (a.tipo === 'reclamacao' && b.tipo === 'reclamacao') return b.reclamacao.criadoEm.localeCompare(a.reclamacao.criadoEm)
+    return PESO_NO_DIA[b.tipo] - PESO_NO_DIA[a.tipo]
+  }
+  return itens.sort((a, b) => b.data.localeCompare(a.data) || desempate(a, b))
 }
 
-/** Mudança sugerida na situação da máquina ao salvar uma O.S. */
+// ---- Reclamações de clientes -----------------------------------------------------
+
+/**
+ * Eventos em que a máquina esteve (não cancelados e já começados), do mais recente para o mais
+ * antigo: as opções de "em qual evento o cliente reclamou" na ficha da máquina.
+ */
+export function eventosDaMaquina(maquinaId: string, eventos: Evento[], hoje: string): Locacao[] {
+  const lista: Locacao[] = []
+  for (const evento of eventos) {
+    if (evento.status === 'CANCELADO' || !evento.maquinasIds.includes(maquinaId)) continue
+    const p = periodoEvento(evento)
+    if (p && p.inicio <= hoje) lista.push({ evento, ...p })
+  }
+  return lista.sort((a, b) => b.fim.localeCompare(a.fim) || b.inicio.localeCompare(a.inicio) || b.evento.codigo - a.evento.codigo)
+}
+
+/** Até quantos dias depois do fim de um evento ele já vem escolhido numa reclamação nova. */
+export const DIAS_SUGESTAO_EVENTO = 30
+
+/**
+ * Evento que já vem escolhido numa reclamação nova (a máquina acabou de voltar dele): o mais
+ * recente de `locacoes` (ver `eventosDaMaquina`), se terminou há no máximo 30 dias.
+ */
+export function eventoSugerido(locacoes: Locacao[], hoje: string): Evento | undefined {
+  const limite = format(addDays(parseISO(hoje), -DIAS_SUGESTAO_EVENTO), 'yyyy-MM-dd')
+  const recente = locacoes[0]
+  return recente && recente.fim >= limite ? recente.evento : undefined
+}
+
+/**
+ * Texto do "problema relatado" de uma manutenção aberta a partir de uma reclamação: o relato do
+ * cliente, com o evento e a data para saber de onde veio.
+ */
+export function problemaDaReclamacao(r: Pick<Reclamacao, 'descricao' | 'data'>, evento?: Pick<Evento, 'codigo' | 'nome'>) {
+  const origem = evento ? `no evento ${codigoEvento(evento.codigo)} ${evento.nome}`.trim() : ''
+  return `Reclamação do cliente${origem ? ` ${origem}` : ''} (${dataCurta(r.data)}): ${r.descricao.trim()}`
+}
+
+// ---- Serviços de manutenção cadastrados ---------------------------------------------
+
+/** Nome de serviço como fica gravado: sem espaços sobrando e com a primeira letra maiúscula. */
+export function formatarServico(s: string) {
+  const t = s.replace(/\s+/g, ' ').trim()
+  return t.charAt(0).toLocaleUpperCase('pt-BR') + t.slice(1)
+}
+
+/** Serviço da lista com o mesmo nome (sem diferenciar maiúsculas, acentos e espaços), ignorando a posição `ignorar`. */
+export function servicoIgual(lista: string[], nome: string, ignorar = -1) {
+  const chave = chaveServico(nome)
+  return lista.find((s, i) => i !== ignorar && chaveServico(s) === chave)
+}
+
+export type ResultadoServico = { lista: string[]; nome: string } | { erro: string }
+
+/** Lista com o serviço novo no fim, ou o motivo de não dar para cadastrar. */
+export function adicionarServico(lista: string[], nome: string): ResultadoServico {
+  const novo = formatarServico(nome)
+  if (!novo) return { erro: 'Digite o nome do serviço.' }
+  const igual = servicoIgual(lista, novo)
+  if (igual) return { erro: `“${igual}” já está na lista.` }
+  if (lista.length >= LIMITES.catalogoServicos)
+    return { erro: `Dá para cadastrar no máximo ${LIMITES.catalogoServicos} serviços.` }
+  return { lista: [...lista, novo], nome: novo }
+}
+
+/** Lista com o serviço da posição `indice` renomeado, ou o motivo de não dar para renomear. */
+export function renomearServico(lista: string[], indice: number, nome: string): ResultadoServico {
+  const novo = formatarServico(nome)
+  if (!novo) return { erro: 'O nome não pode ficar vazio.' }
+  const igual = servicoIgual(lista, novo, indice)
+  if (igual) return { erro: `“${igual}” já está na lista.` }
+  return { lista: lista.map((s, i) => (i === indice ? novo : s)), nome: novo }
+}
+
+/**
+ * Serviços para marcar numa manutenção: os cadastrados e, depois deles, os que o registro já tem
+ * e não estão mais na lista (serviço removido ou renomeado depois), sem repetir.
+ */
+export function opcoesServico(cadastrados: string[], doRegistro: string[]): string[] {
+  const lista: string[] = []
+  const vistos = new Set<string>()
+  for (const s of [...cadastrados, ...doRegistro]) {
+    const chave = chaveServico(s)
+    if (!chave || vistos.has(chave)) continue
+    vistos.add(chave)
+    lista.push(s.trim())
+  }
+  return lista
+}
+
+/** Em quantas manutenções cada serviço aparece (pela chave de `chaveServico`). */
+export function usoDosServicos(ordens: Pick<OrdemServico, 'servicos'>[]) {
+  const mapa = new Map<string, number>()
+  for (const o of ordens) for (const s of new Set(o.servicos.map(chaveServico))) mapa.set(s, (mapa.get(s) ?? 0) + 1)
+  return mapa
+}
+
+// ---- Sugestões ao salvar a manutenção --------------------------------------------
+
+/** Mudança sugerida na situação da máquina ao salvar uma manutenção. */
 export type SugestaoMaquina = 'MANUTENCAO' | 'LIBERAR' | null
 
 /**
- * O.S. aberta ou em andamento com a máquina disponível: colocar em manutenção.
- * O.S. concluída ou cancelada com a máquina em manutenção: liberar. Desativada: nada.
+ * Manutenção iniciada ou em andamento com a máquina disponível: colocar em manutenção.
+ * Manutenção concluída ou cancelada com a máquina em manutenção: liberar. Desativada: nada.
  */
 export function sugestaoMaquina(statusOS: StatusOS, statusMaquina: StatusMaquina): SugestaoMaquina {
   if (statusMaquina === 'DESATIVADA') return null
@@ -151,9 +306,10 @@ export function sugestaoMaquina(statusOS: StatusOS, statusMaquina: StatusMaquina
 }
 
 /**
- * Se a caixa da sugestão já vem marcada: só quando a O.S. é nova ou a situação dela mudou
- * (editar o texto de uma O.S. não mexe na máquina). Para pôr em manutenção, não se a máquina
- * estiver locada agora (ela ainda está no evento); para liberar, só sem outra O.S. em aberto.
+ * Se a caixa da sugestão já vem marcada: só quando a manutenção é nova ou a situação dela mudou
+ * (editar o texto de uma manutenção não mexe na máquina). Para pôr em manutenção, não se a
+ * máquina estiver locada agora (ela ainda está no evento); para liberar, só sem outra manutenção
+ * em aberto.
  */
 export function sugestaoMarcada(
   sugestao: SugestaoMaquina,

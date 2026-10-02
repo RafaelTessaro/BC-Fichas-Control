@@ -22,7 +22,7 @@ import { Card } from '../components/ui/Card'
 import { Drawer } from '../components/ui/Modal'
 import { PageHeader } from '../components/ui/Misc'
 import { STATUS_EVENTO } from '#shared/calc.ts'
-import { capacidade, ordenarMaquinas } from '#shared/maquinas.ts'
+import { capacidade, diasOcupados, ordenarMaquinas, periodoEvento } from '#shared/maquinas.ts'
 import { cn } from '../lib/cn'
 import { cap, codigoEvento, dataExtensa, numero } from '../lib/format'
 import { useEventosCompletos, type EventoCompleto } from '../lib/hooks'
@@ -37,9 +37,32 @@ const COR_STATUS: Record<StatusEvento, string> = {
   CANCELADO: 'bg-neutral',
 }
 
+/** Bolinha vazada, nos dias em que as máquinas só ficam com o cliente. */
+const ANEL_STATUS: Record<StatusEvento, string> = {
+  EM_ABERTO: 'border-info',
+  PENDENTE: 'border-warning-dot',
+  FINALIZADO: 'border-success',
+  CANCELADO: 'border-neutral',
+}
+
 interface ItemDia {
   item: EventoCompleto
+  /** Máquinas fora da empresa no dia (com período corrido, a maior quantidade do evento). */
   maquinas: number
+  /** Diárias do dia (0 nos dias em que as máquinas só ficam com o cliente). */
+  diarias: number
+  /** `false` nos dias em que as máquinas só ficam com o cliente, entre os dias de uso. */
+  uso: boolean
+}
+
+/** Bolinha com a cor do status: cheia nos dias de uso, vazada nos dias só com o cliente. */
+function PontoStatus({ status, uso, className }: { status: StatusEvento; uso: boolean; className?: string }) {
+  return (
+    <span
+      aria-hidden
+      className={cn('shrink-0 rounded-full', uso ? COR_STATUS[status] : cn('border-[1.5px]', ANEL_STATUS[status]), className)}
+    />
+  )
 }
 
 export function Agenda() {
@@ -58,15 +81,21 @@ export function Agenda() {
   const capacidadeDoDia = (iso: string) => (iso >= hojeIso ? total - capac.manutencao : total)
   const porId = useMemo(() => new Map(maquinas.map((m) => [m.id, m])), [maquinas])
 
+  // Dias ocupados de cada evento: com período corrido, também os dias em que as máquinas só ficam
+  // com o cliente (contam na ocupação e nos alertas, mas não nas diárias)
   const porDia = useMemo(() => {
     const m = new Map<string, ItemDia[]>()
     for (const item of eventos) {
-      for (const d of item.evento.dias) {
+      const diarias = new Map<string, number>()
+      for (const d of item.evento.dias) diarias.set(d.data, (diarias.get(d.data) ?? 0) + (Number(d.maquinas) || 0))
+      for (const d of diasOcupados(item.evento)) {
         const l = m.get(d.data) ?? []
-        l.push({ item, maquinas: d.maquinas })
+        l.push({ item, maquinas: d.maquinas, diarias: diarias.get(d.data) ?? 0, uso: d.uso })
         m.set(d.data, l)
       }
     }
+    // Em cada dia, os eventos com uso antes dos que só estão com as máquinas
+    for (const l of m.values()) l.sort((a, b) => Number(b.uso) - Number(a.uso))
     return m
   }, [eventos])
 
@@ -83,7 +112,7 @@ export function Agenda() {
       const l = (porDia.get(iso) ?? []).filter((x) => x.item.evento.status !== 'CANCELADO')
       const usadas = l.reduce((s, x) => s + x.maquinas, 0)
       l.forEach((x) => evs.add(x.item.evento.id))
-      diarias += usadas
+      diarias += l.reduce((s, x) => s + x.diarias, 0)
       pico = Math.max(pico, usadas)
       if (usadas > (iso >= hojeIso ? total - capac.manutencao : total)) diasExcedidos++
     }
@@ -96,7 +125,9 @@ export function Agenda() {
   }
 
   const itensDiaAberto = diaAberto ? (porDia.get(diaAberto) ?? []) : []
-  const usadasDiaAberto = itensDiaAberto.filter((x) => x.item.evento.status !== 'CANCELADO').reduce((s, x) => s + x.maquinas, 0)
+  const ativosDiaAberto = itensDiaAberto.filter((x) => x.item.evento.status !== 'CANCELADO')
+  const usadasDiaAberto = ativosDiaAberto.reduce((s, x) => s + x.maquinas, 0)
+  const comClienteDiaAberto = ativosDiaAberto.reduce((s, x) => s + (x.uso ? 0 : x.maquinas), 0)
   const capDiaAberto = diaAberto ? capacidadeDoDia(diaAberto) : total
   const livresDiaAberto = Math.max(0, capDiaAberto - usadasDiaAberto)
 
@@ -158,7 +189,7 @@ export function Agenda() {
             <span>
               Diárias <b className="tnum font-semibold text-ink">{resumoMes.diarias}</b>
             </span>
-            <span title="Maior número de máquinas reservadas num mesmo dia do mês">
+            <span title="Maior número de máquinas fora da empresa num mesmo dia do mês">
               Pico{' '}
               <b className="tnum font-semibold text-ink">
                 {resumoMes.pico}/{total}
@@ -197,6 +228,8 @@ export function Agenda() {
                 const itens = porDia.get(iso) ?? []
                 const ativos = itens.filter((x) => x.item.evento.status !== 'CANCELADO')
                 const usadas = ativos.reduce((s, x) => s + x.maquinas, 0)
+                // Parte das máquinas que só está com o cliente (traço mais claro na barra)
+                const comCliente = ativos.reduce((s, x) => s + (x.uso ? 0 : x.maquinas), 0)
                 const capDia = capacidadeDoDia(iso)
                 const pct = capDia > 0 ? usadas / capDia : usadas > 0 ? 2 : 0
                 const doMes = isSameMonth(d, mes)
@@ -226,7 +259,7 @@ export function Agenda() {
                             'tnum hidden text-[11px] font-medium sm:block',
                             pct > 1 ? 'text-danger' : pct >= 0.8 ? 'text-warning' : 'text-muted',
                           )}
-                          title={`${usadas} de ${total} máquinas reservadas`}
+                          title={`${usadas} de ${total} máquinas fora${comCliente ? ` (${comCliente} só com o cliente)` : ''}`}
                         >
                           {usadas}/{total}
                         </span>
@@ -234,19 +267,27 @@ export function Agenda() {
                     </div>
 
                     <div className="hidden min-w-0 flex-col gap-1 sm:flex">
-                      {itens.slice(0, 2).map(({ item, maquinas: qtd }) => (
+                      {itens.slice(0, 2).map(({ item, maquinas: qtd, uso }) => (
                         <span
                           key={item.evento.id}
+                          title={
+                            uso
+                              ? undefined
+                              : `${item.evento.nome}: as máquinas ficam com o cliente entre os dias de uso (sem uso neste dia)`
+                          }
                           className={cn(
-                            'flex min-w-0 items-center gap-1.5 rounded-md bg-surface-2 px-1.5 py-[3px] text-[11.5px] leading-tight text-ink-2 ring-1 ring-line/60',
+                            'flex min-w-0 items-center gap-1.5 rounded-md px-1.5 text-[11.5px] leading-tight',
+                            uso
+                              ? 'bg-surface-2 py-[3px] text-ink-2 ring-1 ring-line/60'
+                              : 'border border-dashed border-line-strong py-[2px] text-muted',
                             item.evento.status === 'CANCELADO' && 'line-through opacity-60',
                           )}
                         >
-                          <span className={cn('h-1.5 w-1.5 shrink-0 rounded-full', COR_STATUS[item.evento.status])} />
+                          <PontoStatus status={item.evento.status} uso={uso} className="h-1.5 w-1.5" />
                           <span className="truncate">{item.evento.nome}</span>
                           <span
                             className="tnum ml-auto shrink-0 text-muted"
-                            title={`${qtd} ${qtd === 1 ? 'máquina' : 'máquinas'}`}
+                            title={`${qtd} ${qtd === 1 ? 'máquina' : 'máquinas'}${uso ? '' : ' com o cliente'}`}
                           >
                             {qtd}
                           </span>
@@ -260,8 +301,8 @@ export function Agenda() {
                     {/* Versão compacta (celular): pontos por evento */}
                     {itens.length > 0 && (
                       <div className="flex flex-wrap gap-1 sm:hidden">
-                        {itens.slice(0, 4).map(({ item }) => (
-                          <span key={item.evento.id} className={cn('h-1.5 w-1.5 rounded-full', COR_STATUS[item.evento.status])} />
+                        {itens.slice(0, 4).map(({ item, uso }) => (
+                          <PontoStatus key={item.evento.id} status={item.evento.status} uso={uso} className="h-1.5 w-1.5" />
                         ))}
                       </div>
                     )}
@@ -272,11 +313,15 @@ export function Agenda() {
                           initial={{ width: 0 }}
                           animate={{ width: `${Math.min(100, pct * 100)}%` }}
                           transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-                          className={cn(
-                            'h-full rounded-full',
-                            pct > 1 ? 'bg-danger' : pct >= 0.8 ? 'bg-warning-dot' : 'bg-brand',
-                          )}
-                        />
+                          className="flex h-full overflow-hidden rounded-full"
+                        >
+                          {/* Dias de uso em traço cheio; só com o cliente, mais claro (mas contando igual) */}
+                          <span
+                            className={cn('h-full', corBarra(pct))}
+                            style={{ width: `${((usadas - comCliente) / usadas) * 100}%` }}
+                          />
+                          <span className={cn('h-full flex-1 opacity-45', corBarra(pct))} />
+                        </motion.div>
                       </div>
                     )}
                   </button>
@@ -293,9 +338,22 @@ export function Agenda() {
               {STATUS_EVENTO[s].label}
             </span>
           ))}
+          <span
+            className="inline-flex items-center gap-1.5 whitespace-nowrap"
+            title="Período corrido: as máquinas ficam com o cliente entre um dia de uso e outro. Contam como ocupadas, sem diária."
+          >
+            <span className="inline-flex h-3.5 w-5 items-center justify-center rounded-[4px] border border-dashed border-line-strong">
+              <span className="h-1.5 w-1.5 rounded-full border-[1.5px] border-muted" />
+            </span>
+            Com o cliente, sem uso
+          </span>
           <span className="flex flex-wrap items-center gap-x-4 gap-y-1 sm:ml-auto">
             <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
-              <span className="h-1 w-5 rounded-full bg-brand" /> Ocupação das máquinas
+              <span className="flex h-1 w-5 overflow-hidden rounded-full">
+                <span className="h-full w-3 bg-brand" />
+                <span className="h-full flex-1 bg-brand opacity-45" />
+              </span>{' '}
+              Ocupação das máquinas
             </span>
             <span className="inline-flex items-center gap-1.5 whitespace-nowrap">
               <span className="h-1 w-5 rounded-full bg-warning-dot" /> 80% ou mais
@@ -325,51 +383,69 @@ export function Agenda() {
               <motion.div
                 initial={{ width: 0 }}
                 animate={{ width: `${Math.min(100, (usadasDiaAberto / Math.max(1, capDiaAberto)) * 100)}%` }}
-                className={cn(
-                  'h-full rounded-full',
-                  usadasDiaAberto > capDiaAberto
-                    ? 'bg-danger'
-                    : usadasDiaAberto / Math.max(1, capDiaAberto) >= 0.8
-                      ? 'bg-warning-dot'
-                      : 'bg-brand',
-                )}
-              />
+                className="flex h-full overflow-hidden rounded-full"
+              >
+                <span
+                  className={cn('h-full', corBarra(usadasDiaAberto / Math.max(1, capDiaAberto)))}
+                  style={{ width: `${((usadasDiaAberto - comClienteDiaAberto) / Math.max(1, usadasDiaAberto)) * 100}%` }}
+                />
+                <span className={cn('h-full flex-1 opacity-45', corBarra(usadasDiaAberto / Math.max(1, capDiaAberto)))} />
+              </motion.div>
             </div>
             {itensDiaAberto.length === 0 && <p className="py-8 text-center text-sm text-muted">Nenhum evento neste dia.</p>}
-            {itensDiaAberto.map(({ item, maquinas: qtd }, i) => (
-              <motion.div
-                key={item.evento.id}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: i * 0.04 }}
-              >
-                <Link
-                  to={`/eventos/${item.evento.id}`}
-                  className="block rounded-xl border border-line p-3.5 transition-colors hover:border-line-strong hover:bg-surface-2/60"
+            {itensDiaAberto.map(({ item, maquinas: qtd, uso }, i) => {
+              const p = uso ? null : periodoEvento(item.evento)
+              // A cidade do evento (antigos) ou a do cadastro do cliente
+              const cidade = item.evento.cidade || item.cliente?.cidade
+              return (
+                <motion.div
+                  key={item.evento.id}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: i * 0.04 }}
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <p className="truncate font-medium text-ink">{item.evento.nome}</p>
-                      <p className="truncate text-xs text-muted">
-                        {codigoEvento(item.evento.codigo)} • {item.cliente?.nome ?? '—'}
-                      </p>
+                  <Link
+                    to={`/eventos/${item.evento.id}`}
+                    className={cn(
+                      'block rounded-xl border p-3.5 transition-colors hover:border-line-strong hover:bg-surface-2/60',
+                      uso ? 'border-line' : 'border-dashed border-line-strong',
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate font-medium text-ink">{item.evento.nome}</p>
+                        <p className="truncate text-xs text-muted">
+                          {codigoEvento(item.evento.codigo)} • {item.cliente?.nome ?? '—'}
+                        </p>
+                      </div>
+                      <span
+                        className={cn(
+                          'tnum shrink-0 rounded-lg px-2 py-1 text-xs font-semibold',
+                          uso ? 'bg-brand-soft text-brand-ink' : 'bg-surface-2 text-ink-2',
+                        )}
+                      >
+                        {qtd} {qtd === 1 ? 'máquina' : 'máquinas'}
+                      </span>
                     </div>
-                    <span className="tnum shrink-0 rounded-lg bg-brand-soft px-2 py-1 text-xs font-semibold text-brand-ink">
-                      {qtd} {qtd === 1 ? 'máquina' : 'máquinas'}
-                    </span>
-                  </div>
-                  <MaquinasDoEvento
-                    ids={item.evento.maquinasIds}
-                    porId={porId}
-                    avisarVazio={capac.cadastradas && item.evento.status !== 'CANCELADO'}
-                  />
-                  <div className="mt-2.5 flex items-center justify-between gap-2">
-                    <StatusBadge status={item.evento.status} />
-                    {item.evento.cidade && <span className="truncate text-xs text-muted">{item.evento.cidade}</span>}
-                  </div>
-                </Link>
-              </motion.div>
-            ))}
+                    {p && (
+                      <p className="tnum mt-2 rounded-lg bg-surface-2 px-2.5 py-1.5 text-xs text-ink-2">
+                        <b className="font-semibold text-ink">Com o cliente, sem uso neste dia.</b> As máquinas ficam com ele de{' '}
+                        {format(parseISO(p.inicio), 'dd/MM')} a {format(parseISO(p.fim), 'dd/MM')}, entre os dias de uso.
+                      </p>
+                    )}
+                    <MaquinasDoEvento
+                      ids={item.evento.maquinasIds}
+                      porId={porId}
+                      avisarVazio={capac.cadastradas && item.evento.status !== 'CANCELADO'}
+                    />
+                    <div className="mt-2.5 flex items-center justify-between gap-2">
+                      <StatusBadge status={item.evento.status} />
+                      {cidade && <span className="truncate text-xs text-muted">{cidade}</span>}
+                    </div>
+                  </Link>
+                </motion.div>
+              )
+            })}
             <Button
               variante="soft"
               className="mt-2"
@@ -384,6 +460,9 @@ export function Agenda() {
     </>
   )
 }
+
+/** Cor da barra de ocupação do dia: verde, amarela a partir de 80% e vermelha acima do total. */
+const corBarra = (pct: number) => (pct > 1 ? 'bg-danger' : pct >= 0.8 ? 'bg-warning-dot' : 'bg-brand')
 
 /** Números das máquinas enviadas ao evento (ex.: P-01, G-03), para saber onde cada uma está. */
 function MaquinasDoEvento({ ids, porId, avisarVazio }: { ids: string[]; porId: Map<string, Maquina>; avisarVazio: boolean }) {

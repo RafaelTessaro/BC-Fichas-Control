@@ -1,4 +1,4 @@
-import { endOfMonth, format, startOfMonth, subMonths } from 'date-fns'
+import { differenceInCalendarDays, endOfMonth, format, parseISO, startOfMonth, subMonths } from 'date-fns'
 import {
   ArrowRight,
   CalendarClock,
@@ -18,8 +18,10 @@ import {
 import { motion } from 'motion/react'
 import { useMemo, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { capacidade, osEmAberto, type Capacidade, type EstadoMaquina } from '#shared/maquinas.ts'
+import { capacidade, diasOcupados, osEmAberto, type Capacidade, type EstadoMaquina } from '#shared/maquinas.ts'
 import { StatusBadge } from '../components/Badges'
+import { IconeMaquinaFichas } from '../components/IconeMaquinaFichas'
+import { ProgramacaoBadge } from '../components/Programacao'
 import { GraficoFaturamento, Legenda } from '../components/charts/Charts'
 import { useSituacoes } from '../components/Maquinas'
 import { Badge } from '../components/ui/Badge'
@@ -61,16 +63,21 @@ export function Painel() {
 
     const ativos = todos.filter((x) => x.evento.status !== 'CANCELADO')
     const aReceber = ativos.filter((x) => !x.resumo.pago).reduce((s, x) => s + x.resumo.total, 0)
-    const maquinasHoje = ativos.reduce(
-      (s, x) => s + x.evento.dias.filter((dd) => dd.data === hoje).reduce((a, dd) => a + dd.maquinas, 0),
-      0,
-    )
+    // Máquinas fora hoje: pelos dias ocupados (com período corrido, também os dias em que as
+    // máquinas só ficam com o cliente, entre os dias de uso)
+    const foraHoje = ativos.flatMap((x) => {
+      const dd = diasOcupados(x.evento).find((o) => o.data === hoje)
+      return dd ? [{ x, maquinas: dd.maquinas, uso: dd.uso }] : []
+    })
+    const maquinasHoje = foraHoje.reduce((s, f) => s + f.maquinas, 0)
     // Máquinas de hoje ainda sem número escolhido, evento por evento (reserva a mais num evento
     // não cobre a falta em outro)
-    const semNumeroHoje = ativos.reduce((s, x) => {
-      const doDia = x.evento.dias.filter((dd) => dd.data === hoje).reduce((a, dd) => a + dd.maquinas, 0)
-      return s + (doDia ? Math.max(0, doDia - x.evento.maquinasIds.length) : 0)
-    }, 0)
+    const semNumeroHoje = foraHoje.reduce((s, f) => s + Math.max(0, f.maquinas - f.x.evento.maquinasIds.length), 0)
+
+    // Programação das máquinas ainda não concluída, dos eventos de hoje em diante (o mais próximo primeiro)
+    const programacao = ativos
+      .filter((x) => x.evento.programacao !== 'CONCLUIDA' && (x.resumo.dataFim ?? '') >= hoje)
+      .sort((a, b) => (a.resumo.dataInicio ?? '').localeCompare(b.resumo.dataInicio ?? '') || a.evento.codigo - b.evento.codigo)
 
     const proximos = ativos
       .filter((x) => (x.resumo.dataFim ?? '') >= hoje)
@@ -93,7 +100,9 @@ export function Painel() {
       proximos,
       semPagamento,
       semConferencia,
-      eventosHoje: ativos.filter((x) => x.evento.dias.some((dd) => dd.data === hoje)).length,
+      programacao,
+      eventosHoje: foraHoje.filter((f) => f.uso).length,
+      soComCliente: foraHoje.filter((f) => !f.uso).length,
     }
   }, [todos, hoje])
 
@@ -149,7 +158,7 @@ export function Painel() {
                   n={3}
                   icone={<Ticket className="h-4 w-4" />}
                   titulo="Lance o primeiro evento"
-                  texto="Datas, máquinas enviadas e o cabeçalho e o rodapé das fichas."
+                  texto="Datas, máquinas enviadas e o rodapé das fichas."
                   to="/eventos/novo"
                 />
               </div>
@@ -214,16 +223,14 @@ export function Painel() {
           valor={d.maquinasHoje}
           formatar={(v) => `${Math.round(v)} / ${cap.total}`}
           icone={<Cpu className="h-4 w-4" />}
-          detalhe={
-            d.eventosHoje
-              ? `Em ${d.eventosHoje} ${d.eventosHoje === 1 ? 'evento acontecendo' : 'eventos acontecendo'}`
-              : 'Nenhum evento hoje'
-          }
+          detalhe={textoMaquinasHoje(d.eventosHoje, d.soComCliente)}
           delay={0.12}
         />
       </div>
 
       {(cap.cadastradas || !vazio) && <SituacaoMaquinas cap={cap} semNumero={d.semNumeroHoje} />}
+
+      {!vazio && <ProgramacaoMaquinas itens={d.programacao} hoje={hoje} />}
 
       <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
         <Card className="xl:col-span-2">
@@ -306,7 +313,7 @@ const COR_ESTADO: Record<Exclude<EstadoMaquina, 'DESATIVADA'>, string> = {
   DISPONIVEL: 'bg-success',
 }
 
-/** Faixa compacta com a situação das máquinas agora: locadas, em manutenção, disponíveis e O.S. em aberto. */
+/** Faixa compacta com a situação das máquinas agora: locadas, em manutenção, disponíveis e manutenções em aberto. */
 function SituacaoMaquinas({ cap, semNumero }: { cap: Capacidade; semNumero: number }) {
   const maquinas = useDados((s) => s.maquinas)
   const ordens = useDados((s) => s.ordens)
@@ -389,9 +396,9 @@ function SituacaoMaquinas({ cap, semNumero }: { cap: Capacidade; semNumero: numb
             </div>
             <div className="flex items-center justify-between gap-3 lg:shrink-0 lg:justify-end">
               {os > 0 ? (
-                <Badge tom="warning">{os === 1 ? '1 O.S. em aberto' : `${os} O.S. em aberto`}</Badge>
+                <Badge tom="warning">{os === 1 ? '1 manutenção em aberto' : `${os} manutenções em aberto`}</Badge>
               ) : (
-                <Badge tom="success">Nenhuma O.S. em aberto</Badge>
+                <Badge tom="success">Nenhuma manutenção em aberto</Badge>
               )}
               {link('/manutencao', 'Manutenção')}
             </div>
@@ -406,6 +413,112 @@ function SituacaoMaquinas({ cap, semNumero }: { cap: Capacidade; semNumero: numb
           </>
         )}
       </Card>
+    </motion.div>
+  )
+}
+
+/** Detalhe do cartão "Máquinas hoje": eventos acontecendo e os que só estão com as máquinas. */
+function textoMaquinasHoje(acontecendo: number, comCliente: number) {
+  const evs = (n: number) => `${n} ${n === 1 ? 'evento' : 'eventos'}`
+  if (acontecendo && comCliente) return `Em ${evs(acontecendo)} acontecendo e ${comCliente} com o cliente`
+  if (acontecendo) return `Em ${evs(acontecendo)} acontecendo`
+  if (comCliente) return `Com o cliente em ${evs(comCliente)}, sem uso hoje`
+  return 'Nenhum evento hoje'
+}
+
+/** Quanto falta para o evento começar ("Amanhã", "Em 5 dias"); `urgente` nos próximos 3 dias. */
+function quantoFalta(inicio: string, hoje: string): { texto: string; urgente: boolean } {
+  const n = differenceInCalendarDays(parseISO(inicio), parseISO(hoje))
+  if (n < 0) return { texto: 'Acontecendo agora', urgente: true }
+  if (n === 0) return { texto: 'Começa hoje', urgente: true }
+  if (n === 1) return { texto: 'Começa amanhã', urgente: true }
+  return { texto: `Começa em ${n} dias`, urgente: n <= 3 }
+}
+
+/** Quantos eventos aparecem no cartão de programação (o resto, em "Ver todos"). */
+const MAX_PROGRAMACAO = 6
+
+/**
+ * Cartão "Programação das máquinas": os eventos de hoje em diante com a programação ainda não
+ * concluída, do mais próximo ao mais distante, para a secretária acompanhar o andamento.
+ */
+function ProgramacaoMaquinas({ itens, hoje }: { itens: EventoCompleto[]; hoje: string }) {
+  return (
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: 0.2, duration: 0.4 }}
+      className="mb-6"
+    >
+      <Card>
+        <CardHeader
+          icone={<IconeMaquinaFichas className="h-4 w-4" />}
+          titulo={
+            <span className="flex items-center gap-2">
+              Programação das máquinas
+              {itens.length > 0 && (
+                <span className="tnum rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-semibold text-warning">
+                  {itens.length}
+                </span>
+              )}
+            </span>
+          }
+          descricao={
+            itens.length
+              ? 'Próximos eventos com a programação ainda não concluída.'
+              : 'Andamento da programação das fichas dos próximos eventos.'
+          }
+          acoes={
+            itens.length > 0 && (
+              <Link
+                to="/eventos?programacao=pendente"
+                className="inline-flex items-center gap-1 text-[13px] font-medium whitespace-nowrap text-brand-ink hover:underline"
+              >
+                {itens.length > MAX_PROGRAMACAO ? `Ver todos (${itens.length})` : 'Ver na lista'}
+                <ArrowRight className="h-3.5 w-3.5" />
+              </Link>
+            )
+          }
+        />
+        <div className="px-3 pb-3">
+          {itens.length === 0 ? (
+            <p className="flex items-center justify-center gap-2 py-6 text-center text-sm text-muted">
+              <CircleCheck className="h-4 w-4 shrink-0 text-success" />A programação de todos os próximos eventos está concluída.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 gap-0.5 lg:grid-cols-2 lg:gap-x-3">
+              {itens.slice(0, MAX_PROGRAMACAO).map((x, i) => (
+                <ItemProgramacao key={x.evento.id} x={x} i={i} hoje={hoje} />
+              ))}
+            </div>
+          )}
+        </div>
+      </Card>
+    </motion.div>
+  )
+}
+
+function ItemProgramacao({ x, i, hoje }: { x: EventoCompleto; i: number; hoje: string }) {
+  const ini = x.resumo.dataInicio!
+  const falta = quantoFalta(ini, hoje)
+  return (
+    <motion.div initial={{ opacity: 0, x: -6 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.22 + i * 0.04 }}>
+      <Link
+        to={`/eventos/${x.evento.id}`}
+        className="flex items-center gap-3 rounded-xl px-2 py-2.5 transition-colors hover:bg-surface-2"
+      >
+        <div className="flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-xl bg-surface-2 leading-none text-ink">
+          <span className="text-[10px] font-semibold text-muted uppercase">{dataExtensa(ini, 'MMM').replace('.', '')}</span>
+          <span className="tnum mt-0.5 text-base font-semibold">{dataExtensa(ini, 'dd')}</span>
+        </div>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium text-ink">{x.evento.nome}</p>
+          <p className="truncate text-xs text-muted">
+            <span className={cn(falta.urgente && 'font-medium text-warning')}>{falta.texto}</span> • {x.cliente?.nome ?? '—'}
+          </p>
+        </div>
+        <ProgramacaoBadge status={x.evento.programacao} />
+      </Link>
     </motion.div>
   )
 }

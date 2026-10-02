@@ -12,7 +12,7 @@ import {
 
 const ID_VALIDO = /^[a-v0-9]{5,1024}$/
 
-const cliente = { id: 'c1', nome: 'Padaria Ideal', telefone: '(19) 99876-5432' } as Cliente
+const cliente = { id: 'c1', nome: 'Padaria Ideal', telefone: '(19) 99876-5432', cidade: 'Limeira' } as Cliente
 
 const evento = (extra: Partial<Evento> = {}): Evento => ({
   id: '3f2a9c4e-8b1d-4e6f-9a7c-0d1e2f3a4b5c',
@@ -134,6 +134,42 @@ describe('conteúdo enviado ao Google', () => {
     expect(d.trim().endsWith(AVISO_FINAL)).toBe(true)
   })
 
+  it('usa a cidade do cliente quando o evento não tem a sua (só os antigos têm)', () => {
+    const [antigo] = montarEventosGoogle(evento(), cliente, { incluirValores: false })
+    expect(antigo.location).toBe('Rio Claro')
+    expect(antigo.description).toContain('Cidade: Rio Claro')
+    const [novo] = montarEventosGoogle(evento({ cidade: '' }), cliente, { incluirValores: false })
+    expect(novo.location).toBe('Limeira')
+    expect(novo.description).toContain('Cidade: Limeira')
+    const [semCidade] = montarEventosGoogle(evento({ cidade: '' }), undefined, { incluirValores: false })
+    expect(semCidade.location).toBe('')
+    expect(semCidade.description).not.toContain('Cidade:')
+  })
+
+  it('não leva mais o cabeçalho das fichas (o nome do evento já está no título)', () => {
+    const [b] = montarEventosGoogle(evento({ cabecalho: 'FESTA DO PEÃO\nRODEIO' }), cliente, { incluirValores: false })
+    expect(b.description).not.toMatch(/Cabeçalho|RODEIO/)
+  })
+
+  it('com período corrido, diz de quando a quando as máquinas ficam com o cliente', () => {
+    const corrido = montarEventosGoogle(evento({ periodoCorrido: true }), cliente, { incluirValores: false })
+    // No Google continuam só os dias de uso
+    expect(corrido.map((g) => [g.start.date, g.end.date])).toEqual([
+      ['2026-08-01', '2026-08-03'],
+      ['2026-08-05', '2026-08-06'],
+    ])
+    for (const g of corrido) {
+      expect(g.description).toContain(
+        'As máquinas ficam com o cliente de 01/08/2026 a 05/08/2026 (5 dias), também entre os dias de uso.',
+      )
+    }
+    // Sem período corrido, ou com os dias já seguidos, não diz nada
+    const [normal] = montarEventosGoogle(evento(), cliente, { incluirValores: false })
+    expect(normal.description).not.toContain('ficam com o cliente')
+    const seguidos = evento({ periodoCorrido: true, dias: evento().dias.filter((d) => d.id !== 'd3') })
+    expect(montarEventosGoogle(seguidos, cliente, { incluirValores: false })[0].description).not.toContain('ficam com o cliente')
+  })
+
   it('inclui o total quando a opção está ligada', () => {
     // 9 diárias × 80 + 40 bobinas × 6 = 960
     const [b] = montarEventosGoogle(evento(), cliente, { incluirValores: true })
@@ -175,6 +211,7 @@ describe('impressão digital de cada evento do Google (bcHash)', () => {
       montar({ nome: 'Outro' }),
       montar({ dias: [{ id: 'd1', data: '2026-08-10', maquinas: 2 }] }),
       montar({ status: 'FINALIZADO' }),
+      montar({ periodoCorrido: true }),
       montarEventosGoogle(evento(), { ...cliente, nome: 'Padaria Nova' }, { incluirValores: false }),
       montar({}, true),
     ]

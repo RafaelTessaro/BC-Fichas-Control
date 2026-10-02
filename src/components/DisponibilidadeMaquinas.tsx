@@ -1,6 +1,6 @@
 // Cartão "Disponibilidade de máquinas" (Configurações): quantas máquinas P e G a empresa tem.
 
-import { ArrowRight, Cpu, Info, LoaderCircle, Plus, PowerOff, RotateCcw, Trash2, TriangleAlert } from 'lucide-react'
+import { ArrowRight, Info, LoaderCircle, Plus, PowerOff, RotateCcw, Trash2, TriangleAlert } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
@@ -8,7 +8,7 @@ import { LIMITES } from '#shared/dominio.ts'
 import {
   capacidade,
   ESTADO_MAQUINA,
-  cabecalhoEmLinha,
+  localDaLocacao,
   planoAjuste,
   TIPO_MAQUINA,
   TIPOS_MAQUINA,
@@ -22,6 +22,7 @@ import { cn } from '../lib/cn'
 import { dataCurta, numero } from '../lib/format'
 import { useDados } from '../store/dados'
 import { toast } from '../store/ui'
+import { IconeMaquinaFichas } from './IconeMaquinaFichas'
 import { MaquinaChip, TipoMaquinaBadge, useSituacoes } from './Maquinas'
 import { Button } from './ui/Button'
 import { Card, CardHeader } from './ui/Card'
@@ -103,7 +104,7 @@ function linhasDoPlano(p: PlanoAjuste): Array<{ tipo: TipoLinha; texto: string }
 /** Texto do balão de cada chip: situação, onde está e o próximo evento. */
 function tituloChip(m: Maquina, s: SituacaoMaquina) {
   let texto = `${m.identificacao} · ${ESTADO_MAQUINA[s.estado].label}`
-  if (s.estado === 'LOCADA' && s.evento) texto += ` em ${cabecalhoEmLinha(s.evento)}`
+  if (s.estado === 'LOCADA' && s.evento) texto += ` em ${localDaLocacao(s.evento)}`
   if (s.proxima && s.dataProxima) texto += ` · Próximo evento: ${s.proxima.nome}, ${dataCurta(s.dataProxima)}`
   return texto
 }
@@ -187,7 +188,7 @@ export function DisponibilidadeMaquinas() {
   return (
     <Card>
       <CardHeader
-        icone={<Cpu className="h-4 w-4" />}
+        icone={<IconeMaquinaFichas className="h-4 w-4" />}
         titulo="Disponibilidade de máquinas"
         descricao="Quantas máquinas de cada tipo a empresa tem. Vale para a agenda e para os eventos."
       />

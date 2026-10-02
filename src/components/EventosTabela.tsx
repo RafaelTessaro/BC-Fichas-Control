@@ -1,13 +1,18 @@
 import { Copy, Ellipsis, FileDown, Pencil, ReceiptText, Trash2 } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { calcularEvento, FORMAS_PAGAMENTO } from '#shared/calc.ts'
+import { STATUS_PROGRAMACAO } from '#shared/maquinas.ts'
+import { cn } from '../lib/cn'
 import { codigoEvento, moeda, numero, periodo } from '../lib/format'
+import { useHoje } from '../lib/hoje'
 import type { EventoCompleto } from '../lib/hooks'
 import { podeGerarRecibo } from '../lib/recibo'
 import { useDados } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
 import { PagamentoBadge, StatusBadge } from './Badges'
 import { GoogleSyncBadge } from './GoogleSyncBadge'
+import { IconeMaquinaFichas } from './IconeMaquinaFichas'
+import { ProgramacaoBadge } from './Programacao'
 import { Button } from './ui/Button'
 import { confirmar } from './ui/Feedback'
 import { Menu } from './ui/Misc'
@@ -84,9 +89,23 @@ export function useAcoesEvento() {
   }
 }
 
+/** Selo da programação das máquinas, com o ícone da máquina na frente (o rótulo sozinho é curto). */
+function SeloProgramacao({ evento, className }: { evento: EventoCompleto['evento']; className?: string }) {
+  return (
+    <span
+      title={`Programação das máquinas: ${STATUS_PROGRAMACAO[evento.programacao].label.toLowerCase()}`}
+      className={cn('items-center gap-1', className)}
+    >
+      <IconeMaquinaFichas className="h-3.5 w-3.5 shrink-0 text-muted" />
+      <ProgramacaoBadge status={evento.programacao} />
+    </span>
+  )
+}
+
 export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto[]; ocultarCliente?: boolean }) {
   const navegar = useNavigate()
   const acoes = useAcoesEvento()
+  const hoje = useHoje()
   return (
     <Tabela>
       <thead>
@@ -100,7 +119,7 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
             Diárias
           </Th>
           <Th alinhar="right">Total</Th>
-          {/* Abaixo de 1280 px a coluna também mostra o status, logo abaixo do pagamento */}
+          {/* Abaixo de 1280 px a coluna também mostra o status (e a programação), logo abaixo do pagamento */}
           <Th className="max-sm:hidden">
             <span className="xl:hidden">Situação</span>
             <span className="max-xl:hidden">Pagamento</span>
@@ -112,6 +131,10 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
       <tbody>
         {itens.map((it, i) => {
           const { evento: e, resumo: r, cliente } = it
+          // A cidade do evento (só os antigos têm) ou a do cliente; no histórico do cliente, só a do evento
+          const cidade = e.cidade || (ocultarCliente ? '' : (cliente?.cidade ?? ''))
+          // Programação das máquinas: só aparece enquanto falta concluir, nos eventos de hoje em diante
+          const programacao = e.status !== 'CANCELADO' && e.programacao !== 'CONCLUIDA' && (r.dataFim ?? '') >= hoje
           return (
             <Linha key={e.id} indice={i} aoClicar={() => navegar(`/eventos/${e.id}`)}>
               <Td className="tnum text-xs font-medium text-muted max-2xl:hidden">{codigoEvento(e.codigo)}</Td>
@@ -123,10 +146,10 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
                   {/* Abaixo de 1536 px o código vem aqui; abaixo de 1280 px, também o cliente (as colunas somem) */}
                   <span className="tnum 2xl:hidden">{codigoEvento(e.codigo)}</span>
                   {!ocultarCliente && cliente && <span className="xl:hidden"> • {cliente.nome}</span>}
-                  {e.cidade ? (
+                  {cidade ? (
                     <>
                       <span className="2xl:hidden"> • </span>
-                      {e.cidade}
+                      {cidade}
                     </>
                   ) : (
                     !ocultarCliente &&
@@ -140,11 +163,13 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
                   )}
                   {e.maquinasIds.length > 0 && (
                     <>
-                      <span className={e.cidade || (!ocultarCliente && cliente) ? undefined : '2xl:hidden'}> • </span>
+                      <span className={cidade || (!ocultarCliente && cliente) ? undefined : '2xl:hidden'}> • </span>
                       {e.maquinasIds.length} {e.maquinasIds.length === 1 ? 'máquina' : 'máquinas'}
                     </>
                   )}
                 </p>
+                {/* No celular as colunas de situação somem: a programação aparece aqui */}
+                {programacao && <SeloProgramacao evento={e} className="mt-1 flex sm:hidden" />}
               </Td>
               {!ocultarCliente && (
                 <Td className="max-w-[150px] truncate max-xl:hidden 2xl:max-w-[220px]">{cliente?.nome ?? '—'}</Td>
@@ -163,12 +188,16 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
                     <StatusBadge status={e.status} />
                     <GoogleSyncBadge evento={e} compacto />
                   </div>
+                  {programacao && <SeloProgramacao evento={e} className="flex xl:hidden" />}
                 </div>
               </Td>
               <Td className="max-xl:hidden">
-                <div className="flex items-center gap-1">
-                  <StatusBadge status={e.status} />
-                  <GoogleSyncBadge evento={e} compacto />
+                <div className="flex flex-col items-start gap-1">
+                  <div className="flex items-center gap-1">
+                    <StatusBadge status={e.status} />
+                    <GoogleSyncBadge evento={e} compacto />
+                  </div>
+                  {programacao && <SeloProgramacao evento={e} className="flex" />}
                 </div>
               </Td>
               <Td onClick={(ev) => ev.stopPropagation()}>
