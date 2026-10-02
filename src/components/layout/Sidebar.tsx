@@ -13,25 +13,35 @@ function ativoPara(pathname: string, to: string) {
   return to === '/' ? pathname === '/' : pathname === to || pathname.startsWith(to + '/')
 }
 
+/** Contador ao lado de um item do menu (eventos pendentes, O.S. em aberto) e o que ele significa. */
+interface ContadorNav {
+  valor: number
+  /** Ex.: "11 eventos pendentes". */
+  descricao: string
+}
+
 function Item({
   item,
   recolhida,
-  badge,
+  contador,
   aoNavegar,
 }: {
   item: ItemNav
   recolhida: boolean
-  badge?: number
+  contador?: ContadorNav
   aoNavegar?: () => void
 }) {
   const { pathname } = useLocation()
   const ativo = ativoPara(pathname, item.to)
   const Icone = item.icone
+  const temContador = !!contador && contador.valor > 0
+  const rotulo = temContador ? `${item.label}: ${contador.descricao}` : item.label
   return (
     <NavLink
       to={item.to}
       onClick={aoNavegar}
-      title={recolhida ? item.label : undefined}
+      title={recolhida ? rotulo : undefined}
+      aria-label={recolhida || temContador ? rotulo : undefined}
       className={cn(
         'group relative flex h-10 items-center gap-3 rounded-xl px-3 text-[14px] font-medium transition-colors duration-150',
         ativo ? 'text-ink' : 'text-ink-2 hover:text-ink',
@@ -46,25 +56,47 @@ function Item({
         />
       )}
       {!ativo && <span className="absolute inset-0 rounded-xl bg-surface-3/0 transition-colors group-hover:bg-surface-3/60" />}
-      <Icone
-        className={cn(
-          'relative h-[18px] w-[18px] shrink-0 transition-colors',
-          ativo ? 'text-brand' : 'text-muted group-hover:text-ink-2',
-        )}
-        strokeWidth={ativo ? 2.2 : 1.9}
-      />
+      {/* O selo do menu recolhido fica preso ao ícone, sem tirá-lo do centro */}
+      <span className="relative flex shrink-0">
+        <Icone
+          className={cn('h-[18px] w-[18px] transition-colors', ativo ? 'text-brand' : 'text-muted group-hover:text-ink-2')}
+          strokeWidth={ativo ? 2.2 : 1.9}
+        />
+        {recolhida && temContador && <SeloContador valor={contador.valor} ativo={ativo} />}
+      </span>
       {!recolhida && <span className="relative flex-1 truncate">{item.label}</span>}
-      {!!badge && (
+      {!recolhida && temContador && (
         <span
-          className={cn(
-            'tnum relative flex h-5 min-w-5 items-center justify-center rounded-full bg-warning-soft px-1.5 text-[11px] font-semibold text-warning',
-            recolhida && 'absolute top-1 right-1 h-4 min-w-4 px-1 text-[10px]',
-          )}
+          title={contador.descricao}
+          className="tnum relative flex h-5 min-w-5 items-center justify-center rounded-full bg-warning-soft px-1.5 text-[11px] font-semibold text-warning"
         >
-          {badge}
+          {contador.valor}
         </span>
       )}
     </NavLink>
+  )
+}
+
+/** Selo no canto do ícone, com o menu recolhido: o número até 99; acima disso, só um ponto. */
+function SeloContador({ valor, ativo }: { valor: number; ativo: boolean }) {
+  // O anel tem a cor do fundo do item, para "recortar" o selo do ícone
+  const anel = ativo ? 'ring-surface' : 'ring-bg'
+  return (
+    <motion.span
+      aria-hidden="true"
+      initial={{ scale: 0.5, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      transition={{ type: 'spring', stiffness: 600, damping: 30 }}
+      className={cn(
+        'pointer-events-none absolute rounded-full bg-warning ring-2',
+        anel,
+        valor > 99
+          ? '-top-1 -right-1 h-2.5 w-2.5'
+          : 'tnum -top-2.5 -right-3.5 flex h-4 min-w-4 items-center justify-center px-1 text-[10px] leading-none font-bold text-surface',
+      )}
+    >
+      {valor > 99 ? null : valor}
+    </motion.span>
   )
 }
 
@@ -131,6 +163,10 @@ export function Sidebar({ mobile, aoNavegar }: { mobile?: boolean; aoNavegar?: (
   const pendentes = useMemo(() => eventos.filter((e) => e.status === 'PENDENTE').length, [eventos])
   const ordens = useDados((s) => s.ordens)
   const osAbertas = useMemo(() => ordens.filter(osEmAberto).length, [ordens])
+  const contadores: Record<string, ContadorNav> = {
+    '/eventos': { valor: pendentes, descricao: `${pendentes} ${pendentes === 1 ? 'evento pendente' : 'eventos pendentes'}` },
+    '/manutencao': { valor: osAbertas, descricao: `${osAbertas} O.S. em aberto` },
+  }
 
   return (
     <motion.aside
@@ -158,13 +194,7 @@ export function Sidebar({ mobile, aoNavegar }: { mobile?: boolean; aoNavegar?: (
             )}
             <div className="flex flex-col gap-0.5">
               {g.itens.map((it) => (
-                <Item
-                  key={it.to}
-                  item={it}
-                  recolhida={recolhida}
-                  badge={it.to === '/eventos' ? pendentes : it.to === '/manutencao' ? osAbertas : undefined}
-                  aoNavegar={aoNavegar}
-                />
+                <Item key={it.to} item={it} recolhida={recolhida} contador={contadores[it.to]} aoNavegar={aoNavegar} />
               ))}
             </div>
           </div>

@@ -1,12 +1,14 @@
 // Cadastro e edição de uma máquina (P ou G).
 
 import { CircleAlert, Cpu } from 'lucide-react'
-import { useState, type FormEvent } from 'react'
+import { AnimatePresence, motion } from 'motion/react'
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { MAQUINA_VAZIA, normalizarMaquina } from '#shared/dominio.ts'
 import {
   chaveIdentificacao,
   ESTADO_MAQUINA,
+  identificacaoPadrao,
   numeroDaIdentificacao,
   proximasIdentificacoes,
   STATUS_MAQUINA_LISTA,
@@ -15,6 +17,7 @@ import {
 } from '#shared/maquinas.ts'
 import type { Maquina, MaquinaInput, StatusMaquina, TipoMaquina } from '#shared/tipos.ts'
 import { ErroApi } from '../lib/api'
+import { cn } from '../lib/cn'
 import { hojeISO } from '../lib/format'
 import { locacoesDeHojeEmDiante, perguntaSituacao } from '../lib/manutencao'
 import { useDados } from '../store/dados'
@@ -48,14 +51,9 @@ export function MaquinaFormModal({
       icone={<Cpu className="h-5 w-5" />}
       titulo={maquina ? `Editar máquina ${maquina.identificacao}` : 'Nova máquina'}
       descricao={
-        maquina ? (
-          'Identificação, situação e dados de cadastro.'
-        ) : (
-          <>
-            Use a mesma identificação escrita na máquina (ex.: <span className="whitespace-nowrap">P-01</span>). Os outros campos
-            são opcionais.
-          </>
-        )
+        maquina
+          ? 'Identificação, situação e dados de cadastro.'
+          : 'A letra (P ou G) vem do tipo: digite só o número escrito na máquina. Os outros campos são opcionais.'
       }
       rodape={
         <>
@@ -79,6 +77,38 @@ export function MaquinaFormModal({
   )
 }
 
+/** O número da máquina tem até 4 algarismos (P-07, G-150). */
+const MAX_ALGARISMOS = 4
+const soAlgarismos = (s: string) => s.replace(/\D/g, '').slice(0, MAX_ALGARISMOS)
+
+/** Número que o campo mostra para uma identificação no padrão do tipo ("P-07" → "07"); `null` fora do padrão. */
+function numeroDoCampo(identificacao: string, tipo: TipoMaquina) {
+  const n = numeroDaIdentificacao(identificacao, tipo)
+  return n === null ? null : String(n).padStart(2, '0')
+}
+
+/**
+ * Na edição: o número da identificação atual. Fora do padrão ("Máquina 3"), os algarismos dela,
+ * se o número resultante estiver livre; senão, vazio (a dica mostra como ela está hoje).
+ */
+function numeroInicial(m: Maquina, outras: Maquina[]) {
+  const n = numeroDoCampo(m.identificacao, m.tipo)
+  if (n !== null && n.length <= MAX_ALGARISMOS) return n
+  const algarismos = m.identificacao.replace(/\D/g, '')
+  if (!algarismos || algarismos.length > MAX_ALGARISMOS || !Number(algarismos)) return ''
+  const chave = chaveIdentificacao(identificacaoPadrao(m.tipo, Number(algarismos)))
+  return outras.some((o) => chaveIdentificacao(o.identificacao) === chave) ? '' : algarismos.padStart(2, '0')
+}
+
+/** Botão com cara de link, usado nas dicas do campo. */
+function LinkDica({ onClick, children }: { onClick: () => void; children: ReactNode }) {
+  return (
+    <button type="button" onClick={onClick} className="cursor-pointer font-medium text-brand-ink underline underline-offset-2">
+      {children}
+    </button>
+  )
+}
+
 function FormularioMaquina({
   maquina,
   tipoInicial,
@@ -98,44 +128,73 @@ function FormularioMaquina({
   // As outras máquinas (na edição, a própria não conta para sugerir nem para repetir)
   const outras = maquinas.filter((m) => m.id !== maquina?.id)
   const sugestao = (tipo: TipoMaquina) => proximasIdentificacoes(outras, tipo, 1)[0]
+  /** Próximo número livre do tipo, como o campo mostra ("08"). */
+  const numeroSugerido = (tipo: TipoMaquina) => numeroDoCampo(sugestao(tipo), tipo) ?? ''
 
   const [f, setF] = useState<MaquinaInput>(() => {
     if (maquina) {
       const { id: _i, versao: _v, criadoEm: _c, atualizadoEm: _a, ...resto } = maquina
       return { ...MAQUINA_VAZIA, ...resto }
     }
-    const tipo = tipoInicial ?? 'P'
-    return { ...MAQUINA_VAZIA, tipo, identificacao: sugestao(tipo) }
+    return { ...MAQUINA_VAZIA, tipo: tipoInicial ?? 'P' }
   })
+  // A letra vem do tipo; o usuário digita só o número
+  const [numero, setNumero] = useState(() => (maquina ? numeroInicial(maquina, outras) : numeroSugerido(f.tipo)))
+  /** Número preenchido pelo sistema: enquanto o usuário não digitar outro, acompanha o tipo. */
+  const [sugerido, setSugerido] = useState<string | null>(() => (maquina ? null : numero))
   // Versão que o usuário abriu para editar: se outra pessoa salvar antes, avisamos
   const [versaoBase, setVersaoBase] = useState(maquina?.versao)
   const [tentou, setTentou] = useState(false)
   /** Identificação recusada pelo servidor por já existir (cadastrada em outro computador). */
   const [repetidaServidor, setRepetidaServidor] = useState<{ id: string; identificacao: string; texto: string } | null>(null)
+  const campoNumero = useRef<HTMLInputElement>(null)
+
+  // Abre no número, já selecionado: basta digitar para trocar a sugestão
+  useEffect(() => {
+    campoNumero.current?.focus()
+    campoNumero.current?.select()
+  }, [])
 
   const set = <K extends keyof MaquinaInput>(k: K, v: MaquinaInput[K]) => setF((s) => ({ ...s, [k]: v }))
 
-  const mudarTipo = (tipo: TipoMaquina) =>
-    setF((s) => {
-      // Troca a identificação sugerida (vazia ou no padrão do tipo anterior) pela próxima livre do novo tipo
-      const seguePadrao = !s.identificacao.trim() || numeroDaIdentificacao(s.identificacao, s.tipo) !== null
-      return { ...s, tipo, identificacao: seguePadrao && tipo !== s.tipo ? sugestao(tipo) : s.identificacao }
-    })
+  const usarSugestao = (n: string) => {
+    setNumero(n)
+    setSugerido(n)
+  }
 
-  const { valor, erros } = normalizarMaquina(f)
-  const erroIdentificacao = erros.find((e) => /identifica/i.test(e))
+  const mudarTipo = (tipo: TipoMaquina) => {
+    if (tipo === f.tipo) return
+    set('tipo', tipo)
+    // Número vazio ou ainda o sugerido: passa a ser o próximo livre do novo tipo
+    if (!numero || numero === sugerido) usarSugestao(numeroSugerido(tipo))
+  }
+
+  const prefixo = `${f.tipo}-`
+  const n = Number(numero || 0)
+  const identificacao = n > 0 ? identificacaoPadrao(f.tipo, n) : ''
+  const erroNumero = !numero ? 'Digite o número da máquina.' : n === 0 ? 'Use um número a partir de 1.' : null
+  const { valor, erros } = normalizarMaquina({ ...f, identificacao })
   const erroData = erros.find((e) => /aquisi/i.test(e))
-  const chave = chaveIdentificacao(f.identificacao)
+  const chave = chaveIdentificacao(identificacao)
   const repetida = chave ? outras.find((m) => chaveIdentificacao(m.identificacao) === chave) : undefined
   const repetidaNoServidor = repetidaServidor && chaveIdentificacao(repetidaServidor.texto) === chave ? repetidaServidor : null
   const outraComMesmoNome =
     repetida ?? (repetidaNoServidor ? { id: repetidaNoServidor.id, identificacao: repetidaNoServidor.identificacao } : null)
   const proxima = sugestao(f.tipo)
+  const proximaLivre = proxima && chaveIdentificacao(proxima) !== chave ? proxima : null
+  const mostrarErroNumero = !!erroNumero && (tentou || !!numero)
+  const invalido = !!outraComMesmoNome || mostrarErroNumero
+  /** Identificação gravada hoje, quando vai mudar ao salvar (na edição). */
+  const atual = maquina && maquina.identificacao !== identificacao ? maquina.identificacao : null
 
   const enviar = async (e: FormEvent) => {
     e.preventDefault()
     setTentou(true)
-    if (erros.length || outraComMesmoNome) return
+    if (erroNumero || outraComMesmoNome) {
+      campoNumero.current?.focus()
+      return
+    }
+    if (erros.length) return
     // Desativar (ou pôr em manutenção com eventos marcados) pede confirmação, como na ficha
     if (maquina) {
       const locacoes = locacoesDeHojeEmDiante(maquina.id, useDados.getState().eventos, hojeISO())
@@ -161,17 +220,18 @@ function FormularioMaquina({
           : undefined
       if (duplicado) {
         // Outro computador cadastrou a mesma identificação antes (a lista daqui ainda não mostrava)
-        setRepetidaServidor({ ...duplicado, texto: f.identificacao })
+        setRepetidaServidor({ ...duplicado, texto: identificacao })
+        campoNumero.current?.focus()
       } else if (err instanceof ErroApi && err.status === 409 && maquina && err.dados.atual) {
         // Conflito de versão: outra pessoa salvou esta máquina enquanto você editava
-        const atual = err.dados.atual as Maquina | undefined
+        const atualServidor = err.dados.atual as Maquina | undefined
         const sobrescrever = await confirmar({
           titulo: 'Máquina alterada por outra pessoa',
           descricao: 'Alguém salvou esta máquina enquanto você editava. Deseja manter as suas alterações por cima das dela?',
           confirmar: 'Manter as minhas',
         })
-        if (sobrescrever && atual) {
-          setVersaoBase(atual.versao)
+        if (sobrescrever && atualServidor) {
+          setVersaoBase(atualServidor.versao)
           toast.info('Clique em “Salvar alterações” novamente para confirmar.')
         }
       } else avisarErro('Não foi possível salvar a máquina', err)
@@ -183,6 +243,66 @@ function FormularioMaquina({
   const abrirOutra = (id: string) => {
     aoFechar()
     navegar(`/manutencao/${id}`)
+  }
+
+  const usarProxima = () => usarSugestao(numeroSugerido(f.tipo))
+  const linkProxima = proximaLivre && <LinkDica onClick={usarProxima}>{proximaLivre}</LinkDica>
+
+  // No cadastro, ou na edição sem número, oferece o próximo número livre
+  const oferecerProxima = (!maquina || !numero) && linkProxima
+  // Com erro, a identificação de hoje continua visível numa linha à parte
+  const linhaAtual = atual && <span className="mt-1 block pl-5">Hoje está como “{atual}”.</span>
+
+  let dica: ReactNode
+  if (outraComMesmoNome) {
+    dica = (
+      <>
+        <span className="flex items-start gap-1.5 font-medium text-danger" role="alert">
+          <CircleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+          <span>
+            Já existe a máquina {outraComMesmoNome.identificacao}.{' '}
+            <LinkDica onClick={() => abrirOutra(outraComMesmoNome.id)}>Abrir a ficha dela</LinkDica>
+            {proximaLivre && (
+              <>
+                {' '}
+                ou <LinkDica onClick={usarProxima}>usar {proximaLivre}</LinkDica>
+              </>
+            )}
+            .
+          </span>
+        </span>
+        {linhaAtual}
+      </>
+    )
+  } else if (mostrarErroNumero) {
+    dica = (
+      <>
+        <span className="flex items-start gap-1.5 font-medium text-danger" role="alert">
+          <CircleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
+          <span>
+            {erroNumero}
+            {oferecerProxima && <> Próxima livre: {linkProxima}</>}
+          </span>
+        </span>
+        {linhaAtual}
+      </>
+    )
+  } else {
+    dica = (
+      <>
+        {identificacao ? (
+          <>
+            Fica <b className="font-semibold text-ink-2">{identificacao}</b>
+            {atual ? <> (hoje está como “{atual}”)</> : !maquina && !proximaLivre && ', a próxima livre'}.
+          </>
+        ) : atual ? (
+          <>Hoje está como “{atual}”. Digite só o número escrito na máquina.</>
+        ) : (
+          'Digite só o número escrito na máquina.'
+        )}
+        {oferecerProxima && <> Próxima livre: {linkProxima}</>}
+      </>
+    )
   }
 
   return (
@@ -204,52 +324,43 @@ function FormularioMaquina({
         />
       </Field>
 
-      <Field
-        label="Identificação"
-        htmlFor="maq-id"
-        className="sm:col-span-3"
-        erro={outraComMesmoNome ? null : tentou ? erroIdentificacao : null}
-        hint={
-          outraComMesmoNome ? (
-            <span className="flex items-start gap-1.5 font-medium text-danger" role="alert">
-              <CircleAlert className="mt-px h-3.5 w-3.5 shrink-0" />
-              <span>
-                Já existe a máquina {outraComMesmoNome.identificacao}.{' '}
-                <button
-                  type="button"
-                  onClick={() => abrirOutra(outraComMesmoNome.id)}
-                  className="cursor-pointer text-brand-ink underline underline-offset-2"
-                >
-                  Abrir a ficha dela
-                </button>
-              </span>
-            </span>
-          ) : proxima && chave !== chaveIdentificacao(proxima) ? (
-            <span>
-              Próxima livre:{' '}
-              <button
-                type="button"
-                onClick={() => set('identificacao', proxima)}
-                className="cursor-pointer font-medium text-brand-ink underline-offset-2 hover:underline"
+      <Field label="Identificação" htmlFor="maq-id" className="sm:col-span-3" hint={dica}>
+        <div className="relative">
+          {/* Prefixo fixo do tipo: faz parte do campo, mas não dá para apagar */}
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute inset-y-px left-px z-10 flex w-11 items-center justify-center overflow-hidden rounded-l-[11px] border-r border-line bg-surface-2 text-base font-semibold text-ink-2"
+          >
+            <AnimatePresence initial={false} mode="popLayout">
+              <motion.span
+                key={f.tipo}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.16 }}
               >
-                {proxima}
-              </button>
-            </span>
-          ) : (
-            'Como está escrita na máquina.'
-          )
-        }
-      >
-        <Input
-          id="maq-id"
-          value={f.identificacao}
-          onChange={(e) => set('identificacao', e.target.value.toUpperCase())}
-          autoComplete="off"
-          autoFocus
-          placeholder={proxima}
-          aria-invalid={!!outraComMesmoNome || (tentou && !!erroIdentificacao)}
-          className="text-base font-semibold"
-        />
+                {prefixo}
+              </motion.span>
+            </AnimatePresence>
+          </span>
+          <Input
+            ref={campoNumero}
+            id="maq-id"
+            value={numero}
+            onChange={(e) => setNumero(soAlgarismos(e.target.value))}
+            inputMode="numeric"
+            pattern="[0-9]*"
+            maxLength={MAX_ALGARISMOS}
+            autoComplete="off"
+            placeholder={numeroSugerido(f.tipo) || '01'}
+            aria-describedby="maq-id-prefixo"
+            aria-invalid={invalido}
+            className={cn('tnum pl-14 text-base font-semibold', invalido && 'border-danger! focus:ring-danger/20!')}
+          />
+          <span id="maq-id-prefixo" className="sr-only">
+            {`Começa com ${prefixo}. Digite só o número.`}
+          </span>
+        </div>
       </Field>
       <Field label="Modelo" htmlFor="maq-modelo" className="sm:col-span-3">
         <Input
