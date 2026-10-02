@@ -119,41 +119,50 @@ describe('máquinas bloqueadas no evento', () => {
     ])
   })
 
-  it('pede para trocar as acrescentadas e, num evento que ainda vai acontecer, também as que já estavam', () => {
+  // Atalho: todas as máquinas e eventos do teste, evento em edição 'e'
+  const trocar = (selecionadas: string[], eventos: Evento[], d: { data: string }[], extra = {}) =>
+    maquinasParaTrocar({ selecionadas, maquinas, eventos, dias: d, eventoId: 'e', hoje: HOJE, ...extra })
+
+  it('evento novo: troca toda marcada desativada, em manutenção ou em outro evento', () => {
     const outro = ev('a', 12, ['2026-10-11'], ['P-01'])
-    const d = dias('2026-10-11')
-    const b = bloqueiosMaquinas({ maquinas, eventos: [outro], clientes, dias: d, eventoId: 'e', hoje: HOJE })
-    // Evento novo: qualquer marcada bloqueada
-    expect(maquinasParaTrocar({ selecionadas: ['P-01', 'P-02', 'P-03'], bloqueios: b, dias: d, hoje: HOJE })).toEqual([
-      'P-01',
-      'P-03',
-    ])
-    // Já gravadas num evento futuro: também precisam ser trocadas
+    expect(trocar(['P-01', 'P-02', 'P-03', 'G-01'], [outro], dias('2026-10-11'))).toEqual(['P-01', 'P-03', 'G-01'])
+    // Cancelado não cobra nada
+    expect(trocar(['P-01', 'P-03', 'G-01'], [outro], dias('2026-10-11'), { cancelado: true })).toEqual([])
+    // Num evento novo que já passou, a manutenção não conta (a desativada e o conflito sim)
+    const antigo = ev('a', 12, ['2026-09-01'], ['P-01'])
+    expect(trocar(['P-01', 'P-03', 'G-01'], [antigo], dias('2026-09-01'))).toEqual(['P-01', 'G-01'])
+  })
+
+  it('o que já estava gravado não trava a edição, mesmo num evento que ainda vai acontecer', () => {
+    // P-01 entrou em outro evento e P-03 entrou em manutenção depois de gravadas aqui
+    const outro = ev('a', 12, ['2026-10-11'], ['P-01'])
     const salvo = ev('e', 20, ['2026-10-11'], ['P-01', 'P-03'])
-    expect(maquinasParaTrocar({ selecionadas: ['P-01', 'P-03'], bloqueios: b, dias: d, salvo, hoje: HOJE })).toEqual([
-      'P-01',
-      'P-03',
-    ])
+    expect(trocar(['P-01', 'P-03'], [outro, salvo], dias('2026-10-11'), { salvo })).toEqual([])
+    // Mas acrescentar um dia de hoje em diante cobra as duas nesse dia
+    const outro2 = ev('a', 12, ['2026-10-11', '2026-10-12'], ['P-01'])
+    expect(trocar(['P-01', 'P-03'], [outro2, salvo], dias('2026-10-11', '2026-10-12'), { salvo })).toEqual(['P-01', 'P-03'])
+    // Dia novo sem conflito: P-01 passa; P-03 (manutenção) continua cobrada, o dia é futuro
+    expect(trocar(['P-01', 'P-03'], [outro, salvo], dias('2026-10-11', '2026-10-13'), { salvo })).toEqual(['P-03'])
   })
 
   it('num evento que já passou, o que já estava gravado não trava; dia acrescentado com conflito trava', () => {
     const outro = ev('a', 12, ['2026-09-01', '2026-09-02'], ['P-01', 'G-02'])
     const salvo = ev('e', 20, ['2026-09-01'], ['P-01', 'G-01'])
     const mesmos = dias('2026-09-01')
-    const b1 = bloqueiosMaquinas({ maquinas, eventos: [outro], clientes, dias: mesmos, eventoId: 'e', hoje: HOJE })
-    expect(maquinasParaTrocar({ selecionadas: ['P-01', 'G-01'], bloqueios: b1, dias: mesmos, salvo, hoje: HOJE })).toEqual([])
+    // G-01 está desativada, mas já estava gravada num evento que passou: é histórico
+    expect(trocar(['P-01', 'G-01'], [outro], mesmos, { salvo })).toEqual([])
     // G-02 acrescentada agora: trava
-    expect(maquinasParaTrocar({ selecionadas: ['P-01', 'G-02'], bloqueios: b1, dias: mesmos, salvo, hoje: HOJE })).toEqual([
-      'G-02',
-    ])
-    // Dia 02/09 acrescentado: P-01 passa a coincidir com o outro evento num dia novo
-    const novos = dias('2026-09-01', '2026-09-02')
-    const b2 = bloqueiosMaquinas({ maquinas, eventos: [outro], clientes, dias: novos, eventoId: 'e', hoje: HOJE })
-    expect(maquinasParaTrocar({ selecionadas: ['P-01'], bloqueios: b2, dias: novos, salvo, hoje: HOJE })).toEqual(['P-01'])
-    // Evento gravado como cancelado: tudo conta como acrescentado
-    const cancelado = { ...salvo, status: 'CANCELADO' as const }
-    expect(maquinasParaTrocar({ selecionadas: ['P-01'], bloqueios: b1, dias: mesmos, salvo: cancelado, hoje: HOJE })).toEqual([
-      'P-01',
-    ])
+    expect(trocar(['P-01', 'G-02'], [outro], mesmos, { salvo })).toEqual(['G-02'])
+    // Dia 02/09 acrescentado: P-01 passa a coincidir com o outro evento num dia novo; G-01 (passado) fica
+    expect(trocar(['P-01', 'G-01'], [outro], dias('2026-09-01', '2026-09-02'), { salvo })).toEqual(['P-01'])
+  })
+
+  it('evento gravado como cancelado: ao reativar, tudo conta como acrescentado (menos a desativada que já estava)', () => {
+    const outro = ev('a', 12, ['2026-09-01'], ['P-01'])
+    const salvo = ev('e', 20, ['2026-09-01'], ['P-01', 'G-01'], { status: 'CANCELADO' })
+    expect(trocar(['P-01', 'G-01'], [outro], dias('2026-09-01'), { salvo })).toEqual(['P-01'])
+    // Num evento futuro a desativada volta a ser cobrada
+    const futuro = ev('e', 20, ['2026-10-11'], ['G-01'], { status: 'CANCELADO' })
+    expect(trocar(['G-01'], [], dias('2026-10-11'), { salvo: futuro })).toEqual(['G-01'])
   })
 })

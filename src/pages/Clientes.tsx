@@ -233,6 +233,15 @@ export function Clientes() {
                           <span className="truncate">
                             {ROTULO_TIPO_CLIENTE[c.tipo]}
                             {c.documento && ` · ${c.documento}`}
+                            {/* Colunas que somem em telas menores: o que elas mostram vem para cá */}
+                            {c.telefone && <span className="max-sm:hidden xl:hidden"> · {c.telefone}</span>}
+                            {c.cidade && (
+                              <span className="2xl:hidden">
+                                {' '}
+                                · {c.cidade}
+                                {c.uf ? `/${c.uf}` : ''}
+                              </span>
+                            )}
                           </span>
                         </p>
                       </div>

@@ -15,7 +15,7 @@ import {
   TriangleAlert,
   Upload,
 } from 'lucide-react'
-import { motion } from 'motion/react'
+import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { DisponibilidadeMaquinas } from '../components/DisponibilidadeMaquinas'
 import { Button } from '../components/ui/Button'
@@ -108,6 +108,11 @@ export function Configuracoes() {
     }
   }
 
+  const descartar = () => {
+    setF(config)
+    setTentouSalvar(false)
+  }
+
   const fazerBackup = async () => {
     try {
       const dados = await exportar()
@@ -172,15 +177,7 @@ export function Configuracoes() {
         acoes={
           <>
             {alterado && (
-              <Button
-                variante="ghost"
-                icone={<RotateCcw className="h-4 w-4" />}
-                onClick={() => {
-                  setF(config)
-                  setTentouSalvar(false)
-                }}
-                disabled={salvando}
-              >
+              <Button variante="ghost" icone={<RotateCcw className="h-4 w-4" />} onClick={descartar} disabled={salvando}>
                 Descartar
               </Button>
             )}
@@ -415,6 +412,40 @@ export function Configuracoes() {
         {CONFIG_PADRAO.valorDiariaPadrao.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}, bobina{' '}
         {CONFIG_PADRAO.valorBobinaPadrao.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
       </p>
+
+      {/* O botão Salvar fica lá no topo: com algo alterado, a barra acompanha a rolagem */}
+      <AnimatePresence>
+        {alterado && (
+          <motion.div
+            role="region"
+            aria-label="Alterações não salvas"
+            initial={{ opacity: 0, y: 16 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 16 }}
+            transition={{ duration: 0.2, ease: [0.22, 1, 0.36, 1] }}
+            className="sticky bottom-4 z-20 mt-6 flex flex-wrap items-center gap-x-4 gap-y-2 rounded-2xl border border-line-strong bg-surface/95 px-4 py-3 shadow-lg backdrop-blur-xl"
+          >
+            <p className="mr-auto flex items-center gap-2 text-sm font-medium text-ink">
+              <span aria-hidden className="h-2 w-2 shrink-0 rounded-full bg-warning-dot" />
+              Alterações não salvas
+            </p>
+            <div className="flex gap-2 max-sm:w-full max-sm:[&>*]:flex-1">
+              <Button
+                variante="ghost"
+                tamanho="sm"
+                icone={<RotateCcw className="h-4 w-4" />}
+                onClick={descartar}
+                disabled={salvando}
+              >
+                Descartar
+              </Button>
+              <Button variante="primary" tamanho="sm" icone={<Save className="h-4 w-4" />} onClick={salvar} disabled={salvando}>
+                {salvando ? 'Salvando…' : 'Salvar alterações'}
+              </Button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   )
 }

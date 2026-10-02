@@ -133,7 +133,20 @@ describe('recibo', () => {
     expect(r.pagamento).toBe('PIX')
     expect(r.localData).toBe('1º de março de 2026.')
     expect(r.texto.startsWith('Recebemos de ____')).toBe(true)
-    expect(r.nomeArquivo).toBe('Recibo_0031_Cliente.pdf')
+    expect(r.nomeArquivo).toBe('Recibo_0031.pdf')
+  })
+
+  it('avulso sem nome (gravado como “Cliente avulso”) também deixa o espaço em branco', () => {
+    const r = montarRecibo(evento(), cliente({ tipo: 'AVULSO', nome: 'Cliente avulso' }), CONFIG_PADRAO)
+    expect(r.texto.startsWith('Recebemos de ______________________________, a importância')).toBe(true)
+    expect(r.nomeArquivo).toBe('Recibo_0031.pdf')
+    // Com documento, o espaço fica para o nome e o CPF sai preenchido
+    const comCpf = montarRecibo(
+      evento(),
+      cliente({ tipo: 'AVULSO', nome: 'Cliente avulso', documento: '123.456.789-09' }),
+      CONFIG_PADRAO,
+    )
+    expect(comCpf.texto.startsWith('Recebemos de ______________________________, CPF 123.456.789-09, a importância')).toBe(true)
   })
 
   it('sem razão social da empresa assina com o nome; nome com caracteres proibidos vira arquivo válido', () => {

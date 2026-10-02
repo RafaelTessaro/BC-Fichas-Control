@@ -194,16 +194,24 @@ export function SeletorMaquinas({
     () => bloqueiosMaquinas({ maquinas, eventos, clientes, dias, eventoId, cancelado, hoje }),
     [maquinas, eventos, clientes, dias, eventoId, cancelado, hoje],
   )
+  // Versão gravada do evento em edição: o que já estava nele não é cobrado de novo
+  const salvo = useMemo(() => (eventoId ? eventos.find((e) => e.id === eventoId) : undefined), [eventos, eventoId])
   // Marcadas que não podem ir (o salvar não deixa passar enquanto não forem trocadas)
-  const trocar = useMemo(() => {
-    const salvo = eventoId ? eventos.find((e) => e.id === eventoId) : undefined
-    return new Set(maquinasParaTrocar({ selecionadas: maquinasIds, bloqueios, dias, salvo, hoje }))
-  }, [eventos, eventoId, maquinasIds, bloqueios, dias, hoje])
+  const trocar = useMemo(
+    () => new Set(maquinasParaTrocar({ selecionadas: maquinasIds, maquinas, eventos, dias, eventoId, salvo, cancelado, hoje })),
+    [maquinasIds, maquinas, eventos, dias, eventoId, salvo, cancelado, hoje],
+  )
+  /** Máquina indisponível que já estava gravada no evento e pode voltar (desmarcada por engano, por exemplo). */
+  const podeVoltar = (id: string) =>
+    !!salvo?.maquinasIds.includes(id) &&
+    !maquinasParaTrocar({ selecionadas: [id], maquinas, eventos, dias, eventoId, salvo, cancelado, hoje }).length
   const precisa = maiorUso(dias)
 
   const escolhidas = ordenadas.filter((m) => selecionadas.has(m.id))
-  // Desativadas só aparecem se já estavam marcadas (para poder desmarcar)
-  const visiveis = ordenadas.filter((m) => m.status !== 'DESATIVADA' || selecionadas.has(m.id))
+  // Desativadas só aparecem se estão marcadas ou já estavam gravadas (para poder desmarcar ou voltar)
+  const visiveis = ordenadas.filter(
+    (m) => m.status !== 'DESATIVADA' || selecionadas.has(m.id) || !!salvo?.maquinasIds.includes(m.id),
+  )
   const livre = (m: Maquina) => m.status === 'DISPONIVEL' && !bloqueios.has(m.id) && !comOS.has(m.id)
   /** Cor do chip: a do motivo do bloqueio; sem bloqueio, livre (a manutenção só conta de hoje em diante). */
   const estadoNasDatas = (m: Maquina): EstadoMaquina => {
@@ -218,7 +226,7 @@ export function SeletorMaquinas({
   const alternar = (m: Maquina) => {
     const novos = new Set(selecionadas)
     if (novos.has(m.id)) novos.delete(m.id)
-    else if (bloqueios.has(m.id))
+    else if (bloqueios.has(m.id) && !podeVoltar(m.id))
       return // indisponível: só pode ser desmarcada
     else novos.add(m.id)
     gravar(novos)
@@ -273,13 +281,27 @@ export function SeletorMaquinas({
     const b = bloqueios.get(m.id)
     if (trocar.has(m.id)) continue
     if (b?.motivo === 'OCUPADA') {
-      // Evento que já passou: o que estava gravado fica, só avisa
+      // Já estava gravada assim (ex.: evento que já passou): fica, só avisa
       avisos.push({
         chave: `c-${m.id}`,
         tom: 'warning',
         texto: <TextoConflito maquina={m} outros={b.eventos} datas={new Set(dias.map((d) => d.data))} />,
       })
-    } else if (!b && comOS.has(m.id)) {
+    } else if (b) {
+      // Já estava gravada e depois entrou em manutenção ou foi desativada: o salvar aceita, só avisa
+      avisos.push({
+        chave: `s-${m.id}`,
+        tom: 'warning',
+        texto: (
+          <>
+            <b className="font-semibold text-ink">{m.identificacao}</b>{' '}
+            {b.motivo === 'MANUTENCAO'
+              ? 'entrou em manutenção depois de gravada neste evento. Confira se ela ainda vai (ou volta) para o evento.'
+              : 'foi desativada depois de gravada neste evento. Ela fica só como registro.'}
+          </>
+        ),
+      })
+    } else if (comOS.has(m.id)) {
       avisos.push({
         chave: `os-${m.id}`,
         tom: 'warning',
@@ -407,7 +429,7 @@ export function SeletorMaquinas({
                           maquina={m}
                           estado={estadoNasDatas(m)}
                           selecionada={marcada}
-                          desabilitado={bloqueada && !marcada}
+                          desabilitado={bloqueada && !marcada && !podeVoltar(m.id)}
                           aviso={marcada ? bloqueada || comOS.has(m.id) : !bloqueada && comOS.has(m.id)}
                           titulo={titulo(m)}
                           aoClicar={() => alternar(m)}

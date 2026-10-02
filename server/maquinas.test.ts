@@ -218,7 +218,37 @@ describe('máquinas indisponíveis no evento', () => {
     await req('POST', '/api/eventos', eventoCom(cli.id, ['2099-02-01'], [p1.id]), 201)
     const r = await req<{ erro: string }>('PATCH', `/api/eventos/${cancelado.id}`, { status: 'EM_ABERTO' })
     expect(r.status).toBe(409)
-    expect(r.json.erro).toMatch(/P-01 já está no evento/)
+    expect(r.json.erro).toMatch(/^A máquina P-01 já está no evento .* em 01\/02\. Abra o evento e troque a máquina\.$/)
+  })
+
+  it('máquina que entrou em manutenção depois de gravada não trava a edição; dia novo de hoje em diante trava', async () => {
+    const cli = await criarCliente()
+    const p1 = await criarMaquina('P-01')
+    const e = (await req<Evento>('POST', '/api/eventos', eventoCom(cli.id, ['2099-04-01'], [p1.id]), 201)).json
+    await req('PUT', `/api/maquinas/${p1.id}`, { ...p1, status: 'MANUTENCAO' }, 200)
+    const renomeado = (await req<Evento>('PUT', `/api/eventos/${e.id}`, { ...e, nome: 'Renomeado' }, 200)).json
+    await req('PATCH', `/api/eventos/${e.id}`, { status: 'PENDENTE' }, 200)
+    const atual = (await dados()).eventos.find((x) => x.id === e.id)!
+    expect(atual.versao).toBe(renomeado.versao + 1)
+    const maisUmDia = { ...atual, dias: [...atual.dias, { id: 'x', data: '2099-04-02', maquinas: 1 }] }
+    const r = await req<{ erro: string }>('PUT', `/api/eventos/${e.id}`, maisUmDia)
+    expect(r.status).toBe(409)
+    expect(r.json.erro).toBe('A máquina P-01 está em manutenção. Escolha outra máquina ou conclua a manutenção antes.')
+  })
+
+  it('reativar um evento antigo com máquina desativada depois: é histórico, não trava', async () => {
+    const cli = await criarCliente()
+    const p1 = await criarMaquina('P-01')
+    const e = (
+      await req<Evento>('POST', '/api/eventos', { ...eventoCom(cli.id, ['2020-05-01'], [p1.id]), status: 'CANCELADO' }, 201)
+    ).json
+    await req('PUT', `/api/maquinas/${p1.id}`, { ...p1, status: 'DESATIVADA' }, 200)
+    await req('PATCH', `/api/eventos/${e.id}`, { status: 'EM_ABERTO' }, 200)
+    // Mas não pode entrar num evento antigo em que não estava
+    const outro = (await req<Evento>('POST', '/api/eventos', eventoCom(cli.id, ['2020-05-02']), 201)).json
+    const r = await req<{ erro: string }>('PUT', `/api/eventos/${outro.id}`, { ...outro, maquinasIds: [p1.id] })
+    expect(r.status).toBe(409)
+    expect(r.json.erro).toBe('A máquina P-01 está desativada. Escolha outra máquina.')
   })
 
   it('conflitos que já estavam gravados não travam outras alterações do evento', async () => {

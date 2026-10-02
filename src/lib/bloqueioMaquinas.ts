@@ -86,34 +86,57 @@ export function bloqueiosMaquinas({
 }
 
 /**
- * Máquinas marcadas que precisam ser trocadas antes de salvar. Sempre as acrescentadas agora e as
- * que estariam em outro evento num dia acrescentado (o servidor recusaria). As que já estavam
- * gravadas só se o evento ainda vai acontecer: num evento que já passou, o histórico não trava a edição.
+ * Máquinas marcadas que precisam ser trocadas antes de salvar — a MESMA regra do servidor
+ * (verificarMaquinasLivres em server/repositorio.ts):
+ * - máquina acrescentada agora: não pode estar desativada, nem em manutenção (se o evento tem algum
+ *   dia de hoje em diante), nem em outro evento em alguma das datas;
+ * - máquina que já estava gravada: só é cobrada nos dias acrescentados (conflito nesses dias, ou
+ *   manutenção/desativação se algum desses dias é de hoje em diante). O que já foi gravado — por
+ *   exemplo, uma máquina que entrou em manutenção durante o evento — não trava a edição.
+ * Desativada que já estava no evento continua aceita num evento que já passou (é histórico).
  */
 export function maquinasParaTrocar({
   selecionadas,
-  bloqueios,
+  maquinas,
+  eventos,
   dias,
+  eventoId,
   salvo,
+  cancelado,
   hoje,
 }: {
   selecionadas: string[]
-  bloqueios: Map<string, Bloqueio>
+  maquinas: Pick<Maquina, 'id' | 'status'>[]
+  eventos: Evento[]
   dias: Pick<DiaEvento, 'data'>[]
+  /** Evento em edição (não conta como conflito com ele mesmo). */
+  eventoId?: string
   /** Versão gravada do evento em edição (nada num evento novo). */
   salvo?: Pick<Evento, 'maquinasIds' | 'dias' | 'status'>
+  /** Evento que vai ser salvo como cancelado: nada é cobrado. */
+  cancelado?: boolean
   hoje: string
 }): string[] {
+  if (cancelado) return []
   const valeSalvo = salvo && salvo.status !== 'CANCELADO'
   const antes = new Set(valeSalvo ? salvo.maquinasIds : [])
+  const gravadas = new Set(salvo?.maquinasIds ?? [])
   const diasAntes = new Set(valeSalvo ? salvo.dias.map((d) => d.data) : [])
-  const diasNovos = new Set(dias.map((d) => d.data).filter((d) => d && !diasAntes.has(d)))
-  const temFuturo = dias.some((d) => d.data && d.data >= hoje)
+  const datas = dias.map((d) => d.data).filter(Boolean)
+  const diasNovos = new Set(datas.filter((d) => !diasAntes.has(d)))
+  const temFuturo = datas.some((d) => d >= hoje)
+  const novoFuturo = [...diasNovos].some((d) => d >= hoje)
+  const status = new Map(maquinas.map((m) => [m.id, m.status]))
+  const ocupadas = maquinasOcupadas(datas, eventos, eventoId)
   return selecionadas.filter((id) => {
-    const b = bloqueios.get(id)
-    if (!b) return false
-    if (!antes.has(id) || temFuturo) return true
-    return b.motivo === 'OCUPADA' && b.eventos.some((e) => e.dias.some((d) => diasNovos.has(d.data)))
+    const nova = !antes.has(id)
+    if (!nova && !diasNovos.size) return false
+    const futuro = nova ? temFuturo : novoFuturo
+    const st = status.get(id)
+    if (st === 'DESATIVADA' && (futuro || !gravadas.has(id))) return true
+    if (st === 'MANUTENCAO' && futuro) return true
+    const outros = ocupadas.get(id) ?? []
+    return nova ? outros.length > 0 : outros.some((e) => e.dias.some((d) => diasNovos.has(d.data)))
   })
 }
 

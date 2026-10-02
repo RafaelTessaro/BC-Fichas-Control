@@ -77,11 +77,15 @@ export interface Recibo {
   nomeArquivo: string
 }
 
-/** Quem pagou: razão social (empresa) ou nome; sem cliente, um espaço para escrever à mão. */
+/** Avulso cadastrado sem nome (o sistema grava “Cliente avulso”): o recibo não tem a quem nomear. */
+const semNome = (c: Cliente) => !c.nome.trim() || (c.tipo === 'AVULSO' && /^cliente avulso$/i.test(c.nome.trim()))
+
+/** Quem pagou: razão social (empresa) ou nome; sem nome, um espaço para escrever à mão. */
 function pagador(cliente: Cliente | undefined) {
-  if (!cliente) return { nome: '______________________________', documento: '' }
-  const nome = (cliente.tipo === 'PJ' && cliente.razaoSocial.trim()) || cliente.nome.trim() || 'Cliente avulso'
-  const doc = cliente.documento.trim()
+  const linha = '______________________________'
+  const doc = cliente?.documento.trim() ?? ''
+  if (!cliente || (semNome(cliente) && !doc)) return { nome: linha, documento: '' }
+  const nome = (cliente.tipo === 'PJ' && cliente.razaoSocial.trim()) || (semNome(cliente) ? linha : cliente.nome.trim())
   if (!doc) return { nome, documento: '' }
   const tipoDoc = cliente.tipo === 'PF' || (cliente.tipo === 'AVULSO' && doc.replace(/\D/g, '').length === 11) ? 'CPF' : 'CNPJ'
   return { nome, documento: `${tipoDoc} ${doc}` }
@@ -140,6 +144,6 @@ export function montarRecibo(
     fecho: 'Para maior clareza, firmamos o presente recibo.',
     localData: `${local ? `${local}, ` : ''}${dataPorExtenso(dataPagamento)}.`,
     assinatura,
-    nomeArquivo: `${nomeArquivoSeguro(`Recibo_${codigo}_${(cliente?.nome.trim() || 'Cliente').replace(/\s+/g, '_')}`)}.pdf`,
+    nomeArquivo: `${nomeArquivoSeguro(`Recibo_${codigo}${cliente && !semNome(cliente) ? `_${cliente.nome.trim().replace(/\s+/g, '_')}` : ''}`)}.pdf`,
   }
 }

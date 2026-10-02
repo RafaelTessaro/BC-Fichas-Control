@@ -94,7 +94,9 @@ function numeroDoCampo(identificacao: string, tipo: TipoMaquina) {
 function numeroInicial(m: Maquina, outras: Maquina[]) {
   const n = numeroDoCampo(m.identificacao, m.tipo)
   if (n !== null && n.length <= MAX_ALGARISMOS) return n
-  const algarismos = m.identificacao.replace(/\D/g, '')
+  // Só aproveita quando há um único número no nome ("Máquina 7"); "Lote 2 - 15" fica em branco
+  const grupos = m.identificacao.match(/\d+/g) ?? []
+  const algarismos = grupos.length === 1 ? grupos[0] : ''
   if (!algarismos || algarismos.length > MAX_ALGARISMOS || !Number(algarismos)) return ''
   const chave = chaveIdentificacao(identificacaoPadrao(m.tipo, Number(algarismos)))
   return outras.some((o) => chaveIdentificacao(o.identificacao) === chave) ? '' : algarismos.padStart(2, '0')

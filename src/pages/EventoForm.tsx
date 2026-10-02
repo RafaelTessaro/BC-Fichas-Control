@@ -268,16 +268,18 @@ export function EventoForm() {
     const existentes = new Set(maquinas.map((m) => m.id))
     const maquinasIds = f.maquinasIds.filter((x) => existentes.has(x))
     // Máquina em manutenção ou já em outro evento nas mesmas datas não pode ir: explica e não envia
-    const bloqueios = bloqueiosMaquinas({
+    const cancelado = f.status === 'CANCELADO'
+    const bloqueios = bloqueiosMaquinas({ maquinas, eventos, clientes, dias: f.dias, eventoId: id, cancelado, hoje })
+    const trocar = maquinasParaTrocar({
+      selecionadas: maquinasIds,
       maquinas,
       eventos,
-      clientes,
       dias: f.dias,
       eventoId: id,
-      cancelado: f.status === 'CANCELADO',
+      salvo: existente,
+      cancelado,
       hoje,
     })
-    const trocar = maquinasParaTrocar({ selecionadas: maquinasIds, bloqueios, dias: f.dias, salvo: existente, hoje })
     if (trocar.length) {
       const itens = ordenarMaquinas(maquinas.filter((m) => trocar.includes(m.id))).map((m) => ({
         identificacao: m.identificacao,

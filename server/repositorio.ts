@@ -242,7 +242,7 @@ export class Repositorio {
       const patch = validar(normalizarPatch(entrada, anterior))
       const evento: Evento = { ...anterior, ...patch, versao: anterior.versao + 1, atualizadoEm: agora() }
       // Reativar um evento cancelado confere as máquinas dele de novo (podem ter ido para outro evento)
-      this.verificarMaquinasLivres({ ...evento, id }, anterior)
+      this.verificarMaquinasLivres({ ...evento, id }, anterior, 'Abra o evento e troque a máquina.')
       this.gravarEvento(evento, false)
       return { evento, anterior, rev: this.incrementarRevisao() }
     })
@@ -689,34 +689,47 @@ export class Repositorio {
   private verificarMaquinasLivres(
     evento: Pick<Evento, 'dias' | 'maquinasIds' | 'status'> & { id: string | undefined },
     anterior?: Evento,
+    /** O que dizer para resolver (na troca rápida de status não há máquinas para escolher). */
+    saida = 'Escolha outra máquina.',
   ) {
+    // A mesma regra de maquinasParaTrocar (src/lib/bloqueioMaquinas.ts), que a tela usa antes de salvar
     if (evento.status === 'CANCELADO' || !evento.maquinasIds.length) return
-    const antes = new Set(anterior?.status === 'CANCELADO' ? [] : (anterior?.maquinasIds ?? []))
-    const novas = evento.maquinasIds.filter((id) => !antes.has(id))
+    const hoje = hojeLocalIso()
+    const valeAnterior = anterior && anterior.status !== 'CANCELADO'
+    const antes = new Set(valeAnterior ? anterior.maquinasIds : [])
+    const gravadas = new Set(anterior?.maquinasIds ?? [])
+    const diasAntes = new Set(valeAnterior ? anterior.dias.map((d) => d.data) : [])
+    const diasNovos = evento.dias.filter((d) => !diasAntes.has(d.data))
+    const temFuturo = evento.dias.some((d) => d.data >= hoje)
+    const novoFuturo = diasNovos.some((d) => d.data >= hoje)
     const maquinas = new Map(this.listarMaquinas().map((m) => [m.id, m]))
-    const temFuturo = evento.dias.some((d) => d.data >= hojeLocalIso())
-    for (const id of novas) {
+    const novas = evento.maquinasIds.filter((id) => !antes.has(id))
+    const jaEstavam = diasNovos.length ? evento.maquinasIds.filter((id) => antes.has(id)) : []
+    for (const id of [...novas, ...jaEstavam]) {
       const m = maquinas.get(id)
-      if (m?.status === 'DESATIVADA') throw new ErroApi(409, `A máquina ${m.identificacao} está desativada. Escolha outra.`)
-      if (m?.status === 'MANUTENCAO' && temFuturo) {
-        throw new ErroApi(409, `A máquina ${m.identificacao} está em manutenção. Escolha outra ou conclua a manutenção antes.`)
+      const futuro = antes.has(id) ? novoFuturo : temFuturo
+      // Desativada que já estava num evento que já passou (ex.: reativar um cancelado antigo) é histórico
+      if (m?.status === 'DESATIVADA' && (futuro || !gravadas.has(id))) {
+        throw new ErroApi(409, `A máquina ${m.identificacao} está desativada. ${saida}`)
+      }
+      if (m?.status === 'MANUTENCAO' && futuro) {
+        throw new ErroApi(
+          409,
+          `A máquina ${m.identificacao} está em manutenção. ${saida.replace(/\.$/, '')} ou conclua a manutenção antes.`,
+        )
       }
     }
     // Máquinas novas em todos os dias; as que já estavam, só nos dias acrescentados
-    const diasAntes = new Set(anterior?.status === 'CANCELADO' ? [] : (anterior?.dias ?? []).map((d) => d.data))
-    const diasNovos = evento.dias.filter((d) => !diasAntes.has(d.data))
     const eventos = this.listarEventosBrutos()
     const conflitos = [
       ...conflitosMaquinas({ id: evento.id, dias: evento.dias, maquinasIds: novas }, eventos),
-      ...conflitosMaquinas(
-        { id: evento.id, dias: diasNovos, maquinasIds: evento.maquinasIds.filter((id) => antes.has(id)) },
-        eventos,
-      ),
+      ...conflitosMaquinas({ id: evento.id, dias: diasNovos, maquinasIds: jaEstavam }, eventos),
     ]
     if (!conflitos.length) return
     const [maquinaId, outros] = conflitos[0]
     const outro = outros[0]
-    const datas = new Set(evento.dias.map((d) => d.data))
+    // Só as datas que causam a recusa (para a que já estava, os dias acrescentados)
+    const datas = new Set((novas.includes(maquinaId) ? evento.dias : diasNovos).map((d) => d.data))
     const emComum = outro.dias
       .map((d) => d.data)
       .filter((d) => datas.has(d))
@@ -725,7 +738,7 @@ export class Repositorio {
     const cliente = this.obterCliente(outro.clienteId)?.nome
     throw new ErroApi(
       409,
-      `A máquina ${maquinas.get(maquinaId)?.identificacao ?? ''} já está no evento #${String(outro.codigo).padStart(4, '0')} ${outro.nome}${cliente ? ` (${cliente})` : ''} em ${emComum.join(', ')}. Escolha outra máquina.`,
+      `A máquina ${maquinas.get(maquinaId)?.identificacao ?? ''} já está no evento #${String(outro.codigo).padStart(4, '0')} ${outro.nome}${cliente ? ` (${cliente})` : ''} em ${emComum.join(', ')}. ${saida}`,
       { conflitos: conflitos.map(([id, evs]) => ({ maquinaId: id, eventos: evs.map((e) => e.id) })) },
     )
   }
