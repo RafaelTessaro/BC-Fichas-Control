@@ -10,4 +10,4 @@ export class ErroApi extends Error {
   }
 }
 
-export const naoEncontrado = (oQue: string) => new ErroApi(404, `${oQue} não encontrado.`)
+export const naoEncontrado = (oQue: string, genero: 'o' | 'a' = 'o') => new ErroApi(404, `${oQue} não encontrad${genero}.`)

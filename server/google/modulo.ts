@@ -178,8 +178,15 @@ export function criarModuloGoogle(ctx: Contexto, opcoes: OpcoesModuloGoogle = {}
     },
 
     clienteSalvo(cliente, anterior) {
-      // Só o nome e o telefone do cliente aparecem nos eventos do Google (ver mapeamento.ts)
-      if (cliente.nome === anterior.nome && cliente.telefone === anterior.telefone) return
+      // Nome, telefone e cidade do cliente aparecem nos eventos do Google (a cidade dele vale para os
+      // eventos sem cidade própria; ver mapeamento.ts)
+      if (
+        cliente.nome === anterior.nome &&
+        cliente.telefone === anterior.telefone &&
+        (cliente.cidade ?? '').trim() === (anterior.cidade ?? '').trim()
+      ) {
+        return
+      }
       let marcados = 0
       for (const e of ctx.repo.listarEventosBrutos()) {
         if (e.clienteId !== cliente.id) continue

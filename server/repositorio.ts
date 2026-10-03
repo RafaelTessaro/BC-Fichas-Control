@@ -19,6 +19,7 @@ import {
   chaveIdentificacao,
   conflitosMaquinas,
   datasOcupadas,
+  listaDatas,
   ordenarMaquinas,
   planoAjuste,
   STATUS_MAQUINA_LISTA,
@@ -301,6 +302,8 @@ export class Repositorio {
       dataPagamento: '',
       status: 'EM_ABERTO',
       programacao: 'NAO_INICIADA',
+      // A cópia é um evento novo: vale a cidade do cliente (o formulário não tem mais o campo)
+      cidade: '',
     })
   }
 
@@ -367,7 +370,7 @@ export class Repositorio {
     const dados = validar(normalizarMaquina(entrada))
     const { maquina, anterior, rev } = transacao(this.db, () => {
       const atual = this.obterMaquina(id)
-      if (!atual) throw naoEncontrado('Máquina')
+      if (!atual) throw naoEncontrado('Máquina', 'a')
       this.verificarVersao(atual, versaoEsperada, 'maquina')
       this.verificarIdentificacaoUnica(dados.identificacao, id)
       const maquina: Maquina = { ...atual, ...dados, versao: atual.versao + 1, atualizadoEm: agora() }
@@ -382,7 +385,7 @@ export class Repositorio {
   /** Só apaga máquinas sem histórico; as outras devem ser desativadas (o histórico fica). */
   excluirMaquina(id: string) {
     const rev = transacao(this.db, () => {
-      if (!this.obterMaquina(id)) throw naoEncontrado('Máquina')
+      if (!this.obterMaquina(id)) throw naoEncontrado('Máquina', 'a')
       const historico = this.historicoMaquina(id)
       if (historico) throw new ErroApi(409, `Esta máquina tem histórico (${historico}). Desative-a em vez de excluir.`)
       this.db.prepare('DELETE FROM maquinas WHERE id = ?').run(id)
@@ -406,7 +409,15 @@ export class Repositorio {
     const mensagens: MensagemTempoReal[] = []
     const resultado = transacao(this.db, () => {
       const maquinas = this.listarMaquinas()
-      const plano = planoAjuste(maquinas, this.listarEventosBrutos(), this.listarOrdens(), tipo, quantidade, hojeLocalIso())
+      const plano = planoAjuste(
+        maquinas,
+        this.listarEventosBrutos(),
+        this.listarOrdens(),
+        tipo,
+        quantidade,
+        hojeLocalIso(),
+        this.listarReclamacoes(),
+      )
       if (plano.criar.length > LIMITES.lote) {
         throw new ErroApi(400, `Cadastre no máximo ${LIMITES.lote} máquinas de uma vez.`)
       }
@@ -464,7 +475,7 @@ export class Repositorio {
     const statusMaquina = statusMaquinaPedido(entrada)
     const { ordem, maquina, rev, revMaquina } = transacao(this.db, () => {
       const atual = this.obterOrdem(id)
-      if (!atual) throw naoEncontrado('Ordem de serviço')
+      if (!atual) throw naoEncontrado('Manutenção', 'a')
       this.verificarVersao(atual, versaoEsperada, 'os')
       const maquina = this.mudarStatusMaquina(this.exigirMaquina(dados.maquinaId), statusMaquina)
       const ordem: OrdemServico = { ...atual, ...dados, versao: atual.versao + 1, atualizadoEm: agora() }
@@ -479,7 +490,7 @@ export class Repositorio {
 
   excluirOrdem(id: string) {
     const rev = transacao(this.db, () => {
-      if (!this.obterOrdem(id)) throw naoEncontrado('Ordem de serviço')
+      if (!this.obterOrdem(id)) throw naoEncontrado('Manutenção', 'a')
       this.db.prepare('DELETE FROM ordens_servico WHERE id = ?').run(id)
       return this.incrementarRevisao()
     })
@@ -507,7 +518,7 @@ export class Repositorio {
     const dados = validar(normalizarReclamacao(entrada))
     const { reclamacao, rev } = transacao(this.db, () => {
       const atual = this.obterReclamacao(id)
-      if (!atual) throw naoEncontrado('Reclamação')
+      if (!atual) throw naoEncontrado('Reclamação', 'a')
       this.verificarVersao(atual, versaoEsperada, 'reclamacao')
       this.exigirMaquina(dados.maquinaId)
       // Evento que foi excluído depois continua aceito na edição (é o que já estava gravado)
@@ -524,7 +535,7 @@ export class Repositorio {
 
   excluirReclamacao(id: string) {
     const rev = transacao(this.db, () => {
-      if (!this.obterReclamacao(id)) throw naoEncontrado('Reclamação')
+      if (!this.obterReclamacao(id)) throw naoEncontrado('Reclamação', 'a')
       this.db.prepare('DELETE FROM reclamacoes WHERE id = ?').run(id)
       return this.incrementarRevisao()
     })
@@ -903,14 +914,12 @@ export class Repositorio {
     const outro = outros[0]
     // Só as datas que causam a recusa (para a que já estava, os dias acrescentados)
     const datas = new Set(novas.includes(maquinaId) ? ocupados : diasNovos)
-    const emComum = datasOcupadas(outro)
-      .filter((d) => datas.has(d))
-      .sort()
-      .map((d) => `${d.slice(8, 10)}/${d.slice(5, 7)}`)
+    // Resumida como na tela ("07/11, 08/11, 09/11 e mais 20 dias"): com período corrido podem ser muitas
+    const emComum = listaDatas(datasOcupadas(outro).filter((d) => datas.has(d)))
     const cliente = this.obterCliente(outro.clienteId)?.nome
     throw new ErroApi(
       409,
-      `A máquina ${maquinas.get(maquinaId)?.identificacao ?? ''} já está no evento #${String(outro.codigo).padStart(4, '0')} ${outro.nome}${cliente ? ` (${cliente})` : ''} em ${emComum.join(', ')}. ${saida}`,
+      `A máquina ${maquinas.get(maquinaId)?.identificacao ?? ''} já está no evento #${String(outro.codigo).padStart(4, '0')} ${outro.nome}${cliente ? ` (${cliente})` : ''} em ${emComum}. ${saida}`,
       { conflitos: conflitos.map(([id, evs]) => ({ maquinaId: id, eventos: evs.map((e) => e.id) })) },
     )
   }

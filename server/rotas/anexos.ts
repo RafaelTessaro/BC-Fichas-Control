@@ -1,8 +1,11 @@
 // Arquivos anexados aos eventos (prints da conversa, logo, cardápio, PDF…). Ficam no disco do
 // servidor, em <pasta de dados>/anexos/<evento>/<arquivo>; o banco guarda nome, tipo e tamanho.
+// Os arquivos de eventos excluídos ou que saem numa restauração/limpeza não são apagados: vão para
+// <pasta de dados>/anexos-removidos/<data>/<evento>, e voltam sozinhos se o evento voltar (ex.: ao
+// restaurar uma cópia do banco).
 
 import { createHash } from 'node:crypto'
-import { createReadStream, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Anexo, Evento } from '#shared/tipos.ts'
@@ -59,19 +62,44 @@ function disposicao(tipo: 'inline' | 'attachment', nome: string) {
 
 export async function rotasAnexos(app: FastifyInstance, { repo, pastaDados }: Contexto) {
   const pasta = join(pastaDados, 'anexos')
+  const removidos = join(pastaDados, 'anexos-removidos')
   const caminho = (a: Pick<Anexo, 'eventoId' | 'id'>) => join(pasta, nomePasta(a.eventoId), a.id)
 
-  // Apaga do disco os arquivos de eventos excluídos ou que sumiram numa restauração de backup
+  /** Tira a pasta do evento de "anexos" sem apagar nada (vai para anexos-removidos/<data>). */
+  function guardar(nome: string) {
+    const origem = join(pasta, nome)
+    if (!existsSync(origem)) return
+    const carimbo = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')
+    let destino = join(removidos, carimbo, nome)
+    for (let n = 2; existsSync(destino); n++) destino = join(removidos, `${carimbo}-${n}`, nome)
+    mkdirSync(join(destino, '..'), { recursive: true })
+    renameSync(origem, destino)
+  }
+
+  /** Arquivo de um evento que voltou (cópia do banco restaurada): traz de anexos-removidos, o mais recente. */
+  function recuperar(a: Anexo): string | null {
+    const destino = caminho(a)
+    if (existsSync(destino)) return destino
+    if (!existsSync(removidos)) return null
+    for (const data of readdirSync(removidos).sort().reverse()) {
+      const guardado = join(removidos, data, nomePasta(a.eventoId), a.id)
+      if (!existsSync(guardado)) continue
+      mkdirSync(join(destino, '..'), { recursive: true })
+      renameSync(guardado, destino)
+      return destino
+    }
+    return null
+  }
+
+  // Eventos excluídos ou que saíram numa restauração/limpeza: os arquivos vão para anexos-removidos
   const limpeza: ExtensaoRepositorio = {
     eventoExcluido(evento: Evento) {
-      rmSync(join(pasta, nomePasta(evento.id)), { recursive: true, force: true })
+      guardar(nomePasta(evento.id))
     },
     dadosSubstituidos(eventos: Evento[]) {
       if (!existsSync(pasta)) return
       const ficam = new Set(eventos.map((e) => nomePasta(e.id)))
-      for (const nome of readdirSync(pasta)) {
-        if (!ficam.has(nome)) rmSync(join(pasta, nome), { recursive: true, force: true })
-      }
+      for (const nome of readdirSync(pasta)) if (!ficam.has(nome)) guardar(nome)
     },
   }
   repo.registrarExtensao(limpeza)
@@ -99,8 +127,8 @@ export async function rotasAnexos(app: FastifyInstance, { repo, pastaDados }: Co
   app.get('/api/anexos/:id', async (req: ComId, reply) => {
     const anexo = repo.obterAnexo(req.params.id)
     if (!anexo) throw new ErroApi(404, 'Arquivo não encontrado.')
-    const arquivo = caminho(anexo)
-    if (!existsSync(arquivo)) throw new ErroApi(404, 'O arquivo não está mais no servidor.')
+    const arquivo = recuperar(anexo)
+    if (!arquivo) throw new ErroApi(404, 'O arquivo não está mais no servidor.')
     const naTela = TIPOS_NA_TELA.has(anexo.tipo) && req.query.baixar === undefined
     reply.header(
       'Content-Type',

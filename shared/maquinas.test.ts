@@ -231,6 +231,8 @@ describe('período corrido (as máquinas ficam com o cliente entre os dias de us
   it('programação padrão dos eventos antigos: concluída no passado, não iniciada no futuro', () => {
     expect(programacaoPadrao(ev('a', ['2026-09-01'], []), '2026-10-02')).toBe('CONCLUIDA')
     expect(programacaoPadrao(ev('a', ['2026-11-01'], []), '2026-10-02')).toBe('NAO_INICIADA')
-    expect(programacaoPadrao(ev('a', ['2026-11-01'], [], { status: 'CANCELADO' }), '2026-10-02')).toBe('CONCLUIDA')
+    // Cancelado que ainda vai acontecer pode ser reativado: a programação continua por fazer
+    expect(programacaoPadrao(ev('a', ['2026-11-01'], [], { status: 'CANCELADO' }), '2026-10-02')).toBe('NAO_INICIADA')
+    expect(programacaoPadrao(ev('a', ['2026-09-01'], [], { status: 'CANCELADO' }), '2026-10-02')).toBe('CONCLUIDA')
   })
 })

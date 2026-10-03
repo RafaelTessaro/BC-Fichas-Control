@@ -113,6 +113,7 @@ export function DisponibilidadeMaquinas() {
   const maquinas = useDados((s) => s.maquinas)
   const eventos = useDados((s) => s.eventos)
   const ordens = useDados((s) => s.ordens)
+  const reclamacoes = useDados((s) => s.reclamacoes)
   const config = useDados((s) => s.config)
   const ajustarQuantidade = useDados((s) => s.ajustarQuantidade)
   const situacoes = useSituacoes()
@@ -129,9 +130,9 @@ export function DisponibilidadeMaquinas() {
   const hoje = useHoje()
   const planos = useMemo(() => {
     return TIPOS_MAQUINA.filter((t) => rascunho[t] !== null && rascunho[t] !== cap[t]).map((t) =>
-      planoAjuste(maquinas, eventos, ordens, t, rascunho[t]!, hoje),
+      planoAjuste(maquinas, eventos, ordens, t, rascunho[t]!, hoje, reclamacoes),
     )
-  }, [rascunho, cap, maquinas, eventos, ordens, hoje])
+  }, [rascunho, cap, maquinas, eventos, ordens, hoje, reclamacoes])
   const alterado = planos.length > 0
   const bloqueado = planos.some((p) => p.faltam > 0 || p.criar.length > LIMITES.lote)
 

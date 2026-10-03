@@ -8,6 +8,7 @@ import type {
   Evento,
   Maquina,
   OrdemServico,
+  Reclamacao,
   StatusMaquina,
   StatusOS,
   StatusProgramacao,
@@ -163,7 +164,21 @@ export function diasOcupados(e: EventoOcupacao): DiaOcupado[] {
   for (let data = datas[0], n = 0; data <= datas[datas.length - 1] && n < 800; data = diaSeguinte(data), n++) {
     lista.push({ data, maquinas: maior, uso: uso.has(data) })
   }
+  // Período absurdo (mais de 800 dias): os dias de uso depois do limite continuam contando
+  const ultimo = lista[lista.length - 1].data
+  for (const data of datas) if (data > ultimo) lista.push({ data, maquinas: maior, uso: true })
   return lista
+}
+
+/** "11/10" a partir de "2026-10-11". */
+export const dataCurtinha = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`
+
+/** "11/10", "11/10 e 12/10", "11/10, 12/10 e 13/10", "11/10, 12/10, 13/10 e mais 2 dias". */
+export function listaDatas(datas: string[]): string {
+  const curtas = [...new Set(datas)].sort().map(dataCurtinha)
+  if (curtas.length <= 1) return curtas.join('')
+  if (curtas.length > 4) return `${curtas.slice(0, 3).join(', ')} e mais ${curtas.length - 3} dias`
+  return `${curtas.slice(0, -1).join(', ')} e ${curtas[curtas.length - 1]}`
 }
 
 /** Só as datas de `diasOcupados`. */
@@ -291,7 +306,7 @@ export interface PlanoAjuste {
   criar: string[]
   /** Máquinas sem nenhum histórico: são apagadas. */
   excluir: Maquina[]
-  /** Máquinas com histórico (O.S. ou eventos): ficam desativadas, com o histórico preservado. */
+  /** Máquinas com histórico (manutenções, reclamações ou eventos): ficam desativadas, com o histórico preservado. */
   desativar: Maquina[]
   /** Quantas não puderam ser retiradas (em manutenção, ou com eventos hoje ou no futuro). */
   faltam: number
@@ -310,6 +325,8 @@ export function planoAjuste(
   tipo: TipoMaquina,
   alvo: number,
   hoje: string,
+  /** Reclamações de clientes: também são histórico (a máquina com reclamação é desativada, não apagada). */
+  reclamacoes: Array<Pick<Reclamacao, 'maquinaId'>> = [],
 ): PlanoAjuste {
   const ativas = maquinas.filter((m) => m.tipo === tipo && m.status !== 'DESATIVADA')
   const plano: PlanoAjuste = {
@@ -330,7 +347,7 @@ export function planoAjuste(
   if (!sobrando) return plano
   // Histórico inclui eventos cancelados: a máquina continua referenciada neles
   const usadas = new Set(eventos.flatMap((e) => e.maquinasIds))
-  const comOS = new Set(ordens.map((o) => o.maquinaId))
+  const comOS = new Set([...ordens.map((o) => o.maquinaId), ...reclamacoes.map((r) => r.maquinaId)])
   const ocupadaDeHojeEmDiante = (id: string) =>
     eventos.some((e) => {
       if (e.status === 'CANCELADO' || !e.maquinasIds.includes(id)) return false

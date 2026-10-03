@@ -333,11 +333,12 @@ export function observacoesComCabecalhoAntigo(cabecalho: unknown, nome: string, 
 }
 
 /**
- * Programação de um evento gravado antes desse controle: concluída nos eventos que já passaram,
- * terminaram ou foram cancelados; "não iniciada" nos que ainda vão acontecer.
+ * Programação de um evento gravado antes desse controle: concluída nos eventos finalizados ou que
+ * já passaram; "não iniciada" nos que ainda vão acontecer — inclusive os cancelados, que podem ser
+ * reativados (as listas de programação não mostram eventos cancelados).
  */
 export function programacaoPadrao(e: Pick<Evento, 'dias' | 'status'>, hoje = hojeLocalIso()): StatusProgramacao {
-  if (e.status === 'FINALIZADO' || e.status === 'CANCELADO') return 'CONCLUIDA'
+  if (e.status === 'FINALIZADO') return 'CONCLUIDA'
   const p = periodoEvento(e)
   return p && p.fim < hoje ? 'CONCLUIDA' : 'NAO_INICIADA'
 }

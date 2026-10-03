@@ -2,7 +2,7 @@
 // datas), com o motivo em texto. Usado no cartão "Máquinas enviadas" e na conferência antes de
 // salvar. Segue as regras do servidor (verificarMaquinasLivres em server/repositorio.ts).
 
-import { datasOcupadas, maquinasOcupadas, type EventoOcupacao } from '#shared/maquinas.ts'
+import { datasOcupadas, listaDatas, maquinasOcupadas, type EventoOcupacao } from '#shared/maquinas.ts'
 import type { Cliente, DiaEvento, Evento, Maquina } from '#shared/tipos.ts'
 import { codigoEvento } from './format'
 
@@ -16,16 +16,7 @@ export interface Bloqueio {
   texto: string
 }
 
-/** "11/10" a partir de "2026-10-11". */
-const dataCurtinha = (d: string) => `${d.slice(8, 10)}/${d.slice(5, 7)}`
-
-/** "11/10", "11/10 e 12/10", "11/10, 12/10 e 13/10", "11/10, 12/10, 13/10 e mais 2 dias". */
-export function listaDatas(datas: string[]): string {
-  const curtas = [...new Set(datas)].sort().map(dataCurtinha)
-  if (curtas.length <= 1) return curtas.join('')
-  if (curtas.length > 4) return `${curtas.slice(0, 3).join(', ')} e mais ${curtas.length - 3} dias`
-  return `${curtas.slice(0, -1).join(', ')} e ${curtas[curtas.length - 1]}`
-}
+export { listaDatas } from '#shared/maquinas.ts'
 
 /** Datas ocupadas pelo outro evento (com período corrido, também as do meio) que também estão em `datas`. */
 export const datasEmComum = (outro: EventoOcupacao, datas: Set<string>) => datasOcupadas(outro).filter((d) => datas.has(d))

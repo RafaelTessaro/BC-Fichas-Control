@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import nodemailer from 'nodemailer'
@@ -242,24 +242,51 @@ describe('arquivos anexados ao evento', () => {
     expect((await dados()).anexos).toHaveLength(1)
   })
 
-  it('excluir o evento apaga os arquivos; restaurar um backup tira os de eventos que não existem mais', async () => {
+  it('excluir o evento ou restaurar um backup sem ele guarda os arquivos em anexos-removidos (nada é apagado)', async () => {
     const cli = await criarCliente()
     const a = (await req<Evento>('POST', '/api/eventos', eventoCom(cli.id, ['2099-09-01']), 201)).json
     const b = (await req<Evento>('POST', '/api/eventos', eventoCom(cli.id, ['2099-09-02']), 201)).json
     await enviarArquivo(a.id, png, 'a.png', 'image/png')
-    const backup = (await req<Backup>('GET', '/api/backup')).json // só com o evento a e b
+    const backup = (await req<Backup>('GET', '/api/backup')).json
     await enviarArquivo(b.id, png, 'b.png', 'image/png')
     expect(readdirSync(join(pasta, 'anexos')).sort()).toEqual([a.id, b.id].sort())
 
     await req('DELETE', `/api/eventos/${b.id}`, undefined, 204)
     expect(existsSync(join(pasta, 'anexos', b.id))).toBe(false)
     expect((await dados()).anexos.map((x) => x.eventoId)).toEqual([a.id])
+    const guardados = () => readdirSync(join(pasta, 'anexos-removidos')).flatMap((d) => readdirSync(join(pasta, 'anexos-removidos', d)))
+    expect(guardados()).toEqual([b.id])
 
-    // Backup sem o evento a: o arquivo dele sai junto
+    // Backup sem o evento a: o registro sai e o arquivo vai para anexos-removidos
     await req('POST', '/api/backup/restaurar', { ...backup, eventos: backup.eventos.filter((e) => e.id !== a.id) }, 200)
     expect((await dados()).anexos).toEqual([])
     expect(existsSync(join(pasta, 'anexos', a.id))).toBe(false)
+    expect(guardados().sort()).toEqual([a.id, b.id].sort())
   })
+
+  it('restaurar a cópia do banco feita antes de apagar tudo traz os arquivos de volta', async () => {
+    await app.close()
+    const banco = join(pasta, 'bc-fichas.db')
+    ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: banco, pastaEstatica: null, transporteEmail: transporteTeste }))
+    const cli = await criarCliente()
+    const e = (await req<Evento>('POST', '/api/eventos', eventoCom(cli.id, ['2099-09-01']), 201)).json
+    const anexo = (await enviarArquivo(e.id, png, 'logo.png', 'image/png')).json() as Anexo
+    // A cópia automática que o servidor faz antes de apagar tudo
+    const { backups } = (await req<{ backups: Array<{ arquivo: string }> }>('POST', '/api/backups', undefined, 200)).json
+    await req('POST', '/api/limpar', { confirmacao: 'APAGAR' }, 200)
+    expect((await app.inject({ method: 'GET', url: `/api/anexos/${anexo.id}` })).statusCode).toBe(404)
+    await app.close()
+
+    // Volta a cópia (como o restaurar-copia.ps1): o registro volta e o arquivo vem de anexos-removidos
+    for (const extra of ['-wal', '-shm']) rmSync(banco + extra, { force: true })
+    copyFileSync(join(pasta, 'backups', backups[0].arquivo), banco)
+    ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: banco, pastaEstatica: null, transporteEmail: transporteTeste }))
+    const ver = await app.inject({ method: 'GET', url: `/api/anexos/${anexo.id}` })
+    expect(ver.statusCode).toBe(200)
+    expect(ver.rawPayload.equals(png)).toBe(true)
+    expect(existsSync(join(pasta, 'anexos', e.id, anexo.id))).toBe(true)
+  })
+
 })
 
 describe('envio de e-mail', () => {
@@ -278,8 +305,24 @@ describe('envio de e-mail', () => {
     const salvo = await req<Record<string, unknown>>('PUT', '/api/email/config', config, 200)
     expect(salvo.json).toMatchObject({ servidor: 'smtp.exemplo.com', senhaDefinida: true, configurado: true })
     expect('senha' in salvo.json).toBe(false)
-    const semSenha = await req<Record<string, unknown>>('PUT', '/api/email/config', { ...config, senha: '', porta: 2525 }, 200)
-    expect(semSenha.json).toMatchObject({ porta: 2525, senhaDefinida: true })
+    const semSenha = await req<Record<string, unknown>>(
+      'PUT',
+      '/api/email/config',
+      { ...config, senha: '', remetenteNome: 'Recibos' },
+      200,
+    )
+    expect(semSenha.json).toMatchObject({ remetenteNome: 'Recibos', senhaDefinida: true })
+    // Trocar servidor, porta, usuário ou tirar a segurança exige a senha de novo (senão alguém da
+    // rede apontaria o envio para um servidor dele e receberia a senha gravada)
+    for (const troca of [{ servidor: 'smtp.atacante.com' }, { porta: 2525 }, { usuario: 'outro@x.com' }, { seguranca: 'NENHUMA' }]) {
+      const r = await req<{ erro: string }>('PUT', '/api/email/config', { ...config, ...troca, senha: '' })
+      expect(r.status, JSON.stringify(troca)).toBe(400)
+      expect(r.json.erro).toMatch(/digite a senha de novo/)
+    }
+    // A senha fica num arquivo próprio, fora do banco (e das cópias de backup)
+    expect(readFileSync(join(pasta, 'email.json'), 'utf8')).toContain('segredo')
+    const copia = (await req<{ backups: Array<{ arquivo: string }> }>('POST', '/api/backups', undefined, 200)).json.backups[0]
+    expect(readFileSync(join(pasta, 'backups', copia.arquivo)).includes('segredo')).toBe(false)
     expect((await req<{ erro: string }>('PUT', '/api/email/config', { ...config, servidor: '' })).json.erro).toMatch(/servidor/)
     expect(JSON.stringify((await dados()).config)).not.toContain('segredo')
     expect(JSON.stringify((await req('GET', '/api/backup')).json)).not.toContain('segredo')
@@ -316,6 +359,13 @@ describe('envio de e-mail', () => {
     expect(Buffer.from(anexos[0].content, 'base64').toString()).toBe('%PDF-1.4 teste')
 
     expect((await req('POST', '/api/email/enviar', { para: 'nao-e-email', assunto: 'x' })).status).toBe(400)
+    // Só o PDF gerado pelo sistema: nada de executável, HTML ou vários anexos
+    const exe = { nome: 'boleto.pdf.exe', tipo: 'application/x-msdownload', conteudo: Buffer.from('MZ').toString('base64') }
+    expect((await req('POST', '/api/email/enviar', { para: 'a@b.com', assunto: 'x', anexos: [exe] })).status).toBe(400)
+    const falso = { nome: 'boleto.pdf', tipo: 'application/pdf', conteudo: Buffer.from('<html>').toString('base64') }
+    expect((await req('POST', '/api/email/enviar', { para: 'a@b.com', assunto: 'x', anexos: [falso] })).status).toBe(400)
+    const doisPdf = Array(2).fill({ nome: 'a.pdf', tipo: 'application/pdf', conteudo: pdf })
+    expect((await req('POST', '/api/email/enviar', { para: 'a@b.com', assunto: 'x', anexos: doisPdf })).status).toBe(400)
     expect((await req('POST', '/api/email/enviar', { para: 'a@b.com', assunto: '' })).status).toBe(400)
 
     falharEnvio = Object.assign(new Error('Invalid login'), { code: 'EAUTH' })
@@ -324,8 +374,18 @@ describe('envio de e-mail', () => {
     expect(recusado.json.erro).toMatch(/senha de app/)
   })
 
-  it('mensagens de erro em português', () => {
+  it('mensagens de erro em português, sem repassar a resposta de outro serviço', () => {
     expect(mensagemErroEmail({ code: 'ETIMEDOUT' })).toMatch(/Não foi possível conectar/)
     expect(mensagemErroEmail({ responseCode: 550 })).toMatch(/recusou o endereço/)
+    expect(mensagemErroEmail({ code: 'EPROTOCOL', message: 'Invalid greeting. response=SSH-2.0-OpenSSH' })).not.toMatch(/SSH/)
+    expect(mensagemErroEmail({ code: 'EXYZ', message: 'segredo interno' })).not.toMatch(/segredo/)
+  })
+
+  it('no máximo 30 e-mails por hora', async () => {
+    await req('PUT', '/api/email/config', config, 200)
+    for (let i = 0; i < 30; i++) await req('POST', '/api/email/enviar', { para: 'a@b.com', assunto: `n${i}` }, 200)
+    const r = await req<{ erro: string }>('POST', '/api/email/enviar', { para: 'a@b.com', assunto: 'mais um' })
+    expect(r.status).toBe(429)
+    expect(r.json.erro).toMatch(/30 e-mails por hora/)
   })
 })
