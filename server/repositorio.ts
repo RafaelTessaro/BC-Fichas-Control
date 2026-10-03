@@ -10,6 +10,7 @@ import {
   normalizarConfig,
   normalizarEvento,
   normalizarMaquina,
+  normalizarNovoContrato,
   normalizarOS,
   normalizarPatch,
   normalizarReclamacao,
@@ -31,12 +32,15 @@ import {
   STATUS_MAQUINA_LISTA,
   TIPOS_MAQUINA,
 } from '#shared/maquinas.ts'
+import { codigoContrato, montarDadosContrato } from '#shared/contrato.ts'
 import { gerarDadosExemplo, SERVICOS_EXEMPLO } from '#shared/seed.ts'
 import type {
   Anexo,
+  ArquivoContrato,
   Backup,
   Cliente,
   Configuracoes,
+  Contrato,
   DadosCompletos,
   Evento,
   Maquina,
@@ -54,6 +58,7 @@ type Linha = { id: string; dados: string; versao: number; criado_em: string; atu
 type LinhaEvento = Linha & { codigo: number; cliente_id: string }
 type LinhaOS = Linha & { numero: number; maquina_id: string }
 type LinhaReclamacao = Linha & { maquina_id: string; evento_id: string }
+type LinhaContrato = Linha & { numero: number; evento_id: string; cliente_id: string }
 type LinhaAnexo = { id: string; evento_id: string; nome: string; tipo: string; tamanho: number; criado_em: string }
 
 /** Arquivos por evento (limite de segurança). */
@@ -163,6 +168,16 @@ export class Repositorio {
     return l && this.paraReclamacao(l)
   }
 
+  listarContratos(): Contrato[] {
+    const linhas = this.db.prepare('SELECT * FROM contratos ORDER BY numero DESC').all() as LinhaContrato[]
+    return linhas.map((l) => this.paraContrato(l))
+  }
+
+  obterContrato(id: string): Contrato | undefined {
+    const l = this.db.prepare('SELECT * FROM contratos WHERE id = ?').get(id) as LinhaContrato | undefined
+    return l && this.paraContrato(l)
+  }
+
   listarAnexos(eventoId?: string): Anexo[] {
     const linhas = (
       eventoId
@@ -185,6 +200,7 @@ export class Repositorio {
       ordens: this.listarOrdens(),
       reclamacoes: this.listarReclamacoes(),
       anexos: this.listarAnexos(),
+      contratos: this.listarContratos(),
       config: this.obterConfig(),
       revisao: this.revisao(),
     }
@@ -631,6 +647,135 @@ export class Repositorio {
     this.publicar({ revisao: rev, tipo: 'reclamacao', acao: 'excluido', id })
   }
 
+  // ---- Contratos de locação --------------------------------------------------
+
+  /**
+   * Gera o contrato de um evento com os dados de agora (congelados). Um contrato anterior do
+   * mesmo evento que ainda esperava a assinatura é cancelado ("substituído").
+   */
+  criarContrato(entrada: unknown, hoje = hojeLocalIso()): Contrato {
+    const pedido = validar(normalizarNovoContrato(entrada))
+    const { contrato, substituidos, rev } = transacao(this.db, () => {
+      const evento = this.obterEventoBruto(pedido.eventoId)
+      if (!evento) throw naoEncontrado('Evento')
+      if (evento.status === 'CANCELADO') throw new ErroApi(400, 'O evento está cancelado: reative-o antes de gerar o contrato.')
+      const dados = montarDadosContrato({
+        evento,
+        cliente: this.obterCliente(evento.clienteId),
+        maquinas: this.listarMaquinas(),
+        config: this.obterConfig(),
+        entrada: pedido,
+        hoje,
+      })
+      const ts = agora()
+      const numero = this.proximoContrato()
+      const contrato: Contrato = {
+        id: novoId(),
+        versao: 1,
+        numero,
+        eventoId: evento.id,
+        clienteId: evento.clienteId,
+        status: 'AGUARDANDO',
+        assinadoEm: '',
+        motivoCancelamento: '',
+        dados,
+        arquivo: null,
+        criadoEm: ts,
+        atualizadoEm: ts,
+      }
+      this.gravarContrato(contrato, true)
+      const substituidos: Contrato[] = []
+      for (const antigo of this.listarContratos()) {
+        if (antigo.eventoId !== evento.id || antigo.id === contrato.id || antigo.status !== 'AGUARDANDO') continue
+        const cancelado: Contrato = {
+          ...antigo,
+          status: 'CANCELADO',
+          motivoCancelamento: `Substituído pelo contrato ${codigoContrato(numero)}.`,
+          versao: antigo.versao + 1,
+          atualizadoEm: ts,
+        }
+        this.gravarContrato(cancelado, false)
+        substituidos.push(cancelado)
+      }
+      return { contrato, substituidos, rev: this.incrementarRevisao() }
+    })
+    for (const c of substituidos) this.publicar({ revisao: rev, tipo: 'contrato', acao: 'salvo', dado: c })
+    this.publicar({ revisao: rev, tipo: 'contrato', acao: 'salvo', dado: contrato })
+    return contrato
+  }
+
+  /**
+   * Muda a situação do contrato: "assinar" (com a data, padrão hoje), "cancelar" (com o motivo)
+   * ou "reabrir" (volta a esperar a assinatura, ex.: marcado por engano).
+   */
+  alterarContrato(id: string, entrada: unknown, hoje = hojeLocalIso()): Contrato {
+    const r = (entrada && typeof entrada === 'object' ? entrada : {}) as Record<string, unknown>
+    const acao = r.acao
+    if (acao !== 'assinar' && acao !== 'cancelar' && acao !== 'reabrir') throw new ErroApi(400, 'Ação inválida.')
+    const { contrato, rev } = transacao(this.db, () => {
+      const atual = this.obterContrato(id)
+      if (!atual) throw naoEncontrado('Contrato')
+      const versao = typeof r.versao === 'number' ? r.versao : undefined
+      this.verificarVersao(atual, versao, 'contrato')
+      const data = typeof r.data === 'string' && dataIsoValida(r.data) ? r.data : hoje
+      const motivo = typeof r.motivo === 'string' ? r.motivo.trim().slice(0, LIMITES.texto) : ''
+      const mudanca: Partial<Contrato> =
+        acao === 'assinar'
+          ? { status: 'ASSINADO', assinadoEm: data, motivoCancelamento: '' }
+          : acao === 'cancelar'
+            ? { status: 'CANCELADO', motivoCancelamento: motivo || 'Cancelado.' }
+            : { status: 'AGUARDANDO', assinadoEm: '', motivoCancelamento: '' }
+      const contrato: Contrato = { ...atual, ...mudanca, versao: atual.versao + 1, atualizadoEm: agora() }
+      this.gravarContrato(contrato, false)
+      return { contrato, rev: this.incrementarRevisao() }
+    })
+    this.publicar({ revisao: rev, tipo: 'contrato', acao: 'salvo', dado: contrato })
+    return contrato
+  }
+
+  /**
+   * Guarda o arquivo do contrato assinado (foto ou PDF; o conteúdo é gravado por `gravarArquivo`,
+   * dentro da transação). Um contrato que esperava a assinatura passa a assinado.
+   */
+  registrarArquivoContrato(
+    id: string,
+    arquivo: Omit<ArquivoContrato, 'enviadoEm'>,
+    gravarArquivo: (anterior: ArquivoContrato | null) => void,
+    hoje = hojeLocalIso(),
+  ): Contrato {
+    const { contrato, rev } = transacao(this.db, () => {
+      const atual = this.obterContrato(id)
+      if (!atual) throw naoEncontrado('Contrato')
+      gravarArquivo(atual.arquivo)
+      const assina = atual.status === 'AGUARDANDO' ? { status: 'ASSINADO' as const, assinadoEm: hoje } : {}
+      const contrato: Contrato = {
+        ...atual,
+        ...assina,
+        arquivo: { ...arquivo, enviadoEm: agora() },
+        versao: atual.versao + 1,
+        atualizadoEm: agora(),
+      }
+      this.gravarContrato(contrato, false)
+      return { contrato, rev: this.incrementarRevisao() }
+    })
+    this.publicar({ revisao: rev, tipo: 'contrato', acao: 'salvo', dado: contrato })
+    return contrato
+  }
+
+  /** Tira o arquivo assinado do contrato (a situação não muda); devolve o contrato como estava. */
+  removerArquivoContrato(id: string): { contrato: Contrato; anterior: Contrato } {
+    const { contrato, anterior, rev } = transacao(this.db, () => {
+      const anterior = this.obterContrato(id)
+      if (!anterior) throw naoEncontrado('Contrato')
+      if (!anterior.arquivo) throw new ErroApi(404, 'O contrato não tem arquivo assinado.')
+      const contrato: Contrato = { ...anterior, arquivo: null, versao: anterior.versao + 1, atualizadoEm: agora() }
+      this.gravarContrato(contrato, false)
+      return { contrato, anterior, rev: this.incrementarRevisao() }
+    })
+    this.publicar({ revisao: rev, tipo: 'contrato', acao: 'salvo', dado: contrato })
+    return { contrato, anterior }
+  }
+
   // ---- Arquivos anexados aos eventos (o conteúdo fica no disco, ver rotas/anexos.ts) ----
 
   /** Registra um arquivo já gravado no disco. `gravarArquivo` roda dentro da transação. */
@@ -678,9 +823,11 @@ export class Repositorio {
       maquinas: this.listarMaquinas(),
       ordens: this.listarOrdens(),
       reclamacoes: this.listarReclamacoes(),
+      contratos: this.listarContratos(),
       config: this.obterConfig(),
       proximoCodigo: Number(lerMeta(this.db, 'proximo_codigo') ?? 1),
       proximaOS: Number(lerMeta(this.db, 'proxima_os') ?? 1),
+      proximoContrato: Number(lerMeta(this.db, 'proximo_contrato') ?? 1),
     }
   }
 
@@ -712,7 +859,7 @@ export class Repositorio {
     } catch (e) {
       throw new ErroApi(400, (e as Error).message)
     }
-    const resultado = { clientes: 0, eventos: 0, maquinas: 0, ordens: 0, reclamacoes: 0, ignorados: 0 }
+    const resultado = { clientes: 0, eventos: 0, maquinas: 0, ordens: 0, reclamacoes: 0, contratos: 0, ignorados: 0 }
     const novosEventos: Evento[] = []
     const rev = transacao(this.db, () => {
       const existentes = this.listarClientes()
@@ -803,6 +950,24 @@ export class Repositorio {
         this.gravarReclamacao({ ...r, maquinaId: mapaMaquina.get(r.maquinaId) ?? r.maquinaId, eventoId }, true)
         resultado.reclamacoes++
       }
+
+      // Contratos: o mesmo id é ignorado; número repetido ganha um novo (os dados ficam como emitidos)
+      const contratosAgora = this.listarContratos()
+      const idsContratos = new Set(contratosAgora.map((c) => c.id))
+      const numerosContratos = new Set(contratosAgora.map((c) => c.numero))
+      for (const c of [...backup.contratos].sort((a, b) => a.numero - b.numero)) {
+        if (idsContratos.has(c.id)) {
+          resultado.ignorados++
+          continue
+        }
+        const numero = numerosContratos.has(c.numero) ? this.proximoContrato() : c.numero
+        this.gravarContrato({ ...c, numero, clienteId: mapaCliente.get(c.clienteId) ?? c.clienteId }, true)
+        numerosContratos.add(numero)
+        resultado.contratos++
+      }
+      const maiorContrato = Math.max(0, ...numerosContratos)
+      if (Number(lerMeta(this.db, 'proximo_contrato') ?? 1) <= maiorContrato)
+        gravarMeta(this.db, 'proximo_contrato', maiorContrato + 1)
       return this.incrementarRevisao()
     })
     this.publicar({ revisao: rev, tipo: 'tudo', acao: 'recarregar' })
@@ -828,26 +993,30 @@ export class Repositorio {
       maquinas: [],
       ordens: [],
       reclamacoes: [],
+      contratos: [],
       config: this.obterConfig(),
       proximoCodigo: 1,
       proximaOS: 1,
+      proximoContrato: 1,
     })
   }
 
   // ---- Internos --------------------------------------------------------------
 
   private substituirTudo(dados: Omit<Backup, 'app' | 'versao' | 'exportadoEm'>) {
-    const { clientes, eventos, maquinas, ordens, reclamacoes, config } = dados
+    const { clientes, eventos, maquinas, ordens, reclamacoes, contratos, config } = dados
     const anteriores = this.listarEventosBrutos()
     const rev = transacao(this.db, () => {
+      // (os arquivos assinados dos contratos ficam no disco: voltam a valer se o contrato voltar)
       this.db.exec(
-        'DELETE FROM reclamacoes; DELETE FROM ordens_servico; DELETE FROM eventos; DELETE FROM maquinas; DELETE FROM clientes;',
+        'DELETE FROM contratos; DELETE FROM reclamacoes; DELETE FROM ordens_servico; DELETE FROM eventos; DELETE FROM maquinas; DELETE FROM clientes;',
       )
       for (const c of clientes) this.gravarCliente(c, true)
       for (const m of maquinas) this.gravarMaquina(m, true)
       for (const o of ordens) this.gravarOS(o, true)
       for (const e of eventos) this.gravarEvento(e, true)
       for (const r of reclamacoes) this.gravarReclamacao(r, true)
+      for (const c of contratos) this.gravarContrato(c, true)
       // Arquivos de eventos que deixaram de existir saem (o conteúdo é apagado pela extensão de anexos)
       const ficam = new Set(eventos.map((e) => e.id))
       for (const a of this.listarAnexos()) {
@@ -860,6 +1029,8 @@ export class Repositorio {
       gravarMeta(this.db, 'proximo_codigo', Math.max(dados.proximoCodigo, maior + 1))
       const maiorOS = ordens.reduce((m, o) => Math.max(m, o.numero), 0)
       gravarMeta(this.db, 'proxima_os', Math.max(dados.proximaOS, maiorOS + 1))
+      const maiorContrato = contratos.reduce((m, c) => Math.max(m, c.numero), 0)
+      gravarMeta(this.db, 'proximo_contrato', Math.max(dados.proximoContrato, maiorContrato + 1))
       return this.incrementarRevisao()
     })
     this.publicar({ revisao: rev, tipo: 'tudo', acao: 'recarregar' })
@@ -897,7 +1068,7 @@ export class Repositorio {
   private verificarVersao(
     atual: { versao: number },
     esperada: number | undefined,
-    tipo: 'cliente' | 'evento' | 'maquina' | 'os' | 'reclamacao',
+    tipo: 'cliente' | 'evento' | 'maquina' | 'os' | 'reclamacao' | 'contrato',
   ) {
     if (esperada !== undefined && esperada !== atual.versao) {
       const qual = {
@@ -906,8 +1077,9 @@ export class Repositorio {
         maquina: 'Esta máquina',
         os: 'Esta manutenção',
         reclamacao: 'Esta reclamação',
+        contrato: 'Este contrato',
       }[tipo]
-      const genero = tipo === 'cliente' || tipo === 'evento' ? 'alterado' : 'alterada'
+      const genero = tipo === 'cliente' || tipo === 'evento' || tipo === 'contrato' ? 'alterado' : 'alterada'
       throw new ErroApi(409, `${qual} foi ${genero} por outra pessoa enquanto você editava.`, {
         atual: tipo === 'evento' ? this.decorar(atual as Evento) : atual,
       })
@@ -1044,6 +1216,12 @@ export class Repositorio {
     return codigo
   }
 
+  private proximoContrato() {
+    const numero = Number(lerMeta(this.db, 'proximo_contrato') ?? 1)
+    gravarMeta(this.db, 'proximo_contrato', numero + 1)
+    return numero
+  }
+
   private proximaOS() {
     const numero = Number(lerMeta(this.db, 'proxima_os') ?? 1)
     gravarMeta(this.db, 'proxima_os', numero + 1)
@@ -1134,6 +1312,36 @@ export class Repositorio {
       versao: l.versao,
       maquinaId: l.maquina_id,
       eventoId: l.evento_id,
+      criadoEm: l.criado_em,
+      atualizadoEm: l.atualizado_em,
+    }
+  }
+
+  private gravarContrato(c: Contrato, novo: boolean) {
+    const { id, versao, numero, criadoEm, atualizadoEm, ...dados } = c
+    if (novo) {
+      this.db
+        .prepare(
+          'INSERT INTO contratos (id, numero, evento_id, cliente_id, dados, versao, criado_em, atualizado_em) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .run(id, numero, c.eventoId, c.clienteId, JSON.stringify(dados), versao, criadoEm, atualizadoEm)
+    } else {
+      this.db
+        .prepare(
+          'UPDATE contratos SET numero = ?, evento_id = ?, cliente_id = ?, dados = ?, versao = ?, atualizado_em = ? WHERE id = ?',
+        )
+        .run(numero, c.eventoId, c.clienteId, JSON.stringify(dados), versao, atualizadoEm, id)
+    }
+  }
+
+  private paraContrato(l: LinhaContrato): Contrato {
+    return {
+      ...JSON.parse(l.dados),
+      id: l.id,
+      versao: l.versao,
+      numero: l.numero,
+      eventoId: l.evento_id,
+      clienteId: l.cliente_id,
       criadoEm: l.criado_em,
       atualizadoEm: l.atualizado_em,
     }

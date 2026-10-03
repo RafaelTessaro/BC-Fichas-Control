@@ -95,7 +95,7 @@ describe('máquina reserva', () => {
     )
   })
 
-  it('duplicar não leva as máquinas nem o uso das reservas; o backup (versão 5) leva tudo', async () => {
+  it('duplicar não leva as máquinas nem o uso das reservas; o backup (versão 5 em diante) leva tudo', async () => {
     const cli = await criarCliente()
     const p1 = await criarMaquina('P-01')
     const e = (await req<Evento>('POST', '/api/eventos', evento(cli.id, { maquinasIds: [p1.id], reservasIds: [p1.id] }), 201))
@@ -108,7 +108,7 @@ describe('máquina reserva', () => {
     expect(copia.reservasIds).toEqual([])
 
     const backup = (await req<Backup>('GET', '/api/backup')).json
-    expect(backup.versao).toBe(5)
+    expect(backup.versao).toBe(6)
     await req('POST', '/api/limpar', { confirmacao: 'APAGAR' }, 200)
     await req('POST', '/api/backup/restaurar', backup, 200)
     const volta = (await dados()).eventos.find((x) => x.id === e.id)!

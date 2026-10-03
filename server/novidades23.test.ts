@@ -115,7 +115,7 @@ describe('reclamações de clientes', () => {
     const e = (await req<Evento>('POST', '/api/eventos', eventoCom(cli.id, ['2026-09-01'], [p1.id]), 201)).json
     await req('POST', '/api/reclamacoes', { maquinaId: p1.id, eventoId: e.id, descricao: 'Impressão fraca' }, 201)
     const backup = (await req<Backup>('GET', '/api/backup')).json
-    expect(backup.versao).toBe(5)
+    expect(backup.versao).toBe(6)
     expect(backup.reclamacoes).toHaveLength(1)
 
     await req('POST', '/api/limpar', { confirmacao: 'APAGAR' }, 200)

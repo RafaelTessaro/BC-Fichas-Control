@@ -13,6 +13,7 @@ import { criarModuloGoogle } from './google/modulo.ts'
 import { Repositorio } from './repositorio.ts'
 import { criarModuloEmail, type CriarTransporte } from './email.ts'
 import { rotasAnexos } from './rotas/anexos.ts'
+import { rotasContratos } from './rotas/contratos.ts'
 import { rotasConsultas } from './rotas/consultas.ts'
 import { rotasDados } from './rotas/dados.ts'
 import { TempoReal } from './tempoReal.ts'
@@ -145,6 +146,7 @@ export async function criarApp(opcoes: OpcoesApp) {
 
   await rotasDados(app, ctx)
   await rotasAnexos(app, ctx)
+  await rotasContratos(app, ctx)
   await criarModuloEmail(ctx, opcoes.transporteEmail).rotas(app)
   await rotasConsultas(app, ctx)
   await google.rotas(app)

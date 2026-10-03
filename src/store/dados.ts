@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { codigoContrato } from '#shared/contrato.ts'
 import { CONFIG_PADRAO } from '#shared/dominio.ts'
 import { ordenarMaquinas } from '#shared/maquinas.ts'
 import type {
@@ -7,6 +8,7 @@ import type {
   Cliente,
   ClienteInput,
   Configuracoes,
+  Contrato,
   DadosCompletos,
   Evento,
   EventoInput,
@@ -14,6 +16,7 @@ import type {
   Maquina,
   MaquinaInput,
   MensagemTempoReal,
+  NovoContrato,
   OrdemServico,
   OrdemServicoInput,
   Reclamacao,
@@ -43,6 +46,8 @@ interface DadosState {
   reclamacoes: Reclamacao[]
   /** Arquivos anexados aos eventos (só os dados; o conteúdo é baixado pelo `api.urlAnexo`). */
   anexos: Anexo[]
+  /** Contratos de locação, do mais recente (maior número) para o mais antigo. */
+  contratos: Contrato[]
   config: Configuracoes
   /** Última revisão do servidor aplicada nesta tela. */
   revisao: number
@@ -77,6 +82,21 @@ interface DadosState {
   /** Envia um arquivo para o evento (`aoProgresso` de 0 a 1). */
   enviarAnexo: (eventoId: string, arquivo: File | Blob, nome: string, aoProgresso?: (fracao: number) => void) => Promise<Anexo>
   excluirAnexo: (id: string) => Promise<void>
+  /** Gera o contrato do evento (um anterior que esperava a assinatura é substituído). */
+  gerarContrato: (dados: NovoContrato) => Promise<Contrato>
+  alterarContrato: (
+    id: string,
+    mudanca: { acao: 'assinar'; data?: string } | { acao: 'cancelar'; motivo?: string } | { acao: 'reabrir' },
+    versao?: number,
+  ) => Promise<Contrato>
+  /** Guarda a cópia assinada (foto ou PDF); o contrato passa a assinado. */
+  enviarContratoAssinado: (
+    id: string,
+    arquivo: File | Blob,
+    nome: string,
+    aoProgresso?: (fracao: number) => void,
+  ) => Promise<Contrato>
+  removerContratoAssinado: (id: string) => Promise<Contrato>
   salvarConfig: (config: Configuracoes) => Promise<Configuracoes>
   /** Grava a lista de serviços de manutenção cadastrados. */
   salvarServicos: (servicos: string[]) => Promise<Configuracoes>
@@ -102,6 +122,7 @@ function mesclar<T extends { id: string; versao: number }>(lista: T[], item: T):
 
 const mesclarMaquina = (lista: Maquina[], m: Maquina) => ordenarMaquinas(mesclar(lista, m))
 const mesclarOrdem = (lista: OrdemServico[], o: OrdemServico) => mesclar(lista, o).sort((a, b) => b.numero - a.numero)
+const mesclarContrato = (lista: Contrato[], c: Contrato) => mesclar(lista, c).sort((a, b) => b.numero - a.numero)
 const mesclarReclamacao = (lista: Reclamacao[], r: Reclamacao) =>
   mesclar(lista, r).sort((a, b) => b.data.localeCompare(a.data) || b.criadoEm.localeCompare(a.criadoEm))
 /** Arquivos não mudam depois de enviados: só entram (sem repetir) ou saem. */
@@ -135,6 +156,7 @@ export const useDados = create<DadosState>()((set, get) => {
       ordens: d.ordens,
       reclamacoes: d.reclamacoes ?? [],
       anexos: d.anexos ?? [],
+      contratos: d.contratos ?? [],
       config: d.config,
       revisao: d.revisao,
       status: 'pronto',
@@ -190,6 +212,9 @@ export const useDados = create<DadosState>()((set, get) => {
       case 'anexo':
         set({ anexos: msg.acao === 'salvo' ? mesclarAnexo(s.anexos, msg.dado) : s.anexos.filter((a) => a.id !== msg.id) })
         break
+      case 'contrato':
+        set({ contratos: mesclarContrato(s.contratos, msg.dado) })
+        break
       case 'config':
         set({ config: msg.dado })
         break
@@ -207,6 +232,7 @@ export const useDados = create<DadosState>()((set, get) => {
     ordens: [],
     reclamacoes: [],
     anexos: [],
+    contratos: [],
     config: CONFIG_PADRAO,
     revisao: 0,
     status: 'carregando',
@@ -374,6 +400,45 @@ export const useDados = create<DadosState>()((set, get) => {
     async excluirAnexo(id) {
       await api.excluirAnexo(id)
       set((s) => ({ anexos: s.anexos.filter((a) => a.id !== id) }))
+    },
+
+    async gerarContrato(dados) {
+      const novo = await api.criarContrato(dados)
+      // O servidor cancela o anterior que esperava a assinatura (chega também pelo tempo real)
+      set((s) => ({
+        contratos: mesclarContrato(
+          s.contratos.map((c) =>
+            c.eventoId === novo.eventoId && c.id !== novo.id && c.status === 'AGUARDANDO'
+              ? {
+                  ...c,
+                  status: 'CANCELADO' as const,
+                  motivoCancelamento: `Substituído pelo contrato ${codigoContrato(novo.numero)}.`,
+                  versao: c.versao + 1,
+                }
+              : c,
+          ),
+          novo,
+        ),
+      }))
+      return novo
+    },
+
+    async alterarContrato(id, mudanca, versao) {
+      const salvo = await api.alterarContrato(id, mudanca, versao)
+      set((s) => ({ contratos: mesclarContrato(s.contratos, salvo) }))
+      return salvo
+    },
+
+    async enviarContratoAssinado(id, arquivo, nome, aoProgresso) {
+      const salvo = await api.enviarContratoAssinado(id, arquivo, nome, aoProgresso)
+      set((s) => ({ contratos: mesclarContrato(s.contratos, salvo) }))
+      return salvo
+    },
+
+    async removerContratoAssinado(id) {
+      const salvo = await api.removerContratoAssinado(id)
+      set((s) => ({ contratos: mesclarContrato(s.contratos, salvo) }))
+      return salvo
     },
 
     async salvarConfig(config) {

@@ -17,6 +17,9 @@ import type {
   Cliente,
   ClienteInput,
   Configuracoes,
+  Contrato,
+  DadosContrato,
+  DataHora,
   DiaEvento,
   Evento,
   EventoInput,
@@ -24,10 +27,12 @@ import type {
   FormaPagamento,
   Maquina,
   MaquinaInput,
+  NovoContrato,
   OrdemServico,
   OrdemServicoInput,
   Reclamacao,
   ReclamacaoInput,
+  StatusContrato,
   StatusEvento,
   StatusProgramacao,
   TipoCliente,
@@ -44,6 +49,16 @@ export const CONFIG_PADRAO: Configuracoes = {
   empresaCidade: 'Rio Claro - SP',
   // Sem serviços prontos: o usuário cadastra os que costuma fazer
   servicosManutencao: [],
+  // Dados do papel timbrado (o representante e os valores de reposição ficam para o dono informar)
+  empresaEndereco: 'Rua 13, nº 650, entre as Avenidas 9 e 11, Bairro da Boa Morte, Rio Claro - SP',
+  empresaTelefone: '(19) 3023-9050',
+  empresaEmail: 'recepcao@balancass.com',
+  empresaRepresentante: '',
+  empresaRepresentanteCpf: '',
+  contratoForo: '',
+  valorReposicaoP: 0,
+  valorReposicaoG: 0,
+  contratoCondicoes: '',
 }
 
 export const CLIENTE_VAZIO: ClienteInput = {
@@ -71,8 +86,11 @@ export const STATUS: StatusEvento[] = ['EM_ABERTO', 'PENDENTE', 'FINALIZADO', 'C
 export const FORMAS: FormaPagamento[] = ['NAO_PAGO', 'DINHEIRO', 'BOLETO', 'CREDITO', 'DEBITO', 'PIX']
 export const UFS = 'AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' ')
 
-/** Versão do arquivo de backup: 4 trouxe as reclamações; 5, as máquinas reserva e as séries de eventos. */
-export const VERSAO_BACKUP = 5
+/**
+ * Versão do arquivo de backup: 4 trouxe as reclamações; 5, as máquinas reserva e as séries de
+ * eventos; 6, os contratos de locação.
+ */
+export const VERSAO_BACKUP = 6
 
 /** Limites de segurança contra dados corrompidos ou absurdos. */
 export const LIMITES = {
@@ -530,6 +548,9 @@ export function normalizarConfig(entrada: unknown): Resultado<Configuracoes> {
   const erros: string[] = []
   const cnpj = normalizarCnpj(texto(r.empresaCnpj))
   if (cnpj && !cnpjValido(cnpj)) erros.push('CNPJ da empresa inválido. Confira o número digitado.')
+  const cpfRep = somenteDigitos(texto(r.empresaRepresentanteCpf, 20))
+  if (cpfRep && !cpfValido(cpfRep)) erros.push('CPF de quem assina pela empresa inválido. Confira o número digitado.')
+  const cpfDoRepresentante = cpfRep ? mascaraCpf(cpfRep) : ''
   return {
     valor: {
       valorDiariaPadrao: dinheiro(r.valorDiariaPadrao),
@@ -541,8 +562,171 @@ export function normalizarConfig(entrada: unknown): Resultado<Configuracoes> {
       empresaCnpj: cnpj ? mascaraCnpj(cnpj) : '',
       empresaCidade: texto(r.empresaCidade),
       servicosManutencao: listaServicos(r.servicosManutencao, LIMITES.catalogoServicos),
+      empresaEndereco: texto(r.empresaEndereco),
+      empresaTelefone: texto(r.empresaTelefone, 40),
+      empresaEmail: texto(r.empresaEmail, 120),
+      empresaRepresentante: texto(r.empresaRepresentante),
+      empresaRepresentanteCpf: cpfDoRepresentante,
+      contratoForo: texto(r.contratoForo),
+      valorReposicaoP: dinheiro(r.valorReposicaoP),
+      valorReposicaoG: dinheiro(r.valorReposicaoG),
+      contratoCondicoes: texto(
+        typeof r.contratoCondicoes === 'string' ? r.contratoCondicoes.replace(/\r\n?/g, '\n') : '',
+        LIMITES.textoLongo,
+      ),
     },
     erros,
+  }
+}
+
+// ---- Contrato de locação -----------------------------------------------------------
+
+const dataHora = (v: unknown): DataHora => {
+  const r = obj(v)
+  const data = texto(r.data, 10)
+  const hora = texto(r.hora, 5)
+  return { data: dataIsoValida(data) ? data : '', hora: /^([01]\d|2[0-3]):[0-5]\d$/.test(hora) ? hora : '' }
+}
+
+/** O que a tela manda ao gerar o contrato de um evento. */
+export function normalizarNovoContrato(entrada: unknown): Resultado<NovoContrato> {
+  const r = obj(entrada)
+  const erros: string[] = []
+  const eventoId = texto(r.eventoId, 100)
+  if (!eventoId) erros.push('Escolha o evento do contrato.')
+  const assinante = obj(r.assinante)
+  const cpf = somenteDigitos(texto(assinante.cpf, 20))
+  if (cpf && !cpfValido(cpf)) erros.push('CPF de quem assina pelo cliente inválido. Confira o número digitado.')
+  const retirada = dataHora(r.retirada)
+  const devolucao = dataHora(r.devolucao)
+  if (retirada.data && devolucao.data && devolucao.data < retirada.data) erros.push('A devolução não pode ser antes da retirada.')
+  return {
+    valor: {
+      eventoId,
+      local: texto(r.local),
+      retirada,
+      devolucao,
+      assinante: { nome: texto(assinante.nome), cpf: cpf ? mascaraCpf(cpf) : '' },
+      condicoes: texto(typeof r.condicoes === 'string' ? r.condicoes.replace(/\r\n?/g, '\n') : '', LIMITES.textoLongo),
+    },
+    erros,
+  }
+}
+
+const numeroOuZero = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0)
+
+/**
+ * Dados congelados de um contrato vindos de um backup: confere os tipos de cada campo (o texto é
+ * o que foi gerado na época, então não é refeito).
+ */
+export function normalizarDadosContrato(v: unknown): DadosContrato {
+  const r = obj(v)
+  const e = obj(r.empresa)
+  const c = obj(r.cliente)
+  const a = obj(r.assinante)
+  const ev = obj(r.evento)
+  const val = obj(r.valores)
+  const com = obj(ev.comCliente)
+  const t = (x: unknown, max = LIMITES.texto) => texto(x, max)
+  return {
+    emitidoEm: dataIsoValida(r.emitidoEm) ? (r.emitidoEm as string) : '',
+    empresa: {
+      nome: t(e.nome),
+      razaoSocial: t(e.razaoSocial),
+      cnpj: t(e.cnpj, 30),
+      endereco: t(e.endereco),
+      telefone: t(e.telefone, 40),
+      email: t(e.email, 120),
+      cidade: t(e.cidade),
+      representante: t(e.representante),
+      representanteCpf: t(e.representanteCpf, 20),
+    },
+    cliente: {
+      tipo: umDe(c.tipo, TIPOS_CLIENTE, 'AVULSO'),
+      nome: t(c.nome),
+      fantasia: t(c.fantasia),
+      documento: t(c.documento, 40),
+      endereco: t(c.endereco),
+      telefone: t(c.telefone, 40),
+      email: t(c.email, 120),
+    },
+    assinante: { nome: t(a.nome), cpf: t(a.cpf, 20) },
+    evento: {
+      id: t(ev.id, 100),
+      codigo: inteiro(ev.codigo, Number.MAX_SAFE_INTEGER, 0),
+      nome: t(ev.nome),
+      local: t(ev.local),
+      dias: (Array.isArray(ev.dias) ? ev.dias : [])
+        .slice(0, LIMITES.dias)
+        .map((d) => {
+          const x = obj(d)
+          return {
+            data: dataIsoValida(x.data) ? (x.data as string) : '',
+            maquinas: inteiro(x.maquinas, LIMITES.maquinas, 0),
+            reservas: inteiro(x.reservas, LIMITES.maquinas, 0),
+          }
+        })
+        .filter((d) => d.data),
+      periodoCorrido: ev.periodoCorrido === true,
+      comCliente:
+        dataIsoValida(com.inicio) && dataIsoValida(com.fim) ? { inicio: com.inicio as string, fim: com.fim as string } : null,
+      maquinas: (Array.isArray(ev.maquinas) ? ev.maquinas : []).slice(0, LIMITES.maquinasEvento).map((m) => {
+        const x = obj(m)
+        return {
+          identificacao: t(x.identificacao, 40),
+          tipo: x.tipo === 'G' ? ('G' as const) : ('P' as const),
+          reserva: x.reserva === true,
+        }
+      }),
+      rodape: multilinha(ev.rodape),
+    },
+    valores: {
+      diaria: dinheiro(val.diaria),
+      diarias: inteiro(val.diarias, Number.MAX_SAFE_INTEGER, 0),
+      desconto: dinheiro(val.desconto),
+      total: dinheiro(val.total),
+      bobina: dinheiro(val.bobina),
+      bobinasConsignadas: inteiro(val.bobinasConsignadas, LIMITES.bobinas, 0),
+      formaPagamento: umDe(val.formaPagamento, FORMAS, 'NAO_PAGO'),
+      reposicaoP: numeroOuZero(val.reposicaoP) > 0 ? dinheiro(val.reposicaoP) : 0,
+      reposicaoG: numeroOuZero(val.reposicaoG) > 0 ? dinheiro(val.reposicaoG) : 0,
+    },
+    retirada: dataHora(r.retirada),
+    devolucao: dataHora(r.devolucao),
+    foro: t(r.foro),
+    condicoes: texto(r.condicoes, LIMITES.textoLongo),
+  }
+}
+
+const STATUS_CONTRATO: StatusContrato[] = ['AGUARDANDO', 'ASSINADO', 'CANCELADO']
+
+/** Contrato de um backup: confere os campos e mantém os dados congelados. */
+export function migrarContrato(entrada: unknown): Contrato {
+  const r = obj(entrada)
+  const agora = new Date().toISOString()
+  const arq = obj(r.arquivo)
+  const status = umDe(r.status, STATUS_CONTRATO, 'AGUARDANDO')
+  return {
+    id: texto(r.id, 100),
+    versao: Math.max(1, inteiro(r.versao, Number.MAX_SAFE_INTEGER, 1)),
+    numero: inteiro(r.numero, Number.MAX_SAFE_INTEGER, 0),
+    eventoId: texto(r.eventoId, 100),
+    clienteId: texto(r.clienteId, 100),
+    status,
+    assinadoEm: status === 'ASSINADO' && dataIsoValida(r.assinadoEm) ? (r.assinadoEm as string) : '',
+    motivoCancelamento: status === 'CANCELADO' ? texto(r.motivoCancelamento) : '',
+    dados: normalizarDadosContrato(r.dados),
+    arquivo:
+      r.arquivo && texto(arq.nome)
+        ? {
+            nome: texto(arq.nome, 200),
+            tipo: texto(arq.tipo, 100) || 'application/octet-stream',
+            tamanho: inteiro(arq.tamanho, Number.MAX_SAFE_INTEGER, 0),
+            enviadoEm: texto(arq.enviadoEm, 40),
+          }
+        : null,
+    criadoEm: texto(r.criadoEm, 40) || agora,
+    atualizadoEm: texto(r.atualizadoEm, 40) || agora,
   }
 }
 
@@ -634,6 +818,11 @@ export function validarBackup(dados: unknown): Backup {
   if (new Set(reclamacoes.map((r) => r.id)).size !== reclamacoes.length)
     throw new Error('Backup inválido: reclamações repetidas.')
 
+  // Contratos (backup versão 6): são documentos já emitidos, com os dados congelados; ficam mesmo
+  // que o evento ou o cliente não estejam no backup
+  const contratos = (Array.isArray(b.contratos) ? b.contratos : []).map(migrarContrato).filter((c) => c.id)
+  if (new Set(contratos.map((c) => c.id)).size !== contratos.length) throw new Error('Backup inválido: contratos repetidos.')
+
   // Garante códigos de evento e números de O.S. únicos (versões antigas podiam repetir após importações)
   const maiorCodigo = numerosUnicos(
     eventos,
@@ -645,6 +834,11 @@ export function validarBackup(dados: unknown): Backup {
     (o) => o.numero,
     (o, n) => (o.numero = n),
   )
+  const maiorContrato = numerosUnicos(
+    contratos,
+    (c) => c.numero,
+    (c, n) => (c.numero = n),
+  )
 
   return {
     app: 'bc-fichas-control',
@@ -655,8 +849,10 @@ export function validarBackup(dados: unknown): Backup {
     maquinas,
     ordens,
     reclamacoes,
+    contratos,
     config: normalizarConfig(b.config).valor,
     proximoCodigo: Math.max(inteiro(b.proximoCodigo, Number.MAX_SAFE_INTEGER, 1), maiorCodigo + 1),
     proximaOS: Math.max(inteiro(b.proximaOS, Number.MAX_SAFE_INTEGER, 1), maiorOS + 1),
+    proximoContrato: Math.max(inteiro(b.proximoContrato, Number.MAX_SAFE_INTEGER, 1), maiorContrato + 1),
   }
 }

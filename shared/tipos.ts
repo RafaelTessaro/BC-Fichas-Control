@@ -132,6 +132,135 @@ export interface Configuracoes {
   empresaCidade: string
   /** Serviços de manutenção que o usuário cadastrou para marcar nas manutenções (ex.: "Higienização"). */
   servicosManutencao: string[]
+  /** Dados da empresa que aparecem no contrato de locação (além de nome, razão social, CNPJ e cidade). */
+  empresaEndereco: string
+  empresaTelefone: string
+  empresaEmail: string
+  /** Quem assina os contratos pela empresa (nome e CPF); vazio deixa a linha para preencher à mão. */
+  empresaRepresentante: string
+  empresaRepresentanteCpf: string
+  /** Comarca do foro do contrato (ex.: "Rio Claro - SP"); vazio usa a cidade da empresa. */
+  contratoForo: string
+  /** Valor de reposição de cada máquina, em caso de perda ou dano sem conserto (0 = valor de mercado, por orçamento). */
+  valorReposicaoP: number
+  valorReposicaoG: number
+  /** Condições a mais que saem em todos os contratos (texto livre, opcional). */
+  contratoCondicoes: string
+}
+
+// ---- Contrato de locação ------------------------------------------------------
+
+/** AGUARDANDO = gerado, esperando a assinatura do cliente. */
+export type StatusContrato = 'AGUARDANDO' | 'ASSINADO' | 'CANCELADO'
+
+/** Data e hora combinadas (retirada ou devolução); a hora pode ficar em branco para preencher à mão. */
+export interface DataHora {
+  /** `yyyy-MM-dd`. */
+  data: string
+  /** `HH:mm` ou vazio. */
+  hora: string
+}
+
+/**
+ * Tudo o que sai no contrato, congelado no momento em que foi gerado: o PDF é sempre o mesmo,
+ * mesmo que depois o cliente, o evento ou as configurações mudem.
+ */
+export interface DadosContrato {
+  /** Data de emissão `yyyy-MM-dd` (a da assinatura, no fim do contrato). */
+  emitidoEm: string
+  empresa: {
+    nome: string
+    razaoSocial: string
+    cnpj: string
+    endereco: string
+    telefone: string
+    email: string
+    cidade: string
+    representante: string
+    representanteCpf: string
+  }
+  cliente: {
+    tipo: TipoCliente
+    /** Razão social (empresa) ou nome. */
+    nome: string
+    /** Nome fantasia, quando diferente da razão social. */
+    fantasia: string
+    /** "CPF 123..." / "CNPJ 12..." ou vazio. */
+    documento: string
+    endereco: string
+    telefone: string
+    email: string
+  }
+  /** Quem assina pelo cliente (o próprio cliente, ou o responsável pela empresa). */
+  assinante: { nome: string; cpf: string }
+  evento: {
+    id: ID
+    codigo: number
+    nome: string
+    /** Onde as máquinas vão ser usadas (opcional). */
+    local: string
+    dias: Array<Pick<DiaEvento, 'data' | 'maquinas' | 'reservas'>>
+    periodoCorrido: boolean
+    /** Do primeiro ao último dia com as máquinas (período corrido); vazio sem período corrido. */
+    comCliente: { inicio: string; fim: string } | null
+    /** Máquinas enviadas (identificação e tipo); vazio enquanto não escolhidas. */
+    maquinas: Array<{ identificacao: string; tipo: TipoMaquina; reserva: boolean }>
+    rodape: string
+  }
+  valores: {
+    diaria: number
+    /** Diárias das máquinas titulares (as reservas só são cobradas se usadas). */
+    diarias: number
+    desconto: number
+    /** Diárias × valor − desconto (sem as bobinas e as reservas usadas, acertadas na devolução). */
+    total: number
+    bobina: number
+    bobinasConsignadas: number
+    formaPagamento: FormaPagamento
+    reposicaoP: number
+    reposicaoG: number
+  }
+  retirada: DataHora
+  devolucao: DataHora
+  foro: string
+  /** Condições a mais (das configurações e as deste contrato). */
+  condicoes: string
+}
+
+/** Arquivo do contrato assinado (foto ou PDF digitalizado), guardado no servidor. */
+export interface ArquivoContrato {
+  nome: string
+  tipo: string
+  tamanho: number
+  enviadoEm: string
+}
+
+export interface Contrato {
+  id: ID
+  versao: number
+  /** Número sequencial ("Contrato nº 0007"). */
+  numero: number
+  eventoId: ID
+  clienteId: ID
+  status: StatusContrato
+  /** Data `yyyy-MM-dd` em que foi assinado; vazio enquanto não. */
+  assinadoEm: string
+  /** Por que foi cancelado (ex.: "Substituído pelo contrato nº 0008"). */
+  motivoCancelamento: string
+  dados: DadosContrato
+  arquivo: ArquivoContrato | null
+  criadoEm: string
+  atualizadoEm: string
+}
+
+/** O que a tela informa ao gerar o contrato de um evento (o resto vem do cadastro). */
+export interface NovoContrato {
+  eventoId: ID
+  local: string
+  retirada: DataHora
+  devolucao: DataHora
+  assinante: { nome: string; cpf: string }
+  condicoes: string
 }
 
 // ---- Máquinas e manutenção ---------------------------------------------------
@@ -240,6 +369,7 @@ export interface DadosCompletos {
   reclamacoes: Reclamacao[]
   /** Arquivos anexados aos eventos (só os dados; o conteúdo é baixado sob demanda). */
   anexos: Anexo[]
+  contratos: Contrato[]
   config: Configuracoes
   /** Contador global de alterações; aumenta a cada gravação no servidor. */
   revisao: number
@@ -255,9 +385,12 @@ export interface Backup {
   ordens: OrdemServico[]
   /** A partir da versão 4 do backup. Os arquivos anexados não vão no backup (ficam em dados/anexos). */
   reclamacoes: Reclamacao[]
+  /** A partir da versão 6 (os arquivos assinados ficam em dados/contratos, fora do backup). */
+  contratos: Contrato[]
   config: Configuracoes
   proximoCodigo: number
   proximaOS: number
+  proximoContrato: number
 }
 
 /** Mensagem enviada pelo servidor (Server-Sent Events) a cada alteração. */
@@ -274,5 +407,6 @@ export type MensagemTempoReal =
   | { revisao: number; tipo: 'reclamacao'; acao: 'excluido'; id: ID }
   | { revisao: number; tipo: 'anexo'; acao: 'salvo'; dado: Anexo }
   | { revisao: number; tipo: 'anexo'; acao: 'excluido'; id: ID }
+  | { revisao: number; tipo: 'contrato'; acao: 'salvo'; dado: Contrato }
   | { revisao: number; tipo: 'config'; acao: 'salvo'; dado: Configuracoes }
   | { revisao: number; tipo: 'tudo'; acao: 'recarregar' }

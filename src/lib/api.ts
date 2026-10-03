@@ -4,6 +4,7 @@ import type {
   Cliente,
   ClienteInput,
   Configuracoes,
+  Contrato,
   DadosCompletos,
   Evento,
   EventoInput,
@@ -11,6 +12,7 @@ import type {
   Maquina,
   MaquinaInput,
   MensagemTempoReal,
+  NovoContrato,
   OrdemServico,
   OrdemServicoInput,
   Reclamacao,
@@ -149,6 +151,20 @@ export const api = {
   enviarAnexo,
   excluirAnexo: (id: string) => requisitar<void>('DELETE', `/api/anexos/${encodeURIComponent(id)}`),
 
+  /** Gera o contrato de locação do evento (os dados ficam congelados no servidor). */
+  criarContrato: (dados: NovoContrato) => requisitar<Contrato>('POST', '/api/contratos', dados),
+  /** Assinar (com a data), cancelar (com o motivo) ou reabrir o contrato. */
+  alterarContrato: (
+    id: string,
+    mudanca: { acao: 'assinar'; data?: string } | { acao: 'cancelar'; motivo?: string } | { acao: 'reabrir' },
+    versao?: number,
+  ) => requisitar<Contrato>('PATCH', `/api/contratos/${encodeURIComponent(id)}`, { ...mudanca, versao }),
+  /** Endereço do contrato assinado: mostra na tela ou, com `baixar`, salva no computador. */
+  urlContratoAssinado: (id: string, baixar = false) =>
+    `/api/contratos/${encodeURIComponent(id)}/arquivo${baixar ? '?baixar=1' : ''}`,
+  enviarContratoAssinado,
+  removerContratoAssinado: (id: string) => requisitar<Contrato>('DELETE', `/api/contratos/${encodeURIComponent(id)}/arquivo`),
+
   configEmail: () => requisitar<ConfigEmail>('GET', '/api/email/config'),
   salvarConfigEmail: (c: ConfigEmailEntrada) => requisitar<ConfigEmail>('PUT', '/api/email/config', c),
   esquecerConfigEmail: () => requisitar<void>('DELETE', '/api/email/config'),
@@ -188,13 +204,23 @@ export const LIMITE_ANEXO = 25 * 1024 * 1024
  * (`aoProgresso` recebe de 0 a 1).
  */
 function enviarAnexo(eventoId: string, arquivo: File | Blob, nome: string, aoProgresso?: (fracao: number) => void) {
-  return new Promise<Anexo>((ok, falha) => {
+  return enviarArquivo<Anexo>(`/api/eventos/${encodeURIComponent(eventoId)}/anexos`, arquivo, nome, aoProgresso)
+}
+
+/** Envia o contrato assinado (foto ou PDF); o contrato que esperava a assinatura passa a assinado. */
+function enviarContratoAssinado(id: string, arquivo: File | Blob, nome: string, aoProgresso?: (fracao: number) => void) {
+  return enviarArquivo<Contrato>(`/api/contratos/${encodeURIComponent(id)}/arquivo`, arquivo, nome, aoProgresso)
+}
+
+/** Envia um arquivo cru (sem multipart), com nome e tipo nos cabeçalhos e o progresso do envio. */
+function enviarArquivo<T>(url: string, arquivo: File | Blob, nome: string, aoProgresso?: (fracao: number) => void) {
+  return new Promise<T>((ok, falha) => {
     if (arquivo.size > LIMITE_ANEXO) {
       falha(new ErroApi(413, 'Arquivo muito grande (o limite é 25 MB).'))
       return
     }
     const xhr = new XMLHttpRequest()
-    xhr.open('POST', `/api/eventos/${encodeURIComponent(eventoId)}/anexos`)
+    xhr.open('POST', url)
     xhr.setRequestHeader('x-bc-fichas', '1')
     xhr.setRequestHeader('Content-Type', 'application/octet-stream')
     xhr.setRequestHeader('x-nome', encodeURIComponent(nome))
@@ -210,7 +236,7 @@ function enviarAnexo(eventoId: string, arquivo: File | Blob, nome: string, aoPro
       } catch {
         /* resposta sem JSON */
       }
-      if (xhr.status >= 200 && xhr.status < 300) ok(json as unknown as Anexo)
+      if (xhr.status >= 200 && xhr.status < 300) ok(json as unknown as T)
       else falha(new ErroApi(xhr.status, typeof json.erro === 'string' ? json.erro : `Erro ${xhr.status} no servidor.`, json))
     }
     xhr.onerror = xhr.ontimeout = () => falha(new ErroApi(0, SEM_CONEXAO))

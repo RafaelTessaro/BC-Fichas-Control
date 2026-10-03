@@ -17,7 +17,7 @@ import type { ExtensaoRepositorio } from '../extensoes.ts'
 export const LIMITE_ARQUIVO = 25 * 1024 * 1024
 
 /** Tipos que o navegador mostra direto na tela (os outros são sempre baixados). */
-const TIPOS_NA_TELA = new Set([
+export const TIPOS_NA_TELA = new Set([
   'image/png',
   'image/jpeg',
   'image/gif',
@@ -51,7 +51,7 @@ export function nomeSeguro(bruto: string) {
 }
 
 /** "attachment; filename="x.pdf"; filename*=UTF-8''..." com o nome original (acentos inclusive). */
-function disposicao(tipo: 'inline' | 'attachment', nome: string) {
+export function disposicao(tipo: 'inline' | 'attachment', nome: string) {
   const ascii =
     nome
       .normalize('NFD')

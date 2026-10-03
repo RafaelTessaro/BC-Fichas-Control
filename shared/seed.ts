@@ -1,10 +1,12 @@
 import { addDays, format, subMonths } from 'date-fns'
-import { CLIENTE_VAZIO, MAQUINA_VAZIA } from './dominio.ts'
+import { assinantePadrao, devolucaoPadrao, montarDadosContrato, retiradaPadrao } from './contrato.ts'
+import { CLIENTE_VAZIO, CONFIG_PADRAO, MAQUINA_VAZIA } from './dominio.ts'
 import { completarCnpj, completarCpf, mascaraCnpj, mascaraCpf } from './documentos.ts'
 import { novoId } from './id.ts'
 import { datasOcupadas, identificacaoPadrao, totalDia } from './maquinas.ts'
 import type {
   Cliente,
+  Contrato,
   Evento,
   FormaPagamento,
   Maquina,
@@ -372,5 +374,54 @@ export function gerarDadosExemplo(hoje: Date) {
     })
   })
 
-  return { clientes, eventos, maquinas, ordens, reclamacoes, proximoCodigo: codigo, proximaOS: ordens.length + 1 }
+  // Contratos: a Festa da Primavera (assinado na retirada) e a Feira de Artesanato (esperando a assinatura)
+  const contratos: Contrato[] = []
+  const config = { ...CONFIG_PADRAO, empresaRepresentante: 'Fabio de Godoy Lima', valorReposicaoP: 1800, valorReposicaoG: 2600 }
+  for (const nome of ['Festa da Primavera', 'Feira de Artesanato']) {
+    const evento = eventos.find((e) => e.nome === nome)
+    if (!evento) continue
+    const cliente = clientes.find((c) => c.id === evento.clienteId)
+    const assinado = nome === 'Festa da Primavera'
+    const retirada = retiradaPadrao(evento)
+    const emitido = format(addDays(new Date(`${retirada.data}T12:00:00`), -3), 'yyyy-MM-dd')
+    contratos.push({
+      id: novoId(),
+      versao: 1,
+      numero: contratos.length + 1,
+      eventoId: evento.id,
+      clienteId: evento.clienteId,
+      status: assinado ? 'ASSINADO' : 'AGUARDANDO',
+      assinadoEm: assinado ? retirada.data : '',
+      motivoCancelamento: '',
+      dados: montarDadosContrato({
+        evento,
+        cliente,
+        maquinas,
+        config,
+        entrada: {
+          local: '',
+          retirada: { data: retirada.data, hora: '09:00' },
+          devolucao: { ...devolucaoPadrao(evento), hora: '12:00' },
+          assinante: assinantePadrao(cliente),
+          condicoes: '',
+        },
+        hoje: emitido,
+      }),
+      arquivo: null,
+      criadoEm: ts,
+      atualizadoEm: ts,
+    })
+  }
+
+  return {
+    clientes,
+    eventos,
+    maquinas,
+    ordens,
+    reclamacoes,
+    contratos,
+    proximoCodigo: codigo,
+    proximaOS: ordens.length + 1,
+    proximoContrato: contratos.length + 1,
+  }
 }

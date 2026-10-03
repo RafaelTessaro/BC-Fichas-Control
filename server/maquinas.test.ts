@@ -363,7 +363,7 @@ describe('backup com máquinas e O.S.', () => {
   it('exporta e restaura máquinas, O.S. e a numeração', async () => {
     await montarDados()
     const backup = (await req<Backup>('GET', '/api/backup')).json
-    expect(backup).toMatchObject({ versao: 5, proximaOS: 2 })
+    expect(backup).toMatchObject({ versao: 6, proximaOS: 2 })
     expect(backup.maquinas).toHaveLength(1)
     expect(backup.ordens).toHaveLength(1)
 
@@ -394,7 +394,7 @@ describe('backup com máquinas e O.S.', () => {
       })),
     }
     const r = await req('POST', '/api/backup/mesclar', outro, 200)
-    expect(r.json).toEqual({ clientes: 1, eventos: 1, maquinas: 0, ordens: 1, reclamacoes: 0, ignorados: 1 })
+    expect(r.json).toEqual({ clientes: 1, eventos: 1, maquinas: 0, ordens: 1, reclamacoes: 0, contratos: 0, ignorados: 1 })
     const d = await dados()
     expect(d.maquinas).toHaveLength(1)
     expect(d.ordens.map((o) => [o.numero, o.maquinaId])).toEqual([

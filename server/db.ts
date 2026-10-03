@@ -76,6 +76,21 @@ const MIGRACOES: string[] = [
   );
   CREATE INDEX anexos_evento ON anexos(evento_id);
   `,
+  // 4: contratos de locação (os dados do contrato ficam congelados no JSON; sem chave estrangeira
+  // para o evento: o contrato é um documento emitido e continua no histórico)
+  `
+  CREATE TABLE contratos (
+    id            TEXT PRIMARY KEY,
+    numero        INTEGER NOT NULL UNIQUE,
+    evento_id     TEXT NOT NULL DEFAULT '',
+    cliente_id    TEXT NOT NULL DEFAULT '',
+    dados         TEXT NOT NULL,
+    versao        INTEGER NOT NULL,
+    criado_em     TEXT NOT NULL,
+    atualizado_em TEXT NOT NULL
+  );
+  CREATE INDEX contratos_evento ON contratos(evento_id);
+  `,
 ]
 
 export function abrirBanco(arquivo: string): Banco {
