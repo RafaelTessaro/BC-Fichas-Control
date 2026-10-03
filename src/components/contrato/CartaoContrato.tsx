@@ -23,8 +23,8 @@ import {
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react'
-import { periodoEvento } from '#shared/maquinas.ts'
-import { codigoContrato } from '#shared/contrato.ts'
+import { dataCurtinha, periodoEvento } from '#shared/maquinas.ts'
+import { codigoContrato, periodosRetirada } from '#shared/contrato.ts'
 import type { Contrato, Evento } from '#shared/tipos.ts'
 import { tamanhoLegivel } from '../../lib/anexos'
 import { cn } from '../../lib/cn'
@@ -266,6 +266,9 @@ function ContratoAtual({
   const baixando = acoes.baixando === c.id
   const retirada = dataHoraCurta(c.dados.retirada)
   const devolucao = dataHoraCurta(c.dados.devolucao)
+  // Datas separadas: uma retirada e uma devolução por período (cláusula 3ª do contrato)
+  const periodos = periodosRetirada(c.dados)
+  const curtinha = (data: string) => (data ? dataCurtinha(data) : '__/__')
   const imagem = c.arquivo?.tipo.startsWith('image/')
   return (
     <div className="flex flex-col gap-3 px-5 pb-5">
@@ -278,8 +281,33 @@ function ContratoAtual({
       </div>
 
       <dl className="tnum grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-[13px]">
-        <Dado rotulo="Retirada">{retirada || <span className="text-muted">a preencher à mão</span>}</Dado>
-        <Dado rotulo="Devolução">{devolucao || <span className="text-muted">a preencher à mão</span>}</Dado>
+        {periodos.length > 1 ? (
+          <>
+            <dt className="text-muted">Períodos</dt>
+            {/* Um por linha (até 4; o resto no balão) */}
+            <dd
+              className="font-medium text-ink"
+              title={periodos
+                .map(
+                  (p, i) =>
+                    `${i + 1}º: retirada ${dataHoraCurta(p.retirada) || 'a preencher'}, devolução ${dataHoraCurta(p.devolucao) || 'a preencher'}`,
+                )
+                .join('\n')}
+            >
+              {periodos.slice(0, periodos.length > 4 ? 3 : 4).map((p, i) => (
+                <span key={i} className="block">
+                  {curtinha(p.retirada.data)} a {curtinha(p.devolucao.data)}
+                </span>
+              ))}
+              {periodos.length > 4 && <span className="block font-normal text-muted">+ {periodos.length - 3} períodos</span>}
+            </dd>
+          </>
+        ) : (
+          <>
+            <Dado rotulo="Retirada">{retirada || <span className="text-muted">a preencher à mão</span>}</Dado>
+            <Dado rotulo="Devolução">{devolucao || <span className="text-muted">a preencher à mão</span>}</Dado>
+          </>
+        )}
         {c.status === 'ASSINADO' && <Dado rotulo="Assinado em">{c.assinadoEm ? dataCurta(c.assinadoEm) : '—'}</Dado>}
       </dl>
 

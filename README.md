@@ -80,7 +80,10 @@ com as regras escolhidas pela empresa (abaixo).
    **Contrato de locação** no detalhe do evento. Na janela, confira o local do evento, a data e a
    hora da retirada e da devolução (vêm das datas do evento; a hora em branco sai para preencher à
    mão), quem assina pelo cliente (nome e CPF) e, se quiser, alguma condição só daquele contrato.
-   O sistema avisa o que vai sair em branco (ex.: cliente sem endereço).
+   O sistema avisa o que vai sair em branco (ex.: cliente sem endereço). Com datas que não são
+   seguidas (ex.: dois sábados) e sem *período corrido*, as máquinas voltam à empresa entre um uso
+   e outro: o contrato sai com uma retirada e uma devolução por período (informe a retirada do 1º
+   e a devolução do último; os outros seguem os mesmos horários) e um Termo de Entrega para cada.
 2. **Enviar antes:** no cartão do contrato, **Enviar** manda o PDF ao cliente por WhatsApp ou
    e-mail. Mande **antes** da retirada: o CDC pede que o cliente possa ler o contrato antes de
    assinar, e o próprio contrato traz essa declaração.
@@ -96,10 +99,16 @@ o evento ou as configurações mudem depois. Se o aluguel mudar (datas, máquina
 do cliente), o cartão avisa; é só gerar de novo, e o contrato anterior que esperava a assinatura é
 cancelado sozinho (*"Substituído pelo contrato nº …"*). Se o anterior já estava assinado, ele
 continua valendo até o cliente assinar o novo; aí o cartão mostra o botão para cancelar o anterior.
+Cancelar ou excluir o evento cancela sozinho o contrato que esperava a assinatura (*"Evento
+cancelado."*); um contrato já assinado fica guardado e os valores seguem a cláusula do
+cancelamento. Depois que o aluguel termina, mudar o cadastro não pede um contrato novo.
 
 A aba **Contratos** (no menu, em Cadastros) reúne todos os contratos gerados, com a situação de
 cada um (esperando assinatura, assinado ou cancelado) e a busca por número, cliente ou evento:
 dali também dá para baixar o PDF de novo, enviar ao cliente e guardar ou abrir a cópia assinada.
+Um contrato cancelado pode ser **excluído** (menu **…** → **Excluir contrato**), junto com a cópia
+assinada; os outros, só depois de 5 anos do fim da locação (o prazo de guarda que o próprio
+contrato informa ao cliente).
 
 **Regras do contrato** (escolhidas pela empresa, já escritas nas cláusulas):
 
@@ -116,12 +125,15 @@ dali também dá para baixar o PDF de novo, enviar ao cliente e guardar ou abrir
 | Retirada e devolução | Sempre na sede da empresa |
 | Assinatura | Sem testemunhas; vale no papel ou eletrônica (gov.br ou plataforma de assinatura) |
 | Foro | A cidade da empresa, sem tirar do cliente o direito de processar na cidade dele |
+| Dados pessoais (LGPD) | Usados só para o contrato, recibos, cobranças e obrigações legais; guardados por até 5 anos; o cliente pode pedir acesso, correção e os outros direitos do art. 18 |
 | Texto | Letra corpo 12 e as cláusulas que limitam direitos em **negrito**, como pede o CDC |
 
 **Onde configurar:** em **Configurações → Contrato de locação** ficam o endereço, o telefone e o
 e-mail da empresa, quem assina pela empresa (nome e CPF), o foro (em branco, vale a cidade da
-empresa), o **valor de reposição** da máquina P e da G (em R$ 0,00, o contrato diz *"valor de
-mercado, por orçamento"*) e as condições que saem em todos os contratos. O nome, a razão social, o
+empresa), o **valor de reposição** da máquina P e da G (em R$ 0,00, o contrato diz, para aquele
+tipo, *"valor de mercado de uma máquina equivalente usada, comprovado por orçamento"*) e as
+condições que saem em todos os contratos. Sem o nome ou o CPF de quem assina pela empresa, o
+contrato sai com a linha para preencher à mão. O nome, a razão social, o
 CNPJ e a cidade vêm de **Dados do recibo**.
 
 A cópia assinada fica no servidor, na pasta `dados/contratos`, fora do backup `.json` (como os
