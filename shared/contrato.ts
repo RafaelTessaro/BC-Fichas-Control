@@ -13,8 +13,29 @@
 // Texto em corpo 12 e cláusulas que limitam direitos em destaque (art. 54, §§ 3º e 4º).
 
 import { valorPorExtenso } from './extenso.ts'
-import { datasOcupadas, necessidadeMaquinas, ordenarMaquinas, quantidadePorExtenso, reservasDia, somarDias } from './maquinas.ts'
-import type { Cliente, Configuracoes, DadosContrato, DataHora, Evento, Maquina, NovoContrato } from './tipos.ts'
+import {
+  datasOcupadas,
+  diasEntre,
+  ordenarMaquinas,
+  quantidadePorExtenso,
+  reservasDia,
+  somarDias,
+  TIPO_MAQUINA,
+  TIPOS_MAQUINA,
+  vaiComoReserva,
+} from './maquinas.ts'
+import type {
+  Cliente,
+  Configuracoes,
+  Contrato,
+  DadosContrato,
+  DataHora,
+  DiaEvento,
+  Evento,
+  Maquina,
+  NovoContrato,
+  TipoMaquina,
+} from './tipos.ts'
 
 // ---- Formatos --------------------------------------------------------------------
 
@@ -113,6 +134,87 @@ export function assinantePadrao(c: Cliente | undefined): { nome: string; cpf: st
   return { nome: c.responsavel.trim(), cpf: '' }
 }
 
+/** Modelo (versão) do texto das cláusulas gerado hoje. Mudou uma cláusula? Novo modelo, sem mexer nos antigos. */
+export const MODELO_CONTRATO = 1
+
+const soDigitos = (s: string) => s.replace(/\D/g, '')
+const mesmoNome = (a: string, b: string) => a.trim().localeCompare(b.trim(), 'pt-BR', { sensitivity: 'base' }) === 0
+
+/**
+ * Quem assina é o próprio cliente (pessoa física, ou avulso que é uma pessoa): não há "representado
+ * por". Com CPF dos dois lados, compara o CPF; senão, o nome.
+ */
+export function assinaOProprio(d: Pick<DadosContrato, 'cliente' | 'assinante'>) {
+  const { cliente: c, assinante: a } = d
+  if (c.tipo === 'PJ') return false
+  if (!a.nome && !a.cpf) return c.tipo === 'PF'
+  const docCliente = soDigitos(c.documento)
+  if (docCliente.length === 11 && soDigitos(a.cpf).length === 11) return docCliente === soDigitos(a.cpf)
+  return !!a.nome && !!c.nome && mesmoNome(a.nome, c.nome)
+}
+
+/** O dia de maior uso de verdade: o de mais máquinas no total; no empate, o de menos reservas. */
+export function diaDeMaiorUso(dias: Array<Pick<DiaEvento, 'maquinas' | 'reservas'>>) {
+  return dias.reduce<Pick<DiaEvento, 'maquinas' | 'reservas'> | null>((maior, d) => {
+    if (!maior) return d
+    const t = d.maquinas + d.reservas
+    const tm = maior.maquinas + maior.reservas
+    return t > tm || (t === tm && d.reservas < maior.reservas) ? d : maior
+  }, null)
+}
+
+/** Retirada e devolução de cada período em que as máquinas ficam com o cliente. */
+export interface PeriodoRetirada {
+  retirada: DataHora
+  devolucao: DataHora
+}
+
+/**
+ * Sem período corrido e com datas separadas (ex.: 03/10 e 10/10), as máquinas voltam à empresa
+ * entre um uso e outro: uma retirada e uma devolução por bloco de datas seguidas. A retirada
+ * informada é a do primeiro bloco e a devolução, a do último; os outros blocos usam a mesma
+ * distância (em dias) e os mesmos horários. Se a devolução de um bloco cair no dia da retirada do
+ * seguinte (ou depois), as máquinas ficam com o cliente e os dois viram um período só. Com período
+ * corrido (ou datas seguidas), um período só.
+ */
+export function periodosRetirada(d: Pick<DadosContrato, 'evento' | 'retirada' | 'devolucao'>): PeriodoRetirada[] {
+  const datas = [...new Set(d.evento.dias.map((x) => x.data).filter(Boolean))].sort()
+  const blocos: Array<{ inicio: string; fim: string }> = []
+  for (const data of datas) {
+    const ultimo = blocos[blocos.length - 1]
+    if (ultimo && somarDias(ultimo.fim, 1) === data) ultimo.fim = data
+    else blocos.push({ inicio: data, fim: data })
+  }
+  if (d.evento.periodoCorrido || blocos.length <= 1) return [{ retirada: d.retirada, devolucao: d.devolucao }]
+  const antes = d.retirada.data ? diasEntre(blocos[0].inicio, d.retirada.data) : 0
+  const depois = d.devolucao.data ? diasEntre(blocos[blocos.length - 1].fim, d.devolucao.data) : 1
+  const periodos: PeriodoRetirada[] = []
+  for (const bloco of blocos) {
+    const retirada = { data: d.retirada.data ? somarDias(bloco.inicio, antes) : '', hora: d.retirada.hora }
+    const devolucao = { data: d.devolucao.data ? somarDias(bloco.fim, depois) : '', hora: d.devolucao.hora }
+    const anterior = periodos[periodos.length - 1]
+    if (anterior && retirada.data && anterior.devolucao.data && retirada.data <= anterior.devolucao.data)
+      anterior.devolucao = devolucao
+    else periodos.push({ retirada, devolucao })
+  }
+  return periodos
+}
+
+/** Anos que o contrato fica guardado depois do fim da locação (cláusula dos dados pessoais). */
+export const ANOS_GUARDA_CONTRATO = 5
+
+/** Último dia da locação: a devolução ou, sem ela, a última data de uso (`''` sem nenhuma). */
+export function fimDaLocacao(d: Pick<DadosContrato, 'evento' | 'devolucao'>) {
+  return [d.devolucao.data, ...d.evento.dias.map((x) => x.data)].filter(Boolean).sort().pop() ?? ''
+}
+
+/** Pode ser excluído: cancelado ou, passado o prazo de guarda depois do fim da locação, qualquer um. */
+export function podeExcluirContrato(c: Pick<Contrato, 'status' | 'dados'>, hoje: string) {
+  if (c.status === 'CANCELADO') return true
+  const fim = fimDaLocacao(c.dados)
+  return !!fim && `${Number(fim.slice(0, 4)) + ANOS_GUARDA_CONTRATO}${fim.slice(4)}` < hoje
+}
+
 // ---- Dados congelados ------------------------------------------------------------------
 
 export interface FontesContrato {
@@ -128,7 +230,8 @@ export interface FontesContrato {
 /** Junta tudo o que sai no contrato (o servidor grava isto; o PDF sai só daqui). */
 export function montarDadosContrato({ evento, cliente, maquinas, config, entrada, hoje }: FontesContrato): DadosContrato {
   const porId = new Map(maquinas.map((m) => [m.id, m]))
-  const reservas = new Set(evento.reservasIds ?? [])
+  // Marcada como reserva, mas sem nenhum dia com reserva, a máquina trabalha como titular
+  const reservas = new Set((evento.reservasIds ?? []).filter((id) => vaiComoReserva(evento, id)))
   const enviadas = ordenarMaquinas(evento.maquinasIds.map((id) => porId.get(id)).filter((m): m is Maquina => !!m))
   const ocupadas = evento.periodoCorrido ? datasOcupadas(evento) : []
   const usos = new Set(evento.dias.map((d) => d.data))
@@ -138,6 +241,7 @@ export function montarDadosContrato({ evento, cliente, maquinas, config, entrada
   const desconto = Math.min(Math.max(0, evento.desconto || 0), valorDiarias)
   const condicoes = [config.contratoCondicoes.trim(), entrada.condicoes.trim()].filter(Boolean).join('\n')
   return {
+    modelo: MODELO_CONTRATO,
     emitidoEm: hoje,
     empresa: {
       nome: config.empresaNome.trim(),
@@ -192,6 +296,7 @@ export function montarDadosContrato({ evento, cliente, maquinas, config, entrada
     devolucao: { ...entrada.devolucao },
     foro: config.contratoForo.trim() || config.empresaCidade.trim(),
     condicoes,
+    condicoesContrato: entrada.condicoes.trim(),
   }
 }
 
@@ -219,12 +324,19 @@ export function pendenciasContrato(d: DadosContrato): string[] {
   if (!d.cliente.nome) p.push('O cliente não tem nome: o contrato sai com o espaço para preencher à mão.')
   if (!d.cliente.documento) p.push('O cliente não tem CPF/CNPJ cadastrado.')
   if (!d.cliente.endereco) p.push('O cliente não tem endereço cadastrado.')
-  if (!d.assinante.nome || !d.assinante.cpf) p.push('Falta o nome ou o CPF de quem assina pelo cliente.')
+  if (!assinaOProprio(d) && (!d.assinante.nome || !d.assinante.cpf)) p.push('Falta o nome ou o CPF de quem assina pelo cliente.')
+  if (assinaOProprio(d) && !d.cliente.documento && !d.assinante.cpf) p.push('Falta o CPF do cliente.')
   if (!d.evento.maquinas.length) p.push('As máquinas ainda não foram escolhidas: os números ficam para o Termo de Entrega.')
   if (!d.empresa.endereco) p.push('Falta o endereço da empresa (Configurações → Contrato de locação).')
-  if (!d.empresa.representante) p.push('Falta quem assina pela empresa (Configurações → Contrato de locação).')
-  if (!d.valores.reposicaoP && !d.valores.reposicaoG)
-    p.push('Sem valor de reposição das máquinas: o contrato diz "valor de mercado, por orçamento".')
+  if (!d.empresa.representante || !d.empresa.representanteCpf)
+    p.push('Falta o nome ou o CPF de quem assina pela empresa (Configurações → Contrato de locação).')
+  // Valor de reposição dos tipos enviados (ou dos dois, enquanto as máquinas não foram escolhidas)
+  const tipos = d.evento.maquinas.length ? new Set(d.evento.maquinas.map((m) => m.tipo)) : new Set(['P', 'G'])
+  const semValor = [...tipos].filter((t) => !(t === 'P' ? d.valores.reposicaoP : d.valores.reposicaoG)).sort()
+  if (semValor.length)
+    p.push(
+      `Sem valor de reposição da máquina ${semValor.join(' e da ')}: o contrato diz "valor de mercado, comprovado por orçamento".`,
+    )
   return p
 }
 
@@ -257,62 +369,86 @@ const FORMAS: Record<DadosContrato['valores']['formaPagamento'], string> = {
   DEBITO: 'no cartão de débito',
 }
 
-/** O contrato inteiro, do quadro-resumo às assinaturas (o termo de entrega é desenhado à parte). */
-export function textoContrato(d: DadosContrato, numero: number): BlocoContrato[] {
+/** "máquina P (pequena)". */
+const nomeTipo = (t: TipoMaquina) => `máquina ${t} (${TIPO_MAQUINA[t].descricao.toLowerCase()})`
+
+const MERCADO = 'o valor de mercado de uma máquina equivalente usada, comprovado por orçamento'
+
+/** Valor de reposição de cada tipo enviado (dos dois, enquanto as máquinas não foram escolhidas). */
+function textoReposicao({ evento: ev, valores: v }: DadosContrato) {
+  const enviados = new Set(ev.maquinas.map((m) => m.tipo))
+  const tipos = TIPOS_MAQUINA.filter((t) => !enviados.size || enviados.has(t))
+  const valor = (t: TipoMaquina) => (t === 'P' ? v.reposicaoP : v.reposicaoG)
+  const com = tipos.filter((t) => valor(t) > 0)
+  const sem = tipos.filter((t) => !(valor(t) > 0))
+  if (!com.length) return `, que é ${MERCADO}`
+  const valores = juntar(com.map((t) => `${reais(valor(t))} por ${nomeTipo(t)}`))
+  return sem.length ? `: ${valores}; para a ${juntar(sem.map(nomeTipo))}, ${MERCADO}` : `: ${valores}`
+}
+
+/** As datas de uso numa linha do quadro-resumo. */
+function textoDatasUso(dias: DadosContrato['evento']['dias'], clausulaDatas: number) {
+  if (!dias.length) return LINHA
+  if (dias.length === 1) return dataBR(dias[0].data)
+  const primeira = dias[0].data
+  const ultima = dias[dias.length - 1].data
+  if (diasEntre(primeira, ultima) === dias.length - 1)
+    return `${plural(dias.length, 'dia', 'dias')}, de ${dataBR(primeira)} a ${dataBR(ultima)}`
+  if (dias.length <= 4) return juntar(dias.map((x) => dataBR(x.data)))
+  return `${dias.length} dias, entre ${dataBR(primeira)} e ${dataBR(ultima)} (cláusula ${clausulaDatas}ª)`
+}
+
+/** Texto do modelo 1 (o primeiro): do quadro-resumo às assinaturas. */
+function textoModelo1(d: DadosContrato, numero: number): BlocoContrato[] {
   const b: BlocoContrato[] = []
   let n = 0
-  const clausula = (titulo: string) => b.push({ tipo: 'clausula', texto: `CLÁUSULA ${++n}ª – ${titulo}` })
+  const clausula = (titulo: string) => {
+    b.push({ tipo: 'clausula', texto: `CLÁUSULA ${++n}ª – ${titulo}` })
+    return n
+  }
   const par = (texto: string, destaque = false) => b.push({ tipo: 'paragrafo', texto, destaque })
 
   const { empresa: e, cliente: c, evento: ev, valores: v } = d
-  const nomeCliente = c.nome || LINHA
+  const proprio = assinaOProprio(d)
+  const nomeCliente = c.nome || (proprio && d.assinante.nome) || LINHA
+  const docCliente = c.documento || (proprio && d.assinante.cpf ? `CPF ${d.assinante.cpf}` : '')
   const temReserva = ev.dias.some((x) => x.reservas > 0)
+  // Há datas com e sem reserva: nas sem reserva, a marcada como reserva pode trabalhar como titular
+  const mista = temReserva && ev.dias.some((x) => x.reservas === 0)
   const titulares = ev.maquinas.filter((m) => !m.reserva).map((m) => m.identificacao)
   const deReserva = ev.maquinas.filter((m) => m.reserva).map((m) => m.identificacao)
-  const necessidade = necessidadeMaquinas(ev.dias)
-  const maiorReservas = necessidade.reservas
+  const pico = diaDeMaiorUso(ev.dias)
+  const variasReservas = Math.max(deReserva.length, ...ev.dias.map((x) => x.reservas)) > 1
+  const periodos = periodosRetirada(d)
   const sede = e.endereco ? `na sede da LOCADORA (${e.endereco})` : 'na sede da LOCADORA'
   const contato = [e.telefone ? `pelo telefone ${e.telefone}` : '', e.email ? `pelo e-mail ${e.email}` : '']
     .filter(Boolean)
     .join(' ou ')
 
   b.push({ tipo: 'titulo', texto: `CONTRATO DE LOCAÇÃO DE MÁQUINAS DE FICHAS ${codigoContrato(numero)}` })
-  b.push({
-    tipo: 'campos',
-    itens: [
-      ['Locadora', [e.razaoSocial, e.cnpj ? `CNPJ ${e.cnpj}` : ''].filter(Boolean).join(' - ')],
-      ['Locatário', [nomeCliente, c.documento].filter(Boolean).join(' - ')],
-      ['Evento', `${ev.nome} (aluguel #${String(ev.codigo).padStart(4, '0')})${ev.local ? ` - ${ev.local}` : ''}`],
-      [
-        'Datas de uso',
-        ev.dias.length === 1
-          ? dataBR(ev.dias[0].data)
-          : `${plural(ev.dias.length, 'dia', 'dias')}, de ${dataBR(ev.dias[0]?.data ?? '')} a ${dataBR(ev.dias[ev.dias.length - 1]?.data ?? '')}`,
-      ],
-      ['Retirada', textoDataHora(d.retirada)],
-      ['Devolução', textoDataHora(d.devolucao)],
-      ['Valor das diárias', `${reais(v.total)} (${valorPorExtenso(v.total)})`],
-    ],
-  })
 
   clausula('DAS PARTES')
   par(
-    `LOCADORA: ${e.razaoSocial}${e.nome && e.nome !== e.razaoSocial ? ` (${e.nome})` : ''}` +
-      `${e.cnpj ? `, inscrita no CNPJ sob o nº ${e.cnpj}` : ''}${e.endereco ? `, com sede em ${e.endereco}` : ''}` +
+    `LOCADORA: ${e.razaoSocial || LINHA}${e.nome && e.nome !== e.razaoSocial ? ` (${e.nome})` : ''}` +
+      `, inscrita no CNPJ sob o nº ${e.cnpj || LINHA}${e.endereco ? `, com sede em ${e.endereco}` : ''}` +
       `${e.telefone ? `, telefone ${e.telefone}` : ''}${e.email ? `, e-mail ${e.email}` : ''}` +
-      `${e.representante ? `, neste ato representada por ${e.representante}${e.representanteCpf ? `, CPF ${e.representanteCpf}` : ''}` : ''}.`,
+      `, neste ato representada por ${e.representante || LINHA}, CPF ${e.representanteCpf || LINHA}.`,
   )
   par(
-    `LOCATÁRIO: ${nomeCliente}${c.fantasia ? ` (${c.fantasia})` : ''}${c.documento ? `, ${c.documento}` : ', CPF/CNPJ ' + LINHA}` +
+    `LOCATÁRIO: ${nomeCliente}${c.fantasia ? ` (${c.fantasia})` : ''}, ${docCliente || `CPF/CNPJ ${LINHA}`}` +
       `, endereço ${c.endereco || LINHA}, telefone ${c.telefone || LINHA}${c.email ? `, e-mail ${c.email}` : ''}` +
-      `${c.tipo === 'PF' ? '' : `, neste ato representado por ${d.assinante.nome || LINHA}, CPF ${d.assinante.cpf || LINHA}`}.`,
+      `${proprio ? '' : `, neste ato representado por ${d.assinante.nome || LINHA}, CPF ${d.assinante.cpf || LINHA}`}.`,
   )
 
   clausula('DO OBJETO')
+  const iguais = ev.dias.every((x) => x.maquinas === ev.dias[0].maquinas && x.reservas === ev.dias[0].reservas)
+  const quantidade = !pico
+    ? ''
+    : ` (${quantidadePorExtenso(pico.maquinas, pico.reservas)}${ev.dias.length === 1 ? '' : iguais ? ' em cada data' : ' no dia de maior uso'})`
   par(
     '1. A LOCADORA aluga ao LOCATÁRIO máquinas impressoras de fichas para uso no evento' +
       ` "${ev.nome}"${ev.local ? `, em ${ev.local}` : ''}, na quantidade indicada para cada data de uso na cláusula` +
-      ` seguinte (${quantidadePorExtenso(necessidade.titulares, necessidade.reservas)} no dia de maior uso).`,
+      ` seguinte${quantidade}.`,
   )
   par(
     titulares.length || deReserva.length
@@ -321,7 +457,14 @@ export function textoContrato(d: DadosContrato, numero: number): BlocoContrato[]
           deReserva.length ? `como reserva, ${juntar(deReserva)}` : '',
         ]
           .filter(Boolean)
-          .join('; ')}.`
+          .join('; ')}.` +
+          (mista && deReserva.length
+            ? deReserva.length > 1
+              ? ' Nas datas sem reserva, as máquinas marcadas como reserva podem ser usadas como titulares, dentro da' +
+                ' quantidade indicada para a data.'
+              : ' Nas datas sem reserva, a máquina marcada como reserva pode ser usada como titular, dentro da' +
+                ' quantidade indicada para a data.'
+            : '')
       : '2. Os números das máquinas enviadas são anotados no Termo de Entrega e Devolução, na retirada.',
   )
   par(
@@ -329,7 +472,7 @@ export function textoContrato(d: DadosContrato, numero: number): BlocoContrato[]
       `${ev.rodape ? ` e "${ev.rodape.replace(/\s*\n\s*/g, ' / ')}" no rodapé` : ''}.`,
   )
 
-  clausula('DAS DATAS DE USO, DA RETIRADA E DA DEVOLUÇÃO')
+  const clausulaDatas = clausula('DAS DATAS DE USO, DA RETIRADA E DA DEVOLUÇÃO')
   par('1. Datas de uso e quantidade de máquinas em cada uma:')
   for (const x of ev.dias) {
     par(`• ${dataBR(x.data)} (${diaDaSemana(x.data)}): ${quantidadePorExtenso(x.maquinas, x.reservas)}`)
@@ -341,8 +484,18 @@ export function textoContrato(d: DadosContrato, numero: number): BlocoContrato[]
         ' inclusive nos dias entre as datas de uso. São cobradas somente as diárias das datas de uso.',
     )
   }
-  par(`${item++}. Retirada ${sede}, em ${textoDataHora(d.retirada)}.`)
-  par(`${item++}. Devolução ${sede}, até ${textoDataHora(d.devolucao)}.`)
+  if (periodos.length === 1) {
+    par(`${item++}. Retirada ${sede}, em ${textoDataHora(d.retirada)}.`)
+    par(`${item++}. Devolução ${sede}, até ${textoDataHora(d.devolucao)}.`)
+  } else {
+    par(
+      `${item++}. Entre um período de uso e outro, as máquinas voltam à LOCADORA. A retirada e a devolução de cada` +
+        ` período são feitas ${sede}:`,
+    )
+    periodos.forEach((p, i) =>
+      par(`• ${i + 1}º período: retirada em ${textoDataHora(p.retirada)}; devolução até ${textoDataHora(p.devolucao)}.`),
+    )
+  }
 
   clausula('DO PREÇO E DO PAGAMENTO')
   par(
@@ -364,7 +517,8 @@ export function textoContrato(d: DadosContrato, numero: number): BlocoContrato[]
   if (temReserva) {
     clausula('DA MÁQUINA RESERVA')
     par(
-      `1. A${maiorReservas > 1 ? 's máquinas reserva ficam' : ' máquina reserva fica'} com o LOCATÁRIO sem custo,` +
+      `1. ${variasReservas ? 'As máquinas reserva ficam' : 'A máquina reserva fica'} com o LOCATÁRIO sem custo` +
+        `${mista ? `, nas datas com reserva indicadas na cláusula ${clausulaDatas}ª,` : ''}` +
         ' para uso caso alguma máquina apresente defeito ou o movimento exija.',
       true,
     )
@@ -378,9 +532,11 @@ export function textoContrato(d: DadosContrato, numero: number): BlocoContrato[]
 
   clausula('DAS BOBINAS')
   par(
-    v.bobinasConsignadas > 0
-      ? `1. São entregues ${plural(v.bobinasConsignadas, 'bobina', 'bobinas')} em consignação, ao preço de ${reais(v.bobina)} cada.`
-      : `1. Não há bobinas consignadas neste contrato. As bobinas que forem fornecidas custam ${reais(v.bobina)} cada.`,
+    v.bobinasConsignadas === 1
+      ? `1. É entregue 1 (uma) bobina em consignação, ao preço de ${reais(v.bobina)}.`
+      : v.bobinasConsignadas > 1
+        ? `1. São entregues ${v.bobinasConsignadas} bobinas em consignação, ao preço de ${reais(v.bobina)} cada.`
+        : `1. Não há bobinas consignadas neste contrato. As bobinas que forem fornecidas custam ${reais(v.bobina)} cada.`,
     true,
   )
   par(
@@ -418,18 +574,9 @@ export function textoContrato(d: DadosContrato, numero: number): BlocoContrato[]
       ' na guarda das máquinas, pagando o conserto, com orçamento apresentado antes da cobrança.',
     true,
   )
-  const reposicao =
-    v.reposicaoP > 0 || v.reposicaoG > 0
-      ? [
-          v.reposicaoP > 0 ? `${reais(v.reposicaoP)} por máquina P (pequena)` : '',
-          v.reposicaoG > 0 ? `${reais(v.reposicaoG)} por máquina G (grande)` : '',
-        ]
-          .filter(Boolean)
-          .join(' e ')
-      : ''
   par(
     '2. Em caso de perda ou furto por descuido, ou de dano que não tenha conserto, o LOCATÁRIO paga o valor de' +
-      ` reposição da máquina${reposicao ? `: ${reposicao}` : ', que é o valor de mercado de uma máquina equivalente usada, comprovado por orçamento'}.`,
+      ` reposição da máquina${textoReposicao(d)}.`,
     true,
   )
   par(
@@ -490,10 +637,28 @@ export function textoContrato(d: DadosContrato, numero: number): BlocoContrato[]
 
   clausula('DOS DADOS PESSOAIS')
   par(
-    'Os dados pessoais informados são usados pela LOCADORA somente para executar este contrato, emitir recibos e' +
-      ' cobranças e cumprir obrigações legais e fiscais (art. 7º, incisos II e V, da Lei 13.709/2018 - LGPD), e são' +
-      ' guardados pelo prazo legal, de até 5 (cinco) anos após o fim da locação. Não são vendidos nem cedidos a' +
-      ` terceiros, salvo por exigência legal. O titular pode pedir acesso, correção ou informações ${contato || 'à LOCADORA'}.`,
+    '1. A LOCADORA é a controladora dos dados pessoais informados neste contrato e os usa somente para executá-lo,' +
+      ' emitir recibos e cobranças e cumprir obrigações legais e fiscais (art. 7º, incisos II e V, da Lei 13.709/2018 –' +
+      ' Lei Geral de Proteção de Dados).',
+    true,
+  )
+  par(
+    '2. Os dados só são compartilhados com prestadores de serviço que apoiam essas atividades (como serviços de e-mail,' +
+      ' mensagens, agenda on-line e contabilidade), que não podem usá-los para outro fim, e com autoridades, quando a' +
+      ' lei exigir. Não são vendidos nem cedidos a terceiros.',
+    true,
+  )
+  par(
+    '3. Os dados são guardados durante a locação e, depois, por até 5 (cinco) anos, para cumprir obrigações legais e' +
+      ' para a defesa em eventual processo.',
+    true,
+  )
+  par(
+    '4. O titular pode pedir a confirmação de que seus dados são tratados, o acesso a eles, a correção de dados' +
+      ' incompletos ou desatualizados, a anonimização, o bloqueio ou a eliminação de dados desnecessários, a' +
+      ' portabilidade e a informação sobre com quem foram compartilhados (art. 18 da LGPD), fazendo o pedido' +
+      ` ${contato || 'à LOCADORA'}. Também pode reclamar à Autoridade Nacional de Proteção de Dados (ANPD).`,
+    true,
   )
 
   clausula('DAS COMUNICAÇÕES E DA ASSINATURA')
@@ -528,5 +693,30 @@ export function textoContrato(d: DadosContrato, numero: number): BlocoContrato[]
       ' especial as destacadas em negrito, e ficou com uma via.',
   })
   b.push({ tipo: 'fecho', texto: `${e.cidade || LINHA}, ${d.emitidoEm ? dataExtenso(d.emitidoEm) : LINHA}.` })
+
+  // Quadro-resumo logo depois do título (montado no fim para citar o número da cláusula das datas)
+  const [primeiro] = periodos
+  const variosPeriodos =
+    periodos.length > 1 ? ` (1º de ${periodos.length} períodos; os demais na cláusula ${clausulaDatas}ª)` : ''
+  b.splice(1, 0, {
+    tipo: 'campos',
+    itens: [
+      ['Locadora', [e.razaoSocial, e.cnpj ? `CNPJ ${e.cnpj}` : ''].filter(Boolean).join(' - ')],
+      ['Locatário', [nomeCliente, docCliente].filter(Boolean).join(' - ')],
+      ['Evento', `${ev.nome} (aluguel #${String(ev.codigo).padStart(4, '0')})${ev.local ? ` - ${ev.local}` : ''}`],
+      ['Datas de uso', textoDatasUso(ev.dias, clausulaDatas)],
+      ['Retirada', textoDataHora(primeiro.retirada) + variosPeriodos],
+      ['Devolução', textoDataHora(primeiro.devolucao) + variosPeriodos],
+      ['Valor das diárias', `${reais(v.total)} (${valorPorExtenso(v.total)})`],
+    ],
+  })
   return b
+}
+
+/** O texto de cada modelo: um contrato antigo continua saindo com as cláusulas de quando foi gerado. */
+const MODELOS: Record<number, (d: DadosContrato, numero: number) => BlocoContrato[]> = { 1: textoModelo1 }
+
+/** O contrato inteiro, do quadro-resumo às assinaturas (o termo de entrega é desenhado à parte). */
+export function textoContrato(d: DadosContrato, numero: number): BlocoContrato[] {
+  return (MODELOS[d.modelo] ?? MODELOS[MODELO_CONTRATO])(d, numero)
 }

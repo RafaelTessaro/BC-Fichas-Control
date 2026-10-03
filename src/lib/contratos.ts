@@ -2,8 +2,8 @@
 // no aluguel depois de gerado e o arquivo da cópia assinada. Sem React, para poder ser testado.
 
 import type { Tone } from '#shared/calc.ts'
-import { codigoContrato, dataBR, montarDadosContrato, mudancasDesde } from '#shared/contrato.ts'
-import { necessidadeMaquinas, quantidadeCurta, quantidadePorExtenso } from '#shared/maquinas.ts'
+import { codigoContrato, dataBR, diaDeMaiorUso, montarDadosContrato, mudancasDesde } from '#shared/contrato.ts'
+import { quantidadeCurta, quantidadePorExtenso } from '#shared/maquinas.ts'
 import type {
   Cliente,
   Configuracoes,
@@ -59,11 +59,20 @@ export function contratoCombina(c: Pick<Contrato, 'numero' | 'dados'>, busca: st
   return normalizar(`contrato ${codigoContrato(c.numero)} ${nomes}`).includes(termo)
 }
 
-/** Máquinas do dia de maior uso: "3+1" e "3 máquinas + 1 reserva". */
+/** Máquinas do dia de maior uso (como no contrato): "3+1" e "3 máquinas + 1 reserva". */
 export function maquinasDoContrato(d: Pick<DadosContrato, 'evento'>) {
-  const n = necessidadeMaquinas(d.evento.dias)
-  return { curto: quantidadeCurta(n.titulares, n.reservas), extenso: quantidadePorExtenso(n.titulares, n.reservas) }
+  const n = diaDeMaiorUso(d.evento.dias) ?? { maquinas: 0, reservas: 0 }
+  return { curto: quantidadeCurta(n.maquinas, n.reservas), extenso: quantidadePorExtenso(n.maquinas, n.reservas) }
 }
+
+/**
+ * Esperando a assinatura, mas o evento foi cancelado ou excluído: não vale mais. O servidor cancela
+ * esses contratos sozinho; sobra só, por exemplo, de um backup antigo.
+ */
+export const aguardandoSemEfeito = (
+  c: Pick<Contrato, 'status' | 'eventoId'>,
+  eventos: ReadonlyArray<Pick<Evento, 'id' | 'status'>>,
+) => c.status === 'AGUARDANDO' && !eventos.some((e) => e.id === c.eventoId && e.status !== 'CANCELADO')
 
 /** "10/10/2026 às 9h" / "10/10/2026 às 14h30" / "10/10/2026" (hora a preencher) / "" (sem data). */
 export function dataHoraCurta(d: DataHora): string {

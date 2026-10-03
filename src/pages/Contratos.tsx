@@ -288,7 +288,7 @@ export function Contratos() {
 
 type Acoes = ReturnType<typeof useAcoesContrato>
 
-/** Nome do evento (link para ele; "evento excluído" se não existe mais). */
+/** Nome do evento (link para ele; "evento excluído" se não existe mais, e avisa se foi cancelado). */
 function NomeEvento({ item: { contrato: c, evento }, className }: { item: Item; className?: string }) {
   if (!evento) {
     return (
@@ -304,6 +304,7 @@ function NomeEvento({ item: { contrato: c, evento }, className }: { item: Item; 
       title={`Abrir o evento ${evento.nome} (${codigoEvento(evento.codigo)})`}
     >
       {evento.nome}
+      {evento.status === 'CANCELADO' && <span className="font-normal text-muted"> (evento cancelado)</span>}
     </Link>
   )
 }

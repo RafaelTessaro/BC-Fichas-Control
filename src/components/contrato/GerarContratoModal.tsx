@@ -22,12 +22,13 @@ import {
   devolucaoPadrao,
   montarDadosContrato,
   pendenciasContrato,
+  periodosRetirada,
   reais,
   retiradaPadrao,
 } from '#shared/contrato.ts'
 import { cpfValido, mascaraCpf, somenteDigitos } from '#shared/documentos.ts'
 import { datasOcupadas } from '#shared/maquinas.ts'
-import type { Cliente, Configuracoes, Contrato, DataHora, Evento } from '#shared/tipos.ts'
+import type { Cliente, Contrato, DataHora, Evento } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
 import { contratoAguardando, contratosDoEvento, contratoVigente, maquinasDoContrato } from '../../lib/contratos'
 import { datasDoEvento } from '../../lib/envio'
@@ -58,9 +59,9 @@ interface Formulario {
 
 /**
  * Valores iniciais: os sugeridos pelo evento ou, se ele já teve contrato, o que foi informado da
- * outra vez (retirada e devolução só se ainda combinam com as datas de uso).
+ * outra vez (a retirada só se o primeiro dia de uso continua o mesmo; a devolução, o último).
  */
-function valoresIniciais(evento: Evento, cliente: Cliente | undefined, anterior: Contrato | undefined, config: Configuracoes) {
+function valoresIniciais(evento: Evento, cliente: Cliente | undefined, anterior: Contrato | undefined) {
   const padrao: Formulario = {
     retirada: retiradaPadrao(evento),
     devolucao: devolucaoPadrao(evento),
@@ -71,27 +72,22 @@ function valoresIniciais(evento: Evento, cliente: Cliente | undefined, anterior:
   // O evento mudou de cliente depois do contrato anterior: nada dele serve
   if (!anterior || anterior.clienteId !== evento.clienteId) return padrao
   const d = anterior.dados
-  const datas = datasOcupadas(evento)
-  const primeiro = datas[0] ?? ''
-  const ultimo = datas[datas.length - 1] ?? ''
-  const retiradaOk = !!d.retirada.data && !!primeiro && d.retirada.data <= primeiro && d.retirada.data >= somar(primeiro, -7)
-  const devolucaoOk = !!d.devolucao.data && !!ultimo && d.devolucao.data >= ultimo && d.devolucao.data <= somar(ultimo, 7)
-  // As condições das Configurações entram sozinhas em todo contrato: aqui fica só a parte deste
-  const geral = config.contratoCondicoes.trim()
-  const condicoes = geral && d.condicoes.startsWith(geral) ? d.condicoes.slice(geral.length).trim() : d.condicoes
+  const usoAgora = [...new Set(evento.dias.map((x) => x.data).filter(Boolean))].sort()
+  const usoAntes = d.evento.dias.map((x) => x.data)
+  const mesmoInicio = !!usoAgora.length && usoAgora[0] === usoAntes[0]
+  const mesmoFim =
+    !!usoAgora.length &&
+    usoAgora[usoAgora.length - 1] === usoAntes[usoAntes.length - 1] &&
+    evento.periodoCorrido === d.evento.periodoCorrido
   return {
-    retirada: retiradaOk ? { ...d.retirada } : padrao.retirada,
-    devolucao: devolucaoOk ? { ...d.devolucao } : padrao.devolucao,
+    retirada: mesmoInicio && d.retirada.data ? { ...d.retirada } : padrao.retirada,
+    devolucao: mesmoFim && d.devolucao.data ? { ...d.devolucao } : padrao.devolucao,
     nome: d.assinante.nome || padrao.nome,
     cpf: d.assinante.cpf || padrao.cpf,
     local: d.evento.local,
-    condicoes,
+    // Só as condições combinadas para este contrato (as das Configurações entram sozinhas)
+    condicoes: d.condicoesContrato,
   }
-}
-
-const somar = (iso: string, dias: number) => {
-  const [a, m, d] = iso.split('-').map(Number)
-  return new Date(Date.UTC(a, m - 1, d + dias)).toISOString().slice(0, 10)
 }
 
 export function GerarContratoModal({ aberto, evento, aoFechar, aoGerar }: GerarContratoModalProps) {
@@ -108,7 +104,7 @@ export function GerarContratoModal({ aberto, evento, aoFechar, aoGerar }: GerarC
   const aguardando = contratoAguardando(doEvento, evento.id)
   const vigente = contratoVigente(doEvento, evento.id)
 
-  const [f, setF] = useState<Formulario>(() => valoresIniciais(evento, cliente, doEvento[0], config))
+  const [f, setF] = useState<Formulario>(() => valoresIniciais(evento, cliente, doEvento[0]))
   const [tentou, setTentou] = useState(false)
   const [gerando, setGerando] = useState(false)
 
@@ -117,7 +113,7 @@ export function GerarContratoModal({ aberto, evento, aoFechar, aoGerar }: GerarC
   if (aberto !== abertoAntes) {
     setAbertoAntes(aberto)
     if (aberto) {
-      setF(valoresIniciais(evento, cliente, doEvento[0], config))
+      setF(valoresIniciais(evento, cliente, doEvento[0]))
       setTentou(false)
       setGerando(false)
     }
@@ -146,6 +142,9 @@ export function GerarContratoModal({ aberto, evento, aoFechar, aoGerar }: GerarC
     [aberto, evento, cliente, maquinas, config, f, hoje],
   )
   const pendencias = dados ? pendenciasContrato(dados) : []
+  // Datas separadas (sem período corrido): uma retirada e uma devolução por período
+  const periodos = dados ? periodosRetirada(dados) : []
+  const variosPeriodos = periodos.length > 1
   const datasUso = useMemo(() => [...new Set(evento.dias.map((d) => d.data).filter(Boolean))].sort(), [evento.dias])
   const ocupadas = useMemo(() => datasOcupadas(evento), [evento])
   const primeiroDia = ocupadas[0] ?? ''
@@ -279,14 +278,14 @@ export function GerarContratoModal({ aberto, evento, aoFechar, aoGerar }: GerarC
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <CampoDataHora
               id={`${ids}-retirada`}
-              rotulo="Retirada na empresa"
+              rotulo={variosPeriodos ? 'Retirada do 1º período' : 'Retirada na empresa'}
               valor={f.retirada}
               aoMudar={(v) => set('retirada', v)}
               aviso={avisoRetirada}
             />
             <CampoDataHora
               id={`${ids}-devolucao`}
-              rotulo="Devolução na empresa"
+              rotulo={variosPeriodos ? 'Devolução do último período' : 'Devolução na empresa'}
               valor={f.devolucao}
               aoMudar={(v) => set('devolucao', v)}
               min={f.retirada.data || undefined}
@@ -294,6 +293,14 @@ export function GerarContratoModal({ aberto, evento, aoFechar, aoGerar }: GerarC
               aviso={erroDatas && !tentou ? erroDatas : avisoDevolucao}
             />
           </div>
+          {variosPeriodos && (
+            <Aviso tom="info" icone={<CalendarClock className="h-4 w-4" />}>
+              As datas de uso não são seguidas, então as máquinas voltam à empresa entre um uso e outro. O contrato sai com uma
+              retirada e uma devolução por período, nos mesmos horários:{' '}
+              {periodos.map((p, i) => `${i + 1}º de ${dataCurta(p.retirada.data)} a ${dataCurta(p.devolucao.data)}`).join('; ')}.
+              Se as máquinas ficam com o cliente entre as datas, ligue “período corrido” no aluguel.
+            </Aviso>
+          )}
 
           <fieldset className="flex min-w-0 flex-col gap-1.5">
             <legend className="mb-1.5 text-[13px] font-medium text-ink-2">Quem assina pelo cliente</legend>

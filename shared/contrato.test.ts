@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest'
 import {
+  assinaOProprio,
   assinantePadrao,
   devolucaoPadrao,
   montarDadosContrato,
   mudancasDesde,
   pendenciasContrato,
+  periodosRetirada,
+  podeExcluirContrato,
   retiradaPadrao,
   textoContrato,
 } from './contrato.ts'
-import { CLIENTE_VAZIO, CONFIG_PADRAO, MAQUINA_VAZIA, normalizarNovoContrato } from './dominio.ts'
+import { CLIENTE_VAZIO, CONFIG_PADRAO, MAQUINA_VAZIA, normalizarDadosContrato, normalizarNovoContrato } from './dominio.ts'
 import type { Cliente, Evento, Maquina } from './tipos.ts'
 
 const cliente = (extra: Partial<Cliente> = {}): Cliente => ({
@@ -78,15 +81,16 @@ const entrada = {
   assinante: { nome: 'Juliana Martins', cpf: '529.982.247-25' },
   condicoes: '',
 }
-const dados = (e = evento(), c: Cliente | undefined = cliente(), extra = {}) =>
+const dados = (e = evento(), c: Cliente | undefined = cliente(), extra = {}, ent: Partial<typeof entrada> = {}) =>
   montarDadosContrato({
     evento: e,
     cliente: c,
     maquinas: ['P-01', 'P-02', 'G-01'].map(maq),
     config: { ...CONFIG_PADRAO, ...extra },
-    entrada,
+    entrada: { ...entrada, ...ent },
     hoje: '2026-10-03',
   })
+const dia = (data: string, maquinas = 2, reservas = 0) => ({ id: data, data, maquinas, reservas, reservasUsadas: 0 })
 const textoTodo = (d = dados()) =>
   textoContrato(d, 3)
     .map((b) => (b.tipo === 'campos' ? b.itens.map((i) => i.join(': ')).join('\n') : b.texto))
@@ -202,6 +206,113 @@ describe('texto do contrato (escolhas do dono, dentro do CDC)', () => {
     expect(destacados.some((x) => x.includes('valor de reposição'))).toBe(true)
     expect(destacados.some((x) => x.includes('lacradas'))).toBe(true)
     expect(destacados.some((x) => x.includes('reter no máximo 10%'))).toBe(true)
+  })
+})
+
+describe('texto do contrato: casos da revisão', () => {
+  it('quantidade do dia de maior uso de verdade; a reserva trabalha como titular nas datas sem reserva', () => {
+    // 2+1 no sábado e 3 no domingo: o dia de maior uso é o de 3 titulares (e não "3 + 1")
+    const t = textoTodo()
+    expect(t).toContain('(3 máquinas no dia de maior uso)')
+    expect(t).toContain('Nas datas sem reserva, a máquina marcada como reserva pode ser usada como titular')
+    expect(t).toContain('A máquina reserva fica com o LOCATÁRIO sem custo, nas datas com reserva indicadas na cláusula 3ª')
+    // Marcada como reserva sem nenhum dia com reserva: vai como titular
+    const semReserva = dados(evento({ dias: [dia('2026-11-14', 3)] }))
+    expect(semReserva.evento.maquinas.every((m) => !m.reserva)).toBe(true)
+    expect(textoTodo(semReserva)).toContain('(3 máquinas)')
+  })
+
+  it('datas separadas: uma retirada e uma devolução por período, com a mesma distância e os mesmos horários', () => {
+    const separado = dados(
+      evento({ dias: [dia('2026-11-14'), dia('2026-11-15'), dia('2026-11-21')] }),
+      undefined,
+      {},
+      {
+        devolucao: { data: '2026-11-22', hora: '10:00' },
+      },
+    )
+    expect(periodosRetirada(separado)).toEqual([
+      { retirada: { data: '2026-11-13', hora: '17:30' }, devolucao: { data: '2026-11-16', hora: '10:00' } },
+      { retirada: { data: '2026-11-20', hora: '17:30' }, devolucao: { data: '2026-11-22', hora: '10:00' } },
+    ])
+    const t = textoTodo(separado)
+    expect(t).toContain('Entre um período de uso e outro, as máquinas voltam à LOCADORA')
+    expect(t).toContain('2º período: retirada em 20/11/2026, às 17h30; devolução até 22/11/2026, às 10h00.')
+    expect(t).toContain('Retirada: 13/11/2026, às 17h30 (1º de 2 períodos; os demais na cláusula 3ª)')
+    // Com período corrido, um período só
+    expect(periodosRetirada({ ...separado, evento: { ...separado.evento, periodoCorrido: true } })).toHaveLength(1)
+    // Devolveria no dia da retirada seguinte: as máquinas ficam com o cliente
+    const perto = dados(
+      evento({ dias: [dia('2026-11-14'), dia('2026-11-16')] }),
+      undefined,
+      {},
+      {
+        devolucao: { data: '2026-11-17', hora: '' },
+      },
+    )
+    expect(periodosRetirada(perto)).toEqual([
+      { retirada: { data: '2026-11-13', hora: '17:30' }, devolucao: { data: '2026-11-17', hora: '' } },
+    ])
+  })
+
+  it('reposição por tipo; 1 bobina no singular; representante em branco para preencher', () => {
+    const t = textoTodo(dados(evento({ bobinasConsignadas: 1 }), undefined, { valorReposicaoP: 1800 }))
+    expect(t).toContain(
+      'R$ 1.800,00 por máquina P (pequena); para a máquina G (grande), o valor de mercado de uma máquina equivalente usada',
+    )
+    expect(t).toContain('1. É entregue 1 (uma) bobina em consignação, ao preço de R$ 6,00.')
+    expect(t).toContain('neste ato representada por ____________________, CPF ____________________.')
+  })
+
+  it('o próprio cliente assina sem "representado por"; outra pessoa assina como representante', () => {
+    const proprio = dados()
+    expect(assinaOProprio(proprio)).toBe(true)
+    expect(textoTodo(proprio)).not.toContain('neste ato representado por')
+    const outro = dados(undefined, undefined, {}, { assinante: { nome: 'Pedro Martins', cpf: '' } })
+    expect(assinaOProprio(outro)).toBe(false)
+    expect(textoTodo(outro)).toContain('neste ato representado por Pedro Martins, CPF ____________________.')
+    const pj = dados(
+      undefined,
+      cliente({ tipo: 'PJ', nome: 'Clube', documento: '12.403.843/0001-18' }),
+      {},
+      {
+        assinante: { nome: 'Juliana Martins', cpf: '529.982.247-25' },
+      },
+    )
+    expect(assinaOProprio(pj)).toBe(false)
+  })
+
+  it('dados pessoais (LGPD) em destaque, com os direitos do titular', () => {
+    const blocos = textoContrato(dados(), 1)
+    const i = blocos.findIndex((b) => b.tipo === 'clausula' && b.texto.includes('DADOS PESSOAIS'))
+    const lgpd = blocos.slice(
+      i + 1,
+      blocos.findIndex((b, j) => j > i && b.tipo === 'clausula'),
+    )
+    expect(lgpd.every((b) => b.tipo === 'paragrafo' && b.destaque)).toBe(true)
+    const texto = lgpd.map((b) => (b as { texto: string }).texto).join(' ')
+    expect(texto).toContain('art. 18 da LGPD')
+    expect(texto).toContain('portabilidade')
+    expect(texto).toContain('agenda on-line')
+  })
+
+  it('pode excluir o cancelado ou, 5 anos depois do fim da locação, qualquer um', () => {
+    const d = dados()
+    expect(podeExcluirContrato({ status: 'CANCELADO', dados: d }, '2026-10-03')).toBe(true)
+    expect(podeExcluirContrato({ status: 'ASSINADO', dados: d }, '2026-10-03')).toBe(false)
+    expect(podeExcluirContrato({ status: 'ASSINADO', dados: d }, '2031-11-16')).toBe(false)
+    expect(podeExcluirContrato({ status: 'ASSINADO', dados: d }, '2031-11-17')).toBe(true)
+  })
+
+  it('o texto do modelo 1 não muda (mudou uma cláusula? crie o modelo 2)', () => {
+    const d = dados(undefined, undefined, { empresaRepresentante: 'Fabio de Godoy Lima', valorReposicaoP: 1800 })
+    expect(d.modelo).toBe(1)
+    expect(textoTodo(d)).toMatchSnapshot()
+    // Modelo desconhecido (backup de uma versão mais nova): sai com o texto atual
+    expect(textoTodo({ ...d, modelo: 99 })).toBe(textoTodo(d))
+    // Gravado antes do número do modelo: é o modelo 1, com as condições do contrato vazias
+    const { modelo: _m, condicoesContrato: _c, ...antigo } = d
+    expect(normalizarDadosContrato(antigo)).toMatchObject({ modelo: 1, condicoesContrato: '' })
   })
 })
 

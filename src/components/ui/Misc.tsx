@@ -211,7 +211,14 @@ export function Menu({
   itens: Array<{ label: string; icone?: ReactNode; aoClicar: () => void; perigo?: boolean } | 'sep'>
   alinhar?: 'left' | 'right'
 }) {
-  const [pos, setPos] = useState<{ top: number; left?: number; right?: number; paraCima: boolean } | null>(null)
+  const [pos, setPos] = useState<{
+    top: number
+    left?: number
+    right?: number
+    paraCima: boolean
+    /** Altura máxima (rola por dentro numa tela baixa). */
+    maxAltura: number
+  } | null>(null)
   const ancora = useRef<HTMLDivElement>(null)
   const painel = useRef<HTMLDivElement>(null)
   const aberto = pos !== null
@@ -220,11 +227,15 @@ export function Menu({
     if (aberto) return setPos(null)
     const r = ancora.current?.getBoundingClientRect()
     if (!r) return
-    const altura = itens.length * 38 + 12
-    const paraCima = r.bottom + altura + 12 > window.innerHeight && r.top > altura
+    // Cada item tem ~38 px e cada separador ~9 px, mais o respiro do painel
+    const altura = itens.reduce((s, it) => s + (it === 'sep' ? 9 : 38), 10)
+    const abaixo = window.innerHeight - r.bottom - 12
+    const acima = r.top - 12
+    const paraCima = altura > abaixo && acima > abaixo
     setPos({
       top: paraCima ? r.top - 6 : r.bottom + 6,
       paraCima,
+      maxAltura: Math.max(120, (paraCima ? acima : abaixo) - 6),
       ...(alinhar === 'right' ? { right: window.innerWidth - r.right } : { left: r.left }),
     })
   }
@@ -236,16 +247,20 @@ export function Menu({
       if (!ancora.current?.contains(alvo) && !painel.current?.contains(alvo)) setPos(null)
     }
     const fechar = () => setPos(null)
+    // Rolar a página fecha o menu (ele não acompanha); rolar o próprio menu, não
+    const rolou = (e: Event) => {
+      if (!(e.target instanceof Node && painel.current?.contains(e.target))) setPos(null)
+    }
     const esc = (e: KeyboardEvent) => e.key === 'Escape' && setPos(null)
     document.addEventListener('mousedown', fora)
     document.addEventListener('keydown', esc)
     window.addEventListener('resize', fechar)
-    document.addEventListener('scroll', fechar, true)
+    document.addEventListener('scroll', rolou, true)
     return () => {
       document.removeEventListener('mousedown', fora)
       document.removeEventListener('keydown', esc)
       window.removeEventListener('resize', fechar)
-      document.removeEventListener('scroll', fechar, true)
+      document.removeEventListener('scroll', rolou, true)
     }
   }, [aberto])
 
@@ -266,10 +281,11 @@ export function Menu({
                 top: pos.top,
                 left: pos.left,
                 right: pos.right,
+                maxHeight: pos.maxAltura,
                 translate: pos.paraCima ? '0 -100%' : undefined,
               }}
               className={cn(
-                'z-[70] min-w-[190px] rounded-xl border border-line bg-surface p-1 shadow-float',
+                'z-[70] min-w-[190px] overflow-y-auto overscroll-contain rounded-xl border border-line bg-surface p-1 shadow-float',
                 pos.paraCima ? 'origin-bottom' : 'origin-top',
               )}
             >

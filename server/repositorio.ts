@@ -32,7 +32,7 @@ import {
   STATUS_MAQUINA_LISTA,
   TIPOS_MAQUINA,
 } from '#shared/maquinas.ts'
-import { codigoContrato, montarDadosContrato } from '#shared/contrato.ts'
+import { ANOS_GUARDA_CONTRATO, codigoContrato, dataBR, montarDadosContrato, podeExcluirContrato } from '#shared/contrato.ts'
 import { gerarDadosExemplo, SERVICOS_EXEMPLO } from '#shared/seed.ts'
 import type {
   Anexo,
@@ -281,7 +281,7 @@ export class Repositorio {
 
   atualizarEvento(id: string, entrada: unknown, versaoEsperada?: number): Evento {
     const dados = validar(normalizarEvento(entrada))
-    const { evento, anterior, rev } = transacao(this.db, () => {
+    const { evento, anterior, cancelados, rev } = transacao(this.db, () => {
       const anterior = this.obterEventoBruto(id)
       if (!anterior) throw naoEncontrado('Evento')
       this.verificarVersao(anterior, versaoEsperada, 'evento')
@@ -298,14 +298,23 @@ export class Repositorio {
         atualizadoEm: agora(),
       }
       this.gravarEvento(evento, false)
-      return { evento, anterior, rev: this.incrementarRevisao() }
+      const cancelados = this.contratosSeCancelado(evento, anterior)
+      return { evento, anterior, cancelados, rev: this.incrementarRevisao() }
     })
+    this.publicarContratos(cancelados, rev)
     return this.aposSalvarEvento(evento, anterior, rev)
+  }
+
+  /** Evento que acabou de ser cancelado: os contratos que esperavam a assinatura deixam de valer. */
+  private contratosSeCancelado(evento: Evento, anterior: Evento) {
+    return evento.status === 'CANCELADO' && anterior.status !== 'CANCELADO'
+      ? this.cancelarContratosDoEvento(evento.id, 'Evento cancelado.')
+      : []
   }
 
   /** Alteração rápida (status, pagamento, devolução) sem controle de versão. */
   alterarEvento(id: string, entrada: unknown): Evento {
-    const { evento, anterior, rev } = transacao(this.db, () => {
+    const { evento, anterior, cancelados, rev } = transacao(this.db, () => {
       const anterior = this.obterEventoBruto(id)
       if (!anterior) throw naoEncontrado('Evento')
       const patch = validar(normalizarPatch(entrada, anterior))
@@ -313,8 +322,10 @@ export class Repositorio {
       // Reativar um evento cancelado confere as máquinas dele de novo (podem ter ido para outro evento)
       this.verificarMaquinasLivres({ ...evento, id }, anterior, 'Abra o evento e troque a máquina.')
       this.gravarEvento(evento, false)
-      return { evento, anterior, rev: this.incrementarRevisao() }
+      const cancelados = this.contratosSeCancelado(evento, anterior)
+      return { evento, anterior, cancelados, rev: this.incrementarRevisao() }
     })
+    this.publicarContratos(cancelados, rev)
     return this.aposSalvarEvento(evento, anterior, rev)
   }
 
@@ -413,15 +424,18 @@ export class Repositorio {
   }
 
   excluirEvento(id: string) {
-    const { evento, rev } = transacao(this.db, () => {
+    const { evento, cancelados, rev } = transacao(this.db, () => {
       const evento = this.obterEventoBruto(id)
       if (!evento) throw naoEncontrado('Evento')
       // Os arquivos anexados saem junto (os do disco são apagados pela extensão de anexos);
-      // as reclamações ficam no histórico das máquinas
+      // as reclamações ficam no histórico das máquinas e os contratos, na aba Contratos (os que
+      // esperavam a assinatura deixam de valer)
       this.db.prepare('DELETE FROM anexos WHERE evento_id = ?').run(id)
       this.db.prepare('DELETE FROM eventos WHERE id = ?').run(id)
-      return { evento, rev: this.incrementarRevisao() }
+      const cancelados = this.cancelarContratosDoEvento(id, 'Evento excluído.')
+      return { evento, cancelados, rev: this.incrementarRevisao() }
     })
+    this.publicarContratos(cancelados, rev)
     this.publicar({ revisao: rev, tipo: 'evento', acao: 'excluido', id })
     this.chamarExtensoes((x) => x.eventoExcluido?.(evento))
   }
@@ -683,25 +697,39 @@ export class Repositorio {
         criadoEm: ts,
         atualizadoEm: ts,
       }
+      // Os anteriores que esperavam a assinatura saem antes: o novo é o único que vale
+      const substituidos = this.cancelarContratosDoEvento(evento.id, `Substituído pelo contrato ${codigoContrato(numero)}.`)
       this.gravarContrato(contrato, true)
-      const substituidos: Contrato[] = []
-      for (const antigo of this.listarContratos()) {
-        if (antigo.eventoId !== evento.id || antigo.id === contrato.id || antigo.status !== 'AGUARDANDO') continue
-        const cancelado: Contrato = {
-          ...antigo,
-          status: 'CANCELADO',
-          motivoCancelamento: `Substituído pelo contrato ${codigoContrato(numero)}.`,
-          versao: antigo.versao + 1,
-          atualizadoEm: ts,
-        }
-        this.gravarContrato(cancelado, false)
-        substituidos.push(cancelado)
-      }
       return { contrato, substituidos, rev: this.incrementarRevisao() }
     })
-    for (const c of substituidos) this.publicar({ revisao: rev, tipo: 'contrato', acao: 'salvo', dado: c })
-    this.publicar({ revisao: rev, tipo: 'contrato', acao: 'salvo', dado: contrato })
+    this.publicarContratos([...substituidos, contrato], rev)
     return contrato
+  }
+
+  /**
+   * Contratos do evento que esperavam a assinatura deixam de valer (evento cancelado ou excluído,
+   * ou um contrato novo gerado). Chamado dentro da transação; quem chama publica os devolvidos.
+   */
+  private cancelarContratosDoEvento(eventoId: string, motivo: string): Contrato[] {
+    const linhas = this.db.prepare('SELECT * FROM contratos WHERE evento_id = ?').all(eventoId) as LinhaContrato[]
+    const cancelados: Contrato[] = []
+    for (const antigo of linhas.map((l) => this.paraContrato(l))) {
+      if (antigo.status !== 'AGUARDANDO') continue
+      const cancelado: Contrato = {
+        ...antigo,
+        status: 'CANCELADO',
+        motivoCancelamento: motivo,
+        versao: antigo.versao + 1,
+        atualizadoEm: agora(),
+      }
+      this.gravarContrato(cancelado, false)
+      cancelados.push(cancelado)
+    }
+    return cancelados
+  }
+
+  private publicarContratos(contratos: Contrato[], rev: number) {
+    for (const c of contratos) this.publicar({ revisao: rev, tipo: 'contrato', acao: 'salvo', dado: c })
   }
 
   /**
@@ -718,6 +746,18 @@ export class Repositorio {
       const versao = typeof r.versao === 'number' ? r.versao : undefined
       this.verificarVersao(atual, versao, 'contrato')
       const data = typeof r.data === 'string' && dataIsoValida(r.data) ? r.data : hoje
+      if (acao === 'assinar' && data > hoje) throw new ErroApi(400, 'A data da assinatura não pode ser depois de hoje.')
+      if (acao === 'assinar' && atual.dados.emitidoEm && data < atual.dados.emitidoEm)
+        throw new ErroApi(
+          400,
+          `A data da assinatura não pode ser antes da emissão do contrato (${dataBR(atual.dados.emitidoEm)}).`,
+        )
+      if (acao === 'reabrir' && atual.status === 'CANCELADO') {
+        const evento = this.obterEventoBruto(atual.eventoId)
+        if (!evento) throw new ErroApi(409, 'O evento deste contrato foi excluído: o contrato não pode voltar a valer.')
+        if (evento.status === 'CANCELADO')
+          throw new ErroApi(409, 'O evento está cancelado: reative-o antes de reabrir o contrato.')
+      }
       const motivo = typeof r.motivo === 'string' ? r.motivo.trim().slice(0, LIMITES.texto) : ''
       const mudanca: Partial<Contrato> =
         acao === 'assinar'
@@ -759,6 +799,26 @@ export class Repositorio {
       return { contrato, rev: this.incrementarRevisao() }
     })
     this.publicar({ revisao: rev, tipo: 'contrato', acao: 'salvo', dado: contrato })
+    return contrato
+  }
+
+  /**
+   * Exclui o contrato (o arquivo assinado é apagado pela rota): só um cancelado ou, passado o prazo
+   * de guarda (5 anos depois do fim da locação), qualquer um.
+   */
+  excluirContrato(id: string, hoje = hojeLocalIso()): Contrato {
+    const { contrato, rev } = transacao(this.db, () => {
+      const contrato = this.obterContrato(id)
+      if (!contrato) throw naoEncontrado('Contrato')
+      if (!podeExcluirContrato(contrato, hoje))
+        throw new ErroApi(
+          409,
+          `Só dá para excluir um contrato cancelado ou com mais de ${ANOS_GUARDA_CONTRATO} anos do fim da locação.`,
+        )
+      this.db.prepare('DELETE FROM contratos WHERE id = ?').run(id)
+      return { contrato, rev: this.incrementarRevisao() }
+    })
+    this.publicar({ revisao: rev, tipo: 'contrato', acao: 'excluido', id })
     return contrato
   }
 

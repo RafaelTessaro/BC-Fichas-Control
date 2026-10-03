@@ -99,23 +99,67 @@ const contrato = (extra: Partial<Contrato> = {}): Contrato => ({
   ...extra,
 })
 
+/** Para conferir à mão: SALVAR_PDF=/caminho/contrato.pdf npx vitest run src/lib/pdfContrato.test.ts */
+async function salvarSePedido(doc: { output: (tipo: 'arraybuffer') => ArrayBuffer }, sufixo = '') {
+  // Os testes rodam no Node, mas os tipos desta pasta são os do navegador
+  const ambiente = globalThis as unknown as { process?: { env: Record<string, string | undefined> } }
+  const salvar = ambiente.process?.env.SALVAR_PDF
+  if (!salvar) return
+  const fs = (await import(/* @vite-ignore */ `node:${'fs'}`)) as { writeFileSync: (c: string, d: Uint8Array) => void }
+  fs.writeFileSync(salvar.replace(/\.pdf$/, `${sufixo}.pdf`), new Uint8Array(doc.output('arraybuffer')))
+}
+
 describe('contrato em PDF', () => {
   it('gera as páginas com o texto, as assinaturas, o termo de entrega e o rodapé com as rubricas', async () => {
     const { doc, nome } = await gerarContratoPDF(contrato())
-    // Para conferir à mão: SALVAR_PDF=/caminho/contrato.pdf npx vitest run src/lib/pdfContrato.test.ts
-    // (os testes rodam no Node, mas os tipos desta pasta são os do navegador)
-    const ambiente = globalThis as unknown as { process?: { env: Record<string, string | undefined> } }
-    const salvar = ambiente.process?.env.SALVAR_PDF
-    if (salvar) {
-      const fs = (await import(/* @vite-ignore */ `node:${'fs'}`)) as { writeFileSync: (c: string, d: Uint8Array) => void }
-      fs.writeFileSync(salvar, new Uint8Array(doc.output('arraybuffer')))
-    }
+    await salvarSePedido(doc)
     const paginas = doc.getNumberOfPages()
     expect(paginas).toBeGreaterThanOrEqual(3)
     expect(nome).toMatch(/^Contrato 0007 - .+ - Festa Junina\.pdf$/)
     const texto = doc.output()
     expect(texto).toContain('TERMO DE ENTREGA E DEVOLU')
     expect(texto).toContain(`${paginas} de ${paginas}`)
+  })
+
+  it('pessoa física assinando, datas separadas e empresa sem representante', async () => {
+    const pf: Cliente = {
+      ...cliente,
+      tipo: 'PF',
+      nome: 'João Carlos Pereira',
+      razaoSocial: '',
+      documento: '529.982.247-25',
+      responsavel: '',
+    }
+    const ev: Evento = {
+      ...evento,
+      dias: [
+        { id: 'a', data: '2026-10-10', maquinas: 3, reservas: 1, reservasUsadas: 0 },
+        { id: 'b', data: '2026-10-17', maquinas: 4, reservas: 0, reservasUsadas: 0 },
+      ],
+      maquinasIds: ['P-01', 'P-02', 'P-03', 'G-04'],
+      reservasIds: ['G-04'],
+      bobinasConsignadas: 1,
+    }
+    const { doc } = await gerarContratoPDF(
+      contrato({
+        dados: montarDadosContrato({
+          evento: ev,
+          cliente: pf,
+          maquinas: ['P-01', 'P-02', 'P-03', 'G-04'].map(maq),
+          config: { ...CONFIG_PADRAO, valorReposicaoP: 1800 },
+          entrada: {
+            local: '',
+            retirada: { data: '2026-10-09', hora: '15:00' },
+            devolucao: { data: '2026-10-18', hora: '10:00' },
+            assinante: { nome: 'João Carlos Pereira', cpf: '529.982.247-25' },
+            condicoes: '',
+          },
+          hoje: '2026-10-03',
+        }),
+      }),
+    )
+    await salvarSePedido(doc, '-pf')
+    expect(doc.getNumberOfPages()).toBeGreaterThanOrEqual(3)
   })
 
   it('contrato cancelado avisa no topo de cada página', async () => {

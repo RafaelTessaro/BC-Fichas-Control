@@ -619,7 +619,7 @@ function ContratoConfig({
   const dicaReposicao = (valor: number, tipo: string) =>
     valor > 0
       ? `Cobrado se a máquina ${tipo} for perdida, furtada por descuido ou ficar sem conserto.`
-      : 'Em R$ 0,00, o contrato diz “valor de mercado, por orçamento”.'
+      : `Em R$ 0,00, o contrato diz que a máquina ${tipo} é paga pelo valor de mercado de uma equivalente usada, comprovado por orçamento.`
 
   return (
     <Card id={id} className="scroll-mt-24">
@@ -802,6 +802,7 @@ function ZonaDePerigo({ aoBaixarBackup }: { aoBaixarBackup: () => void }) {
   const maquinas = useDados((s) => s.maquinas.length)
   const ordens = useDados((s) => s.ordens.length)
   const reclamacoes = useDados((s) => s.reclamacoes.length)
+  const contratos = useDados((s) => s.contratos.length)
   const limparTudo = useDados((s) => s.limparTudo)
   const [apagando, setApagando] = useState(false)
   const resumo = listarQuantidades([
@@ -810,6 +811,7 @@ function ZonaDePerigo({ aoBaixarBackup }: { aoBaixarBackup: () => void }) {
     [maquinas, 'máquina', 'máquinas'],
     [ordens, 'manutenção', 'manutenções'],
     [reclamacoes, 'reclamação', 'reclamações'],
+    [contratos, 'contrato', 'contratos'],
   ])
 
   const apagar = async () => {
@@ -855,8 +857,9 @@ function ZonaDePerigo({ aoBaixarBackup }: { aoBaixarBackup: () => void }) {
         <div className="min-w-0">
           <p className="text-sm font-semibold text-ink">Apagar todos os dados</p>
           <p className="mt-1 text-[13px] text-ink-2">
-            Apaga os clientes, eventos, máquinas, manutenções, reclamações e arquivos anexados do servidor, em todos os
-            computadores. As configurações continuam. Antes de apagar, o servidor guarda uma cópia automática.
+            Apaga os clientes, eventos, máquinas, manutenções, reclamações, contratos e arquivos anexados do servidor, em todos os
+            computadores. As configurações continuam. Antes de apagar, o servidor guarda uma cópia automática (as cópias assinadas
+            dos contratos ficam na pasta de dados, para voltarem com ela).
           </p>
           <p className="mt-1.5 text-xs text-muted">{resumo ? `Hoje: ${resumo}.` : 'Não há dados para apagar.'}</p>
         </div>

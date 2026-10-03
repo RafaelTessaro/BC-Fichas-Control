@@ -166,6 +166,11 @@ export interface DataHora {
  * mesmo que depois o cliente, o evento ou as configurações mudem.
  */
 export interface DadosContrato {
+  /**
+   * Versão do texto das cláusulas usada neste contrato: o PDF de um contrato já emitido sai sempre
+   * com o texto da época, mesmo depois de o modelo mudar numa atualização do sistema.
+   */
+  modelo: number
   /** Data de emissão `yyyy-MM-dd` (a da assinatura, no fim do contrato). */
   emitidoEm: string
   empresa: {
@@ -225,6 +230,8 @@ export interface DadosContrato {
   foro: string
   /** Condições a mais (das configurações e as deste contrato). */
   condicoes: string
+  /** Só as condições combinadas para este contrato (para reaproveitar ao gerar um novo). */
+  condicoesContrato: string
 }
 
 /** Arquivo do contrato assinado (foto ou PDF digitalizado), guardado no servidor. */
@@ -408,5 +415,6 @@ export type MensagemTempoReal =
   | { revisao: number; tipo: 'anexo'; acao: 'salvo'; dado: Anexo }
   | { revisao: number; tipo: 'anexo'; acao: 'excluido'; id: ID }
   | { revisao: number; tipo: 'contrato'; acao: 'salvo'; dado: Contrato }
+  | { revisao: number; tipo: 'contrato'; acao: 'excluido'; id: ID }
   | { revisao: number; tipo: 'config'; acao: 'salvo'; dado: Configuracoes }
   | { revisao: number; tipo: 'tudo'; acao: 'recarregar' }

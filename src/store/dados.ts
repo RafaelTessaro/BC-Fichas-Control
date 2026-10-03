@@ -97,6 +97,8 @@ interface DadosState {
     aoProgresso?: (fracao: number) => void,
   ) => Promise<Contrato>
   removerContratoAssinado: (id: string) => Promise<Contrato>
+  /** Exclui um contrato cancelado (ou passado o prazo de guarda), com a cópia assinada. */
+  excluirContrato: (id: string) => Promise<void>
   salvarConfig: (config: Configuracoes) => Promise<Configuracoes>
   /** Grava a lista de serviços de manutenção cadastrados. */
   salvarServicos: (servicos: string[]) => Promise<Configuracoes>
@@ -123,6 +125,21 @@ function mesclar<T extends { id: string; versao: number }>(lista: T[], item: T):
 const mesclarMaquina = (lista: Maquina[], m: Maquina) => ordenarMaquinas(mesclar(lista, m))
 const mesclarOrdem = (lista: OrdemServico[], o: OrdemServico) => mesclar(lista, o).sort((a, b) => b.numero - a.numero)
 const mesclarContrato = (lista: Contrato[], c: Contrato) => mesclar(lista, c).sort((a, b) => b.numero - a.numero)
+/**
+ * Os contratos do evento que esperavam a assinatura deixam de valer (contrato novo, evento
+ * cancelado ou excluído): o servidor faz o mesmo e manda pelo tempo real.
+ */
+const cancelarAguardando = (lista: Contrato[], eventoId: string, motivo: string, exceto = '') =>
+  lista.map((c) =>
+    c.eventoId === eventoId && c.id !== exceto && c.status === 'AGUARDANDO'
+      ? { ...c, status: 'CANCELADO' as const, motivoCancelamento: motivo, versao: c.versao + 1 }
+      : c,
+  )
+/** Evento que acabou de ser cancelado: os contratos dele que esperavam a assinatura deixam de valer. */
+const contratosSeCancelado = (s: Pick<DadosState, 'eventos' | 'contratos'>, salvo: Evento) =>
+  salvo.status === 'CANCELADO' && s.eventos.find((e) => e.id === salvo.id)?.status !== 'CANCELADO'
+    ? cancelarAguardando(s.contratos, salvo.id, 'Evento cancelado.')
+    : s.contratos
 const mesclarReclamacao = (lista: Reclamacao[], r: Reclamacao) =>
   mesclar(lista, r).sort((a, b) => b.data.localeCompare(a.data) || b.criadoEm.localeCompare(a.criadoEm))
 /** Arquivos não mudam depois de enviados: só entram (sem repetir) ou saem. */
@@ -213,7 +230,9 @@ export const useDados = create<DadosState>()((set, get) => {
         set({ anexos: msg.acao === 'salvo' ? mesclarAnexo(s.anexos, msg.dado) : s.anexos.filter((a) => a.id !== msg.id) })
         break
       case 'contrato':
-        set({ contratos: mesclarContrato(s.contratos, msg.dado) })
+        set({
+          contratos: msg.acao === 'salvo' ? mesclarContrato(s.contratos, msg.dado) : s.contratos.filter((c) => c.id !== msg.id),
+        })
         break
       case 'config':
         set({ config: msg.dado })
@@ -310,13 +329,13 @@ export const useDados = create<DadosState>()((set, get) => {
 
     async salvarEvento(dados, alvo) {
       const salvo = alvo ? await api.atualizarEvento(alvo.id, dados, alvo.versao) : await api.criarEvento(dados)
-      set((s) => ({ eventos: mesclar(s.eventos, salvo) }))
+      set((s) => ({ eventos: mesclar(s.eventos, salvo), contratos: contratosSeCancelado(s, salvo) }))
       return salvo
     },
 
     async alterarEvento(id, patch) {
       const salvo = await api.alterarEvento(id, patch)
-      set((s) => ({ eventos: mesclar(s.eventos, salvo) }))
+      set((s) => ({ eventos: mesclar(s.eventos, salvo), contratos: contratosSeCancelado(s, salvo) }))
       return salvo
     },
 
@@ -334,7 +353,11 @@ export const useDados = create<DadosState>()((set, get) => {
 
     async excluirEvento(id) {
       await api.excluirEvento(id)
-      set((s) => ({ eventos: s.eventos.filter((e) => e.id !== id), anexos: s.anexos.filter((a) => a.eventoId !== id) }))
+      set((s) => ({
+        eventos: s.eventos.filter((e) => e.id !== id),
+        anexos: s.anexos.filter((a) => a.eventoId !== id),
+        contratos: cancelarAguardando(s.contratos, id, 'Evento excluído.'),
+      }))
     },
 
     async salvarMaquina(dados, alvo) {
@@ -404,23 +427,18 @@ export const useDados = create<DadosState>()((set, get) => {
 
     async gerarContrato(dados) {
       const novo = await api.criarContrato(dados)
-      // O servidor cancela o anterior que esperava a assinatura (chega também pelo tempo real)
       set((s) => ({
         contratos: mesclarContrato(
-          s.contratos.map((c) =>
-            c.eventoId === novo.eventoId && c.id !== novo.id && c.status === 'AGUARDANDO'
-              ? {
-                  ...c,
-                  status: 'CANCELADO' as const,
-                  motivoCancelamento: `Substituído pelo contrato ${codigoContrato(novo.numero)}.`,
-                  versao: c.versao + 1,
-                }
-              : c,
-          ),
+          cancelarAguardando(s.contratos, novo.eventoId, `Substituído pelo contrato ${codigoContrato(novo.numero)}.`, novo.id),
           novo,
         ),
       }))
       return novo
+    },
+
+    async excluirContrato(id) {
+      await api.excluirContrato(id)
+      set((s) => ({ contratos: s.contratos.filter((c) => c.id !== id) }))
     },
 
     async alterarContrato(id, mudanca, versao) {

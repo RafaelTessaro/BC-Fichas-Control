@@ -5,6 +5,7 @@ import { useMemo } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
 import logo from '../../assets/logo-mark.png'
 import { cn } from '../../lib/cn'
+import { aguardandoSemEfeito } from '../../lib/contratos'
 import { useDados } from '../../store/dados'
 import { useUI, type Tema } from '../../store/ui'
 import { NAV, NAV_CONFIG, type ItemNav } from './nav'
@@ -167,7 +168,10 @@ export function Sidebar({ mobile, aoNavegar }: { mobile?: boolean; aoNavegar?: (
   const ordens = useDados((s) => s.ordens)
   const osAbertas = useMemo(() => ordens.filter(osEmAberto).length, [ordens])
   const contratos = useDados((s) => s.contratos)
-  const aAssinar = useMemo(() => contratos.filter((c) => c.status === 'AGUARDANDO').length, [contratos])
+  const aAssinar = useMemo(
+    () => contratos.filter((c) => c.status === 'AGUARDANDO' && !aguardandoSemEfeito(c, eventos)).length,
+    [contratos, eventos],
+  )
   const contadores: Record<string, ContadorNav> = {
     '/eventos': { valor: pendentes, descricao: `${pendentes} ${pendentes === 1 ? 'evento pendente' : 'eventos pendentes'}` },
     '/contratos': {

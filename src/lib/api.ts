@@ -164,6 +164,7 @@ export const api = {
     `/api/contratos/${encodeURIComponent(id)}/arquivo${baixar ? '?baixar=1' : ''}`,
   enviarContratoAssinado,
   removerContratoAssinado: (id: string) => requisitar<Contrato>('DELETE', `/api/contratos/${encodeURIComponent(id)}/arquivo`),
+  excluirContrato: (id: string) => requisitar<void>('DELETE', `/api/contratos/${encodeURIComponent(id)}`),
 
   configEmail: () => requisitar<ConfigEmail>('GET', '/api/email/config'),
   salvarConfigEmail: (c: ConfigEmailEntrada) => requisitar<ConfigEmail>('PUT', '/api/email/config', c),

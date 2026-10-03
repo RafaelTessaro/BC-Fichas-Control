@@ -629,6 +629,8 @@ export function normalizarDadosContrato(v: unknown): DadosContrato {
   const com = obj(ev.comCliente)
   const t = (x: unknown, max = LIMITES.texto) => texto(x, max)
   return {
+    // Gerados antes da versão do modelo: todos são do modelo 1
+    modelo: inteiro(r.modelo, 1000, 1),
     emitidoEm: dataIsoValida(r.emitidoEm) ? (r.emitidoEm as string) : '',
     empresa: {
       nome: t(e.nome),
@@ -646,7 +648,8 @@ export function normalizarDadosContrato(v: unknown): DadosContrato {
       nome: t(c.nome),
       fantasia: t(c.fantasia),
       documento: t(c.documento, 40),
-      endereco: t(c.endereco),
+      // Logradouro, número, complemento, bairro, cidade e CEP numa linha só
+      endereco: t(c.endereco, LIMITES.texto * 4),
       telefone: t(c.telefone, 40),
       email: t(c.email, 120),
     },
@@ -694,7 +697,9 @@ export function normalizarDadosContrato(v: unknown): DadosContrato {
     retirada: dataHora(r.retirada),
     devolucao: dataHora(r.devolucao),
     foro: t(r.foro),
-    condicoes: texto(r.condicoes, LIMITES.textoLongo),
+    // As condições das Configurações e as deste contrato, juntas
+    condicoes: texto(r.condicoes, LIMITES.textoLongo * 2 + 1),
+    condicoesContrato: texto(r.condicoesContrato, LIMITES.textoLongo),
   }
 }
 

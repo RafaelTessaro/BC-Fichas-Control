@@ -88,10 +88,13 @@ describe('contratos de locação', () => {
   it('assinar, cancelar e reabrir, com controle de versão', async () => {
     const e = await novoEvento()
     const c = (await req<Contrato>('POST', '/api/contratos', pedido(e.id), 201)).json
-    const assinado = (
-      await req<Contrato>('PATCH', `/api/contratos/${c.id}`, { acao: 'assinar', data: '2099-05-09', versao: 1 }, 200)
-    ).json
-    expect(assinado).toMatchObject({ status: 'ASSINADO', assinadoEm: '2099-05-09', versao: 2 })
+    const hoje = c.dados.emitidoEm
+    // A data da assinatura fica entre a emissão e hoje
+    expect((await req('PATCH', `/api/contratos/${c.id}`, { acao: 'assinar', data: '2099-05-09' })).status).toBe(400)
+    expect((await req('PATCH', `/api/contratos/${c.id}`, { acao: 'assinar', data: '2000-01-01' })).status).toBe(400)
+    const assinado = (await req<Contrato>('PATCH', `/api/contratos/${c.id}`, { acao: 'assinar', data: hoje, versao: 1 }, 200))
+      .json
+    expect(assinado).toMatchObject({ status: 'ASSINADO', assinadoEm: hoje, versao: 2 })
     expect((await req('PATCH', `/api/contratos/${c.id}`, { acao: 'cancelar', versao: 1 })).status).toBe(409)
     const cancelado = (
       await req<Contrato>('PATCH', `/api/contratos/${c.id}`, { acao: 'cancelar', motivo: 'Cliente desistiu' }, 200)
@@ -100,6 +103,45 @@ describe('contratos de locação', () => {
     const reaberto = (await req<Contrato>('PATCH', `/api/contratos/${c.id}`, { acao: 'reabrir' }, 200)).json
     expect(reaberto).toMatchObject({ status: 'AGUARDANDO', assinadoEm: '', motivoCancelamento: '' })
     expect((await req('PATCH', `/api/contratos/${c.id}`, { acao: 'apagar' })).status).toBe(400)
+  })
+
+  it('cancelar ou excluir o evento cancela os contratos que esperavam a assinatura; o assinado fica', async () => {
+    const e1 = await novoEvento()
+    const e2 = (await req<Evento>('POST', `/api/eventos/${e1.id}/duplicar`, undefined, 201)).json
+    const c1 = (await req<Contrato>('POST', '/api/contratos', pedido(e1.id), 201)).json
+    const c2 = (await req<Contrato>('POST', '/api/contratos', pedido(e2.id), 201)).json
+    const c3 = (await req<Contrato>('POST', '/api/contratos', pedido(e2.id), 201)).json
+    await req('PATCH', `/api/contratos/${c3.id}`, { acao: 'assinar' }, 200)
+    await req('PATCH', `/api/eventos/${e1.id}`, { status: 'CANCELADO' }, 200)
+    await req('DELETE', `/api/eventos/${e2.id}`, undefined, 204)
+    const porId = new Map((await dados()).contratos.map((c) => [c.id, c]))
+    expect(porId.get(c1.id)).toMatchObject({ status: 'CANCELADO', motivoCancelamento: 'Evento cancelado.' })
+    expect(porId.get(c2.id)).toMatchObject({ status: 'CANCELADO', motivoCancelamento: 'Substituído pelo contrato nº 0003.' })
+    expect(porId.get(c3.id)?.status).toBe('ASSINADO')
+    // Não volta a valer com o evento cancelado ou excluído
+    expect((await req('PATCH', `/api/contratos/${c1.id}`, { acao: 'reabrir' })).status).toBe(409)
+    expect((await req('PATCH', `/api/contratos/${c2.id}`, { acao: 'reabrir' })).status).toBe(409)
+    // Reativado o evento, pode reabrir
+    await req('PATCH', `/api/eventos/${e1.id}`, { status: 'EM_ABERTO' }, 200)
+    expect((await req<Contrato>('PATCH', `/api/contratos/${c1.id}`, { acao: 'reabrir' }, 200)).json.status).toBe('AGUARDANDO')
+  })
+
+  it('exclui só o contrato cancelado, com a cópia assinada', async () => {
+    const e = await novoEvento()
+    const c = (await req<Contrato>('POST', '/api/contratos', pedido(e.id), 201)).json
+    const r = await app.inject({
+      method: 'POST',
+      url: `/api/contratos/${c.id}/arquivo`,
+      headers: { ...H, 'content-type': 'application/octet-stream', 'x-nome': 'a.pdf', 'x-tipo': 'application/pdf' },
+      payload: Buffer.from('%PDF-1.4\n'),
+    })
+    expect(r.statusCode, r.body).toBe(200)
+    expect((await req('DELETE', `/api/contratos/${c.id}`)).status).toBe(409)
+    await req('PATCH', `/api/contratos/${c.id}`, { acao: 'cancelar', motivo: 'Teste' }, 200)
+    await req('DELETE', `/api/contratos/${c.id}`, undefined, 204)
+    expect((await dados()).contratos).toEqual([])
+    expect(existsSync(join(pasta, 'contratos', c.id))).toBe(false)
+    expect((await req('DELETE', `/api/contratos/${c.id}`)).status).toBe(404)
   })
 
   it('guarda a cópia assinada (PDF ou foto), marca como assinado, mostra e remove', async () => {

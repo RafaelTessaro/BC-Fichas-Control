@@ -5,11 +5,21 @@
 // que limitam direitos do consumidor em destaque — aqui, em negrito (§ 4º).
 
 import { jsPDF } from 'jspdf'
-import { codigoContrato, textoContrato, textoDataHora } from '#shared/contrato.ts'
+import {
+  assinaOProprio,
+  codigoContrato,
+  type PeriodoRetirada,
+  periodosRetirada,
+  textoContrato,
+  textoDataHora,
+} from '#shared/contrato.ts'
 import type { Contrato } from '#shared/tipos.ts'
 import { carregarTimbrado, LINHA, SECUNDARIO, TINTA, VERDE } from './pdf'
 import { nomeArquivoSeguro } from './storage'
-import { txt } from './pdfTexto'
+import { txt as textoSeguro } from './pdfTexto'
+
+/** Texto para o PDF com "R$" sempre junto do valor (espaço que não quebra a linha). */
+const txt = (s: string) => textoSeguro(s).replace(/R\$ (?=\d)/g, 'R$\u00a0')
 
 const L = 22
 const R = 188
@@ -135,25 +145,25 @@ export async function gerarContratoPDF(contrato: Pick<Contrato, 'numero' | 'dado
       doc.setFont('helvetica', i === 0 ? 'bold' : 'normal').setFontSize(CORPO)
       return (doc.splitTextToSize(txt(l), LARGURA_ASSINATURA) as string[]).map((t) => ({ t, negrito: i === 0 }))
     })
-  const locadora = quebrar(
-    [
-      'LOCADORA',
-      d.empresa.razaoSocial,
-      d.empresa.representante ? d.empresa.representante : '',
-      d.empresa.representanteCpf ? `CPF ${d.empresa.representanteCpf}` : '',
-    ].filter(Boolean),
-  )
+  const EM_BRANCO = '____________________'
+  const locadora = quebrar([
+    'LOCADORA',
+    d.empresa.razaoSocial || `Razão social: ${EM_BRANCO}`,
+    d.empresa.representante || `Nome: ${EM_BRANCO}`,
+    d.empresa.representanteCpf ? `CPF ${d.empresa.representanteCpf}` : `CPF: ${EM_BRANCO}`,
+  ])
+  // O próprio cliente assina: nome e documento dele, sem repetir. Senão, o cliente e quem assina por ele
+  const proprio = assinaOProprio(d)
+  const documentoProprio = d.cliente.documento || (d.assinante.cpf ? `CPF ${d.assinante.cpf}` : '')
   const locatario = quebrar(
-    [
-      'LOCATÁRIO',
-      d.cliente.nome || 'Nome: ____________________',
-      d.assinante.nome || (d.cliente.tipo === 'PF' ? '' : 'Representante: ____________________'),
-      d.assinante.cpf
-        ? `CPF ${d.assinante.cpf}`
-        : d.cliente.tipo === 'PF' && d.cliente.documento
-          ? ''
-          : 'CPF: ____________________',
-    ].filter(Boolean),
+    proprio
+      ? ['LOCATÁRIO', d.cliente.nome || d.assinante.nome || `Nome: ${EM_BRANCO}`, documentoProprio || `CPF: ${EM_BRANCO}`]
+      : [
+          'LOCATÁRIO',
+          d.cliente.nome || `Nome: ${EM_BRANCO}`,
+          d.assinante.nome ? `por ${d.assinante.nome}` : `Representante: ${EM_BRANCO}`,
+          d.assinante.cpf ? `CPF ${d.assinante.cpf}` : `CPF: ${EM_BRANCO}`,
+        ],
   )
   const ESPACO_ASSINAR = 20
   const alturaAssinaturas = ESPACO_ASSINAR + Math.max(locadora.length, locatario.length) * ENTRELINHA + 2
@@ -193,12 +203,17 @@ export async function gerarContratoPDF(contrato: Pick<Contrato, 'numero' | 'dado
   }
   y += alturaAssinaturas
 
-  termoDeEntrega(
-    doc,
-    contrato,
-    novaPagina,
-    () => y,
-    (v) => (y = v),
+  // Um termo por período (datas separadas: as máquinas voltam à empresa entre um uso e outro)
+  const periodos = periodosRetirada(d)
+  periodos.forEach((periodo, i) =>
+    termoDeEntrega(
+      doc,
+      contrato,
+      { ...periodo, indice: i, total: periodos.length },
+      novaPagina,
+      () => y,
+      (v) => (y = v),
+    ),
   )
 
   // Rodapé de cada página: número do contrato, página e espaço para as rubricas
@@ -219,11 +234,12 @@ export async function gerarContratoPDF(contrato: Pick<Contrato, 'numero' | 'dado
 
 /**
  * Termo de Entrega e Devolução (anexo do contrato): uma linha por máquina para conferir na retirada
- * e na devolução, as bobinas e as assinaturas dos dois momentos.
+ * e na devolução, as bobinas e as assinaturas dos dois momentos. Com datas separadas, um por período.
  */
 function termoDeEntrega(
   doc: jsPDF,
   contrato: Pick<Contrato, 'numero' | 'dados'>,
+  periodo: PeriodoRetirada & { indice: number; total: number },
   novaPagina: (primeira?: boolean) => void,
   lerY: () => number,
   mudarY: (y: number) => void,
@@ -241,13 +257,20 @@ function termoDeEntrega(
     .setFont('helvetica', 'normal')
     .setFontSize(CORPO)
     .setTextColor(...SECUNDARIO)
-  doc.text(txt(`Anexo do contrato ${codigoContrato(contrato.numero)} - ${d.evento.nome}`), CENTRO, y, { align: 'center' })
-  y += 9
+  const qualPeriodo = periodo.total > 1 ? ` - ${periodo.indice + 1}º de ${periodo.total} períodos` : ''
+  for (const linha of doc.splitTextToSize(
+    txt(`Anexo do contrato ${codigoContrato(contrato.numero)} - ${d.evento.nome}${qualPeriodo}`),
+    W,
+  ) as string[]) {
+    doc.text(linha, CENTRO, y, { align: 'center' })
+    y += ENTRELINHA
+  }
+  y += 3.4
   doc.setTextColor(...TINTA)
   for (const linha of [
     `Locatário: ${d.cliente.nome || '______________________________'}`,
-    `Retirada: ${textoDataHora(d.retirada)}`,
-    `Devolução: ${textoDataHora(d.devolucao)}`,
+    `Retirada: ${textoDataHora(periodo.retirada)}`,
+    `Devolução: ${textoDataHora(periodo.devolucao)}`,
   ]) {
     const partes = doc.splitTextToSize(txt(linha), W) as string[]
     partes.forEach((p) => {
@@ -312,7 +335,8 @@ function termoDeEntrega(
   y += 7
 
   const linhasInfo = [
-    `Bobinas entregues: ${d.valores.bobinasConsignadas || '______'} (lacradas)`,
+    // As consignadas saem na primeira retirada; nos períodos seguintes, anota-se o que for levado
+    `Bobinas entregues: ${(periodo.indice === 0 && d.valores.bobinasConsignadas) || '______'} (lacradas)`,
     'Bobinas devolvidas lacradas: ______    Abertas ou usadas: ______',
     'Bobinas não devolvidas: ______',
     ...(d.evento.dias.some((x) => x.reservas > 0) ? ['Reserva usada nas datas: ______________________________'] : []),

@@ -15,13 +15,15 @@ import {
   Ticket,
   Trash2,
   Upload,
+  X,
 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { codigoContrato } from '#shared/contrato.ts'
+import { ANOS_GUARDA_CONTRATO, codigoContrato, podeExcluirContrato } from '#shared/contrato.ts'
 import type { Contrato } from '#shared/tipos.ts'
 import { api } from '../../lib/api'
-import { contratoVigente } from '../../lib/contratos'
+import { aguardandoSemEfeito, contratoVigente } from '../../lib/contratos'
+import { useHoje } from '../../lib/hoje'
 import { useDados } from '../../store/dados'
 import { avisarErro, toast } from '../../store/ui'
 import { EnviarDocumentoModal, type CanalEnvio } from '../EnviarDocumentoModal'
@@ -52,7 +54,9 @@ export function useAcoesContrato() {
   const clientes = useDados((s) => s.clientes)
   const alterarContrato = useDados((s) => s.alterarContrato)
   const removerContratoAssinado = useDados((s) => s.removerContratoAssinado)
+  const excluirContrato = useDados((s) => s.excluirContrato)
   const navegar = useNavigate()
+  const hoje = useHoje()
   const [estado, setEstado] = useState<EstadoJanela | null>(null)
   const [baixando, setBaixando] = useState<string | null>(null)
 
@@ -125,6 +129,26 @@ export function useAcoesContrato() {
     }
   }
 
+  const excluir = async (c: Contrato) => {
+    const ok = await confirmar({
+      titulo: `Excluir o contrato ${codigoContrato(c.numero)}?`,
+      descricao:
+        (c.status === 'CANCELADO'
+          ? 'Ele sai da aba Contratos'
+          : `Já passaram ${ANOS_GUARDA_CONTRATO} anos do fim da locação, o prazo de guarda. Ele sai da aba Contratos`) +
+        `${c.arquivo ? ', junto com a cópia assinada' : ''}. Não dá para desfazer; o número dele não é usado de novo.`,
+      confirmar: 'Excluir contrato',
+      perigo: true,
+    })
+    if (!ok) return
+    try {
+      await excluirContrato(c.id)
+      toast.sucesso(`Contrato ${codigoContrato(c.numero)} excluído`)
+    } catch (e) {
+      avisarErro('Não foi possível excluir o contrato', e)
+    }
+  }
+
   const removerArquivo = async (c: Contrato) => {
     const ok = await confirmar({
       titulo: 'Apagar a cópia assinada?',
@@ -153,7 +177,9 @@ export function useAcoesContrato() {
     const sep = () => {
       if (lista.length && lista[lista.length - 1] !== 'sep') lista.push('sep')
     }
-    const ativo = c.status !== 'CANCELADO'
+    // Esperando a assinatura de um evento cancelado ou excluído: não vale mais, só dá para cancelar
+    const semEfeito = aguardandoSemEfeito(c, eventos)
+    const ativo = c.status !== 'CANCELADO' && !semEfeito
     add('pdf', { label: 'Baixar PDF', icone: <FileDown className="h-4 w-4" />, aoClicar: () => void baixarPdf(c) })
     if (ativo && temEvento(c)) {
       add('whatsapp', {
@@ -183,7 +209,7 @@ export function useAcoesContrato() {
         aoClicar: () => abrir('anexar', c),
       })
     }
-    if (c.status === 'AGUARDANDO') {
+    if (c.status === 'AGUARDANDO' && !semEfeito) {
       add('assinar', {
         label: 'Marcar como assinado',
         icone: <CalendarCheck className="h-4 w-4" />,
@@ -201,7 +227,8 @@ export function useAcoesContrato() {
         aoClicar: () => navegar(`/eventos/${c.eventoId}`),
       })
     }
-    if (c.status !== 'AGUARDANDO') {
+    // Cancelado só volta a valer com o evento de pé (o servidor confere o mesmo)
+    if (c.status === 'ASSINADO' || (c.status === 'CANCELADO' && podeGerar(c))) {
       add('reabrir', { label: 'Reabrir', icone: <RotateCcw className="h-4 w-4" />, aoClicar: () => void reabrir(c) })
     }
     sep()
@@ -213,11 +240,20 @@ export function useAcoesContrato() {
         perigo: true,
       })
     }
-    if (ativo) {
+    if (c.status !== 'CANCELADO') {
       add('cancelar', {
         label: 'Cancelar contrato',
         icone: <CircleSlash className="h-4 w-4" />,
-        aoClicar: () => abrir('cancelar', c),
+        aoClicar: () =>
+          abrir('cancelar', c, semEfeito ? { motivo: temEvento(c) ? 'Evento cancelado.' : 'Evento excluído.' } : {}),
+        perigo: true,
+      })
+    }
+    if (podeExcluirContrato(c, hoje)) {
+      add('excluir', {
+        label: 'Excluir contrato',
+        icone: <X className="h-4 w-4" />,
+        aoClicar: () => void excluir(c),
         perigo: true,
       })
     }
@@ -252,6 +288,7 @@ export function useAcoesContrato() {
     verAssinado,
     baixarAssinado,
     reabrir,
+    excluir,
     removerArquivo,
     itensMenu,
     temEvento,

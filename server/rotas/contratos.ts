@@ -24,6 +24,12 @@ export async function rotasContratos(app: FastifyInstance, { repo, pastaDados }:
 
   app.post('/api/contratos', async (req, reply) => reply.code(201).send(repo.criarContrato(req.body)))
   app.patch('/api/contratos/:id', async (req: ComId) => repo.alterarContrato(req.params.id, req.body))
+  app.delete('/api/contratos/:id', async (req: ComId, reply) => {
+    const contrato = repo.excluirContrato(req.params.id)
+    // A cópia assinada sai junto (a pasta do contrato inteira)
+    rmSync(join(caminho(contrato.id), '..'), { recursive: true, force: true })
+    return reply.code(204).send()
+  })
 
   // O parser de application/octet-stream é o dos anexos (registrado em rotasAnexos)
   app.post('/api/contratos/:id/arquivo', async (req: ComId) => {

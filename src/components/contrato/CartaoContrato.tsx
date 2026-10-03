@@ -23,12 +23,14 @@ import {
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type ReactNode } from 'react'
+import { periodoEvento } from '#shared/maquinas.ts'
 import { codigoContrato } from '#shared/contrato.ts'
 import type { Contrato, Evento } from '#shared/tipos.ts'
 import { tamanhoLegivel } from '../../lib/anexos'
 import { cn } from '../../lib/cn'
 import { contratosDoEvento, dataHoraCurta, juntarLista, mudancasDoContrato } from '../../lib/contratos'
 import { dataCurta } from '../../lib/format'
+import { useHoje } from '../../lib/hoje'
 import { useDados } from '../../store/dados'
 import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
@@ -37,8 +39,14 @@ import { useAcoesContrato } from './AcoesContrato'
 import { GerarContratoModal } from './GerarContratoModal'
 import { StatusContratoBadge } from './StatusContrato'
 
-/** Só reage ao arrastar arquivos (não a um texto arrastado de dentro da página). */
-const temArquivos = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files')
+/**
+ * Só reage ao arrastar arquivos (não a um texto arrastado de dentro da página) e só dentro do
+ * cartão: as janelas abertas por ele (ex.: a de anexar) ficam em outro lugar da página, mas os
+ * eventos delas sobem até aqui pela árvore do React.
+ */
+const temArquivos = (e: DragEvent) => !!e.dataTransfer?.types.includes('Files') && dentroDoCartao(e)
+const dentroDoCartao = (e: DragEvent | ClipboardEvent) =>
+  e.target instanceof Node && (e.currentTarget as HTMLElement).contains(e.target)
 
 export function CartaoContrato({ evento }: { evento: Evento }) {
   const contratos = useDados((s) => s.contratos)
@@ -62,47 +70,52 @@ export function CartaoContrato({ evento }: { evento: Evento }) {
     [vigente, evento, cliente, maquinas, config],
   )
   const cancelado = evento.status === 'CANCELADO'
+  const hoje = useHoje()
+  const fim = periodoEvento(evento)?.fim ?? ''
+  // Aluguel que já terminou: mudar o cadastro depois não pede um contrato novo
+  const encerrado = evento.status === 'FINALIZADO' || (!!fim && fim < hoje)
 
   // Soltar a foto ou o PDF assinado sobre o cartão, ou colar (Ctrl+V) uma foto com o cartão
   // selecionado (clicado), abre a janela de anexar já com o arquivo. O colar fica só com o cartão:
   // não vai também para os "Arquivos do evento", que ouvem o Ctrl+V na página toda.
-  const receberArquivo = vigente
-    ? {
-        tabIndex: -1,
-        onPaste: (e: ClipboardEvent) => {
-          const arquivos = [...e.clipboardData.files]
-          if (!arquivos.length) return
-          e.preventDefault()
-          e.stopPropagation()
-          acoes.abrir('anexar', vigente, { arquivos })
-        },
-        onDragEnter: (e: DragEvent) => {
-          if (!temArquivos(e)) return
-          e.preventDefault()
-          profundidade.current++
-          setArrastando(true)
-        },
-        onDragOver: (e: DragEvent) => {
-          if (!temArquivos(e)) return
-          e.preventDefault()
-          e.dataTransfer.dropEffect = 'copy'
-        },
-        onDragLeave: (e: DragEvent) => {
-          if (!temArquivos(e)) return
-          profundidade.current = Math.max(0, profundidade.current - 1)
-          if (!profundidade.current) setArrastando(false)
-        },
-        onDrop: (e: DragEvent) => {
-          if (!temArquivos(e)) return
-          e.preventDefault()
-          // Não deixa o arquivo cair também nos "Arquivos do evento"
-          e.stopPropagation()
-          profundidade.current = 0
-          setArrastando(false)
-          acoes.abrir('anexar', vigente, { arquivos: [...e.dataTransfer.files] })
-        },
-      }
-    : {}
+  const receberArquivo =
+    vigente && !(cancelado && vigente.status === 'AGUARDANDO')
+      ? {
+          tabIndex: -1,
+          onPaste: (e: ClipboardEvent) => {
+            const arquivos = [...e.clipboardData.files]
+            if (!arquivos.length || !dentroDoCartao(e)) return
+            e.preventDefault()
+            e.stopPropagation()
+            acoes.abrir('anexar', vigente, { arquivos })
+          },
+          onDragEnter: (e: DragEvent) => {
+            if (!temArquivos(e)) return
+            e.preventDefault()
+            profundidade.current++
+            setArrastando(true)
+          },
+          onDragOver: (e: DragEvent) => {
+            if (!temArquivos(e)) return
+            e.preventDefault()
+            e.dataTransfer.dropEffect = 'copy'
+          },
+          onDragLeave: (e: DragEvent) => {
+            if (!temArquivos(e)) return
+            profundidade.current = Math.max(0, profundidade.current - 1)
+            if (!profundidade.current) setArrastando(false)
+          },
+          onDrop: (e: DragEvent) => {
+            if (!temArquivos(e)) return
+            e.preventDefault()
+            // Não deixa o arquivo cair também nos "Arquivos do evento"
+            e.stopPropagation()
+            profundidade.current = 0
+            setArrastando(false)
+            acoes.abrir('anexar', vigente, { arquivos: [...e.dataTransfer.files] })
+          },
+        }
+      : {}
 
   return (
     <Card id="contrato" className="relative scroll-mt-24 outline-none" {...receberArquivo}>
@@ -119,6 +132,8 @@ export function CartaoContrato({ evento }: { evento: Evento }) {
           assinadosAntes={assinadosAntes}
           acoes={acoes}
           podeGerar={!cancelado}
+          eventoCancelado={cancelado}
+          encerrado={encerrado}
           aoGerarNovo={() => setGerar(true)}
         />
       ) : (
@@ -231,6 +246,8 @@ function ContratoAtual({
   assinadosAntes,
   acoes,
   podeGerar,
+  eventoCancelado,
+  encerrado,
   aoGerarNovo,
 }: {
   contrato: Contrato
@@ -239,8 +256,13 @@ function ContratoAtual({
   assinadosAntes: Contrato[]
   acoes: ReturnType<typeof useAcoesContrato>
   podeGerar: boolean
+  eventoCancelado: boolean
+  /** O aluguel já terminou (finalizado ou a última data passou). */
+  encerrado: boolean
   aoGerarNovo: () => void
 }) {
+  // Esperando a assinatura com o evento cancelado: não vale mais (o servidor já cancela sozinho)
+  const semEfeito = eventoCancelado && c.status === 'AGUARDANDO'
   const baixando = acoes.baixando === c.id
   const retirada = dataHoraCurta(c.dados.retirada)
   const devolucao = dataHoraCurta(c.dados.devolucao)
@@ -261,7 +283,28 @@ function ContratoAtual({
         {c.status === 'ASSINADO' && <Dado rotulo="Assinado em">{c.assinadoEm ? dataCurta(c.assinadoEm) : '—'}</Dado>}
       </dl>
 
-      {mudancas.length > 0 && (
+      {eventoCancelado && (
+        <div className="flex items-start gap-2 rounded-xl bg-surface-2 px-3.5 py-3 text-[13px] text-ink-2">
+          <CircleSlash className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
+          <span>
+            {semEfeito
+              ? 'O evento foi cancelado: este contrato não vale mais. Cancele-o no menu “Mais”.'
+              : 'O evento foi cancelado. O contrato assinado fica guardado; os valores seguem a cláusula do cancelamento.'}
+          </span>
+        </div>
+      )}
+
+      {mudancas.length > 0 && !eventoCancelado && encerrado && (
+        <p className="flex items-start gap-2 rounded-xl bg-surface-2 px-3.5 py-3 text-[13px] text-ink-2">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted" />
+          <span>
+            O cadastro mudou depois deste contrato ({juntarLista(mudancas)}). Como o aluguel já terminou, o contrato fica como foi
+            combinado.
+          </span>
+        </p>
+      )}
+
+      {mudancas.length > 0 && !eventoCancelado && !encerrado && (
         <div className="rounded-xl bg-warning-soft px-3.5 py-3 text-[13px] text-warning">
           <p className="flex items-start gap-2 font-medium">
             <TriangleAlert className="mt-0.5 h-4 w-4 shrink-0" />
@@ -357,31 +400,34 @@ function ContratoAtual({
           icone={baixando ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <FileDown className="h-4 w-4" />}
           onClick={() => void acoes.baixarPdf(c)}
           disabled={baixando}
+          className={cn(semEfeito && 'col-span-2')}
         >
           Baixar PDF
         </Button>
-        <Menu
-          alinhar="right"
-          gatilho={(abrir) => (
-            <Button tamanho="sm" icone={<Send className="h-4 w-4" />} onClick={abrir} className="w-full">
-              Enviar
-              <ChevronDown className="-mr-1 h-3.5 w-3.5 text-muted" />
-            </Button>
-          )}
-          itens={[
-            {
-              label: 'Por WhatsApp',
-              icone: <MessageCircle className="h-4 w-4" />,
-              aoClicar: () => acoes.abrir('enviar', c, { canal: 'whatsapp' }),
-            },
-            {
-              label: 'Por e-mail',
-              icone: <Mail className="h-4 w-4" />,
-              aoClicar: () => acoes.abrir('enviar', c, { canal: 'email' }),
-            },
-          ]}
-        />
-        {!c.arquivo && (
+        {!semEfeito && (
+          <Menu
+            alinhar="right"
+            gatilho={(abrir) => (
+              <Button tamanho="sm" icone={<Send className="h-4 w-4" />} onClick={abrir} className="w-full">
+                Enviar
+                <ChevronDown className="-mr-1 h-3.5 w-3.5 text-muted" />
+              </Button>
+            )}
+            itens={[
+              {
+                label: 'Por WhatsApp',
+                icone: <MessageCircle className="h-4 w-4" />,
+                aoClicar: () => acoes.abrir('enviar', c, { canal: 'whatsapp' }),
+              },
+              {
+                label: 'Por e-mail',
+                icone: <Mail className="h-4 w-4" />,
+                aoClicar: () => acoes.abrir('enviar', c, { canal: 'email' }),
+              },
+            ]}
+          />
+        )}
+        {!c.arquivo && !semEfeito && (
           <Button
             tamanho="sm"
             variante={c.status === 'AGUARDANDO' ? 'soft' : 'secondary'}
@@ -395,7 +441,7 @@ function ContratoAtual({
         )}
       </div>
 
-      {c.status === 'AGUARDANDO' && (
+      {c.status === 'AGUARDANDO' && !semEfeito && (
         <p className="-mt-1 text-center text-xs text-muted">
           Assinou no papel e a foto fica para depois?{' '}
           <button

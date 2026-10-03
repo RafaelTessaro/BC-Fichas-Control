@@ -31,7 +31,14 @@ export function AssinarModal({ aberto, contrato, aoFechar }: { aberto: boolean; 
       setSalvando(false)
     }
   }
-  const erro = data > hoje ? 'A data da assinatura não pode ser depois de hoje.' : null
+  // Entre a emissão do contrato e hoje (o servidor confere o mesmo)
+  const emitidoEm = contrato?.dados.emitidoEm ?? ''
+  const erro =
+    data > hoje
+      ? 'A data da assinatura não pode ser depois de hoje.'
+      : data && emitidoEm && data < emitidoEm
+        ? `A data da assinatura não pode ser antes da emissão do contrato (${dataCurta(emitidoEm)}).`
+        : null
 
   const salvar = async () => {
     if (!contrato || erro) return
@@ -70,6 +77,7 @@ export function AssinarModal({ aberto, contrato, aoFechar }: { aberto: boolean; 
             id={`${id}-data`}
             type="date"
             value={data}
+            min={emitidoEm || undefined}
             max={hoje}
             onChange={(e) => setData(e.target.value)}
             className="tnum"
@@ -150,7 +158,7 @@ export function CancelarModal({
           onChange={(e) => setMotivo(e.target.value)}
           rows={2}
           placeholder="Ex.: Cliente desistiu"
-          maxLength={500}
+          maxLength={300}
         />
       </Field>
       <div className="mt-2.5 flex flex-wrap gap-1.5">

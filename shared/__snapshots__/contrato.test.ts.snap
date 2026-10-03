@@ -1,0 +1,79 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`texto do contrato: casos da revisão > o texto do modelo 1 não muda (mudou uma cláusula? crie o modelo 2) 1`] = `
+"CONTRATO DE LOCAÇÃO DE MÁQUINAS DE FICHAS nº 0003
+Locadora: FABIO DE GODOY LIMA LTDA - CNPJ 12.403.843/0001-18
+Locatário: Juliana Martins - CPF 529.982.247-25
+Evento: Aniversário (aluguel #0012)
+Datas de uso: 2 dias, de 14/11/2026 a 15/11/2026
+Retirada: 13/11/2026, às 17h30
+Devolução: 16/11/2026, às ____h____
+Valor das diárias: R$ 220,00 (duzentos e vinte reais)
+CLÁUSULA 1ª – DAS PARTES
+LOCADORA: FABIO DE GODOY LIMA LTDA (Balanças.com), inscrita no CNPJ sob o nº 12.403.843/0001-18, com sede em Rua 13, nº 650, entre as Avenidas 9 e 11, Bairro da Boa Morte, Rio Claro - SP, telefone (19) 3023-9050, e-mail recepcao@balancass.com, neste ato representada por Fabio de Godoy Lima, CPF ____________________.
+LOCATÁRIO: Juliana Martins, CPF 529.982.247-25, endereço Rua 2, 10 - Centro - Rio Claro/SP, telefone (19) 99999-0000.
+CLÁUSULA 2ª – DO OBJETO
+1. A LOCADORA aluga ao LOCATÁRIO máquinas impressoras de fichas para uso no evento "Aniversário", na quantidade indicada para cada data de uso na cláusula seguinte (3 máquinas no dia de maior uso).
+2. Máquinas enviadas: P-01 e P-02; como reserva, G-01. Nas datas sem reserva, a máquina marcada como reserva pode ser usada como titular, dentro da quantidade indicada para a data.
+3. As máquinas são entregues revisadas, testadas e com o texto das fichas configurado: o nome do evento no topo e "OBRIGADO" no rodapé.
+CLÁUSULA 3ª – DAS DATAS DE USO, DA RETIRADA E DA DEVOLUÇÃO
+1. Datas de uso e quantidade de máquinas em cada uma:
+• 14/11/2026 (sábado): 2 máquinas + 1 reserva
+• 15/11/2026 (domingo): 3 máquinas
+2. Retirada na sede da LOCADORA (Rua 13, nº 650, entre as Avenidas 9 e 11, Bairro da Boa Morte, Rio Claro - SP), em 13/11/2026, às 17h30.
+3. Devolução na sede da LOCADORA (Rua 13, nº 650, entre as Avenidas 9 e 11, Bairro da Boa Morte, Rio Claro - SP), até 16/11/2026, às ____h____.
+CLÁUSULA 4ª – DO PREÇO E DO PAGAMENTO
+1. A diária de cada máquina custa R$ 50,00. As datas de uso somam 5 diárias (uma por máquina titular em cada data), no valor de R$ 250,00, com desconto de R$ 30,00, totalizando R$ 220,00 (duzentos e vinte reais).
+2. As bobinas e as máquinas reserva usadas são acertadas na devolução, conforme as cláusulas seguintes.
+3. O pagamento é feito a combinar entre as partes até a retirada, e a LOCADORA emite recibo de todo valor recebido.
+4. Em caso de atraso no pagamento, incidem multa de 2% (dois por cento) sobre o valor em atraso, juros de mora pela taxa legal (art. 406 do Código Civil) e correção monetária pelo IPCA.
+5. Os valores deste contrato não são alterados depois de assinado, salvo acordo por escrito entre as partes.
+CLÁUSULA 5ª – DA MÁQUINA RESERVA
+1. A máquina reserva fica com o LOCATÁRIO sem custo, nas datas com reserva indicadas na cláusula 3ª, para uso caso alguma máquina apresente defeito ou o movimento exija.
+2. A reserva só é cobrada, pelo mesmo valor da diária (R$ 50,00), nas datas em que for usada. Não há cobrança quando a reserva apenas substituir uma máquina com defeito.
+3. O uso da reserva é informado pelo LOCATÁRIO ou constatado na conferência da devolução.
+CLÁUSULA 6ª – DAS BOBINAS
+1. São entregues 20 bobinas em consignação, ao preço de R$ 6,00 cada.
+2. Na devolução, as bobinas que voltarem lacradas não são cobradas. As bobinas abertas, usadas ou não devolvidas são cobradas pelo preço unitário acima.
+CLÁUSULA 7ª – DAS OBRIGAÇÕES DA LOCADORA
+a) entregar as máquinas limpas, revisadas e funcionando, com as instruções de uso;
+b) dar suporte durante o evento pelo telefone (19) 3023-9050;
+c) em caso de defeito não causado pelo LOCATÁRIO, orientar o uso, trocar a máquina por outra equivalente sem custo ou abater do preço as diárias da máquina parada;
+d) emitir recibo dos valores pagos.
+CLÁUSULA 8ª – DAS OBRIGAÇÕES DO LOCATÁRIO
+a) usar as máquinas somente no evento e nas datas deste contrato, seguindo as instruções de uso;
+b) guardar as máquinas em local coberto e seguro, protegidas de chuva, calor excessivo e líquidos;
+c) não abrir, consertar ou modificar as máquinas;
+d) não sublocar, emprestar ou ceder as máquinas a terceiros sem autorização por escrito da LOCADORA (mensagem de WhatsApp ou e-mail vale como autorização);
+e) avisar a LOCADORA imediatamente em caso de defeito, perda, furto ou roubo;
+f) devolver as máquinas e os acessórios na data combinada, no estado em que os recebeu, salvo o desgaste natural do uso regular.
+CLÁUSULA 9ª – DOS DANOS, DA PERDA, DO FURTO E DO ROUBO
+1. O LOCATÁRIO responde pelos danos causados por uso inadequado, queda, contato com líquidos ou falta de cuidado na guarda das máquinas, pagando o conserto, com orçamento apresentado antes da cobrança.
+2. Em caso de perda ou furto por descuido, ou de dano que não tenha conserto, o LOCATÁRIO paga o valor de reposição da máquina: R$ 1.800,00 por máquina P (pequena); para a máquina G (grande), o valor de mercado de uma máquina equivalente usada, comprovado por orçamento.
+3. O LOCATÁRIO não responde pelo desgaste natural do uso regular, nem por roubo, incêndio, enchente ou outro caso fortuito ou de força maior comprovado, sem culpa sua (no caso de roubo, com boletim de ocorrência).
+CLÁUSULA 10ª – DA CONFERÊNCIA E DA DEVOLUÇÃO
+1. Na retirada e na devolução, as partes conferem as máquinas, os acessórios e as bobinas e anotam no Termo de Entrega e Devolução, que faz parte deste contrato.
+2. A conferência da devolução é feita na presença do LOCATÁRIO. Se ele não puder estar presente, a LOCADORA envia, em até 2 (dois) dias úteis, as fotos e o relato do que foi constatado, e o LOCATÁRIO pode contestar em até 5 (cinco) dias úteis.
+3. O LOCATÁRIO deve devolver as máquinas até a data e o horário combinados e avisar a LOCADORA se houver qualquer imprevisto. Não há multa por atraso na devolução.
+CLÁUSULA 11ª – DO CANCELAMENTO
+1. O LOCATÁRIO pode cancelar a locação sem nenhum custo até 7 (sete) dias antes da primeira data de uso, com devolução integral do que tiver pago em até 5 (cinco) dias úteis.
+2. Se a contratação foi feita fora da sede da LOCADORA (por telefone, WhatsApp, e-mail ou internet), o LOCATÁRIO pode desistir em até 7 (sete) dias, contados da assinatura ou do recebimento deste contrato, com devolução imediata e integral dos valores pagos (art. 49 do Código de Defesa do Consumidor).
+3. Fora desses casos, a LOCADORA pode reter no máximo 10% (dez por cento) do valor das diárias; se o LOCATÁRIO não comparecer para retirar as máquinas e não avisar, no máximo 20% (vinte por cento). O restante é devolvido em até 5 (cinco) dias úteis.
+4. Se o evento for cancelado por caso fortuito ou força maior (por exemplo, determinação de autoridade), o LOCATÁRIO pode remarcar sem custo, conforme a disponibilidade de máquinas, ou receber de volta tudo o que pagou.
+5. Se a LOCADORA cancelar ou não entregar as máquinas, devolve integralmente os valores pagos e paga ao LOCATÁRIO 10% (dez por cento) do valor das diárias.
+CLÁUSULA 12ª – DA RESCISÃO
+Qualquer das partes pode rescindir este contrato se a outra descumprir uma obrigação importante e não corrigir depois de avisada. Os valores são acertados de forma proporcional ao período de uso.
+CLÁUSULA 13ª – DOS DADOS PESSOAIS
+1. A LOCADORA é a controladora dos dados pessoais informados neste contrato e os usa somente para executá-lo, emitir recibos e cobranças e cumprir obrigações legais e fiscais (art. 7º, incisos II e V, da Lei 13.709/2018 – Lei Geral de Proteção de Dados).
+2. Os dados só são compartilhados com prestadores de serviço que apoiam essas atividades (como serviços de e-mail, mensagens, agenda on-line e contabilidade), que não podem usá-los para outro fim, e com autoridades, quando a lei exigir. Não são vendidos nem cedidos a terceiros.
+3. Os dados são guardados durante a locação e, depois, por até 5 (cinco) anos, para cumprir obrigações legais e para a defesa em eventual processo.
+4. O titular pode pedir a confirmação de que seus dados são tratados, o acesso a eles, a correção de dados incompletos ou desatualizados, a anonimização, o bloqueio ou a eliminação de dados desnecessários, a portabilidade e a informação sobre com quem foram compartilhados (art. 18 da LGPD), fazendo o pedido pelo telefone (19) 3023-9050 ou pelo e-mail recepcao@balancass.com. Também pode reclamar à Autoridade Nacional de Proteção de Dados (ANPD).
+CLÁUSULA 14ª – DAS COMUNICAÇÕES E DA ASSINATURA
+1. Os avisos entre as partes valem pelos telefones (inclusive WhatsApp) e e-mails informados neste contrato.
+2. As partes admitem como válida a assinatura deste contrato em papel ou por meio eletrônico (por exemplo, assinatura gov.br ou plataforma de assinatura eletrônica), nos termos do art. 10, § 2º, da Medida Provisória 2.200-2/2001.
+CLÁUSULA 15ª – DAS DISPOSIÇÕES GERAIS
+1. Este contrato segue o Código de Defesa do Consumidor (Lei 8.078/1990) e o Código Civil. Em caso de dúvida, as cláusulas são interpretadas da forma mais favorável ao LOCATÁRIO.
+2. Fica eleito o foro da comarca de Rio Claro - SP para resolver questões deste contrato, sem prejuízo do direito do LOCATÁRIO consumidor de propor ação no foro do seu domicílio (art. 101, inciso I, do Código de Defesa do Consumidor).
+O LOCATÁRIO declara que recebeu este contrato antes da assinatura, leu e compreendeu todas as cláusulas, em especial as destacadas em negrito, e ficou com uma via.
+Rio Claro - SP, 3 de outubro de 2026."
+`;
