@@ -428,8 +428,12 @@ export function EventoForm() {
       }
       // Finalizado agora, com máquinas: o detalhe sugere registrar reclamação do cliente
       const finalizou = salvo.status === 'FINALIZADO' && statusAntes !== 'FINALIZADO' && salvo.maquinasIds.length > 0
-      if (montado.current)
-        navegar(`/eventos/${salvo.id}`, { replace: !!id, state: finalizou ? { sugerirReclamacao: true } : undefined })
+      // Aluguel novo, ainda por acontecer (não é o registro de um que já passou): o detalhe oferece
+      // gerar o contrato de locação
+      const oferecerContrato =
+        !id && (salvo.status === 'EM_ABERTO' || salvo.status === 'PENDENTE') && salvo.dias.some((d) => d.data >= hoje)
+      const state = finalizou || oferecerContrato ? { sugerirReclamacao: finalizou, oferecerContrato } : undefined
+      if (montado.current) navegar(`/eventos/${salvo.id}`, { replace: !!id, state })
     } catch (err) {
       if (err instanceof ErroApi && err.status === 409 && !err.dados.atual) {
         // Recusa do servidor (ex.: máquina já em outro evento): mostra a mensagem e mantém o que foi digitado

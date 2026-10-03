@@ -9,6 +9,7 @@ import {
   CreditCard,
   Ellipsis,
   FileDown,
+  FileSignature,
   Landmark,
   Mail,
   MapPin,
@@ -34,6 +35,8 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AnexosEvento } from '../components/AnexosEvento'
 import { ConferenciaBadge, PagamentoBadge, StatusBadge } from '../components/Badges'
+import { CartaoContrato } from '../components/contrato/CartaoContrato'
+import { GerarContratoModal } from '../components/contrato/GerarContratoModal'
 import { EnviarDocumentoModal, type CanalEnvio } from '../components/EnviarDocumentoModal'
 import { useAcoesEvento } from '../components/EventosTabela'
 import { IconeMaquinaFichas } from '../components/IconeMaquinaFichas'
@@ -116,13 +119,36 @@ export function EventoDetalhe() {
       )
     }
   }
+  // Contrato de locação: pelo menu "…", pela faixa depois de cadastrar ou por um link com ?contrato=1
+  const [contratoPeloMenu, setContratoPeloMenu] = useState(false)
+  const contratoPelaUrl = params.get('contrato') === '1'
+  const fecharContrato = () => {
+    setContratoPeloMenu(false)
+    if (contratoPelaUrl) {
+      setParams(
+        (p) => {
+          p.delete('contrato')
+          return p
+        },
+        { replace: true },
+      )
+    }
+  }
+  const estado = local.state as { sugerirReclamacao?: boolean; oferecerContrato?: boolean } | null
   // Logo depois de finalizar (aqui ou no formulário): sugere registrar o que o cliente reclamou das máquinas
-  const veioFinalizado = (local.state as { sugerirReclamacao?: boolean } | null)?.sugerirReclamacao === true
+  const veioFinalizado = estado?.sugerirReclamacao === true
   const [sugerirReclamacao, setSugerirReclamacao] = useState(veioFinalizado)
-  // A sugestão vale uma vez: recarregar a página ou voltar para ela não mostra de novo
+  // Logo depois de cadastrar o aluguel: oferece gerar o contrato de locação (guarda o id do evento,
+  // para a faixa não aparecer em outro evento aberto daqui, ex.: pelas outras datas da série)
+  const veioCadastrado = estado?.oferecerContrato === true
+  const [oferecerContratoPara, setOferecerContratoPara] = useState(veioCadastrado ? id : undefined)
+  const oferecerContrato = !!oferecerContratoPara && oferecerContratoPara === id
+  const naoOferecerContrato = () => setOferecerContratoPara(undefined)
+  // As sugestões valem uma vez: recarregar a página ou voltar para ela não mostra de novo
   useEffect(() => {
-    if (veioFinalizado) navegar({ pathname: local.pathname, search: local.search }, { replace: true, state: null })
-  }, [veioFinalizado, local.pathname, local.search, navegar])
+    if (veioFinalizado || veioCadastrado)
+      navegar({ pathname: local.pathname, search: local.search }, { replace: true, state: null })
+  }, [veioFinalizado, veioCadastrado, local.pathname, local.search, navegar])
   const [salvandoProgramacao, setSalvandoProgramacao] = useState(false)
 
   if (!evento) {
@@ -268,6 +294,15 @@ export function EventoDetalhe() {
                 ...(temRecibo
                   ? [{ label: 'Gerar recibo', icone: <ReceiptText className="h-4 w-4" />, aoClicar: () => void gerarRecibo() }]
                   : []),
+                ...(evento.status !== 'CANCELADO'
+                  ? [
+                      {
+                        label: 'Gerar contrato',
+                        icone: <FileSignature className="h-4 w-4" />,
+                        aoClicar: () => setContratoPeloMenu(true),
+                      },
+                    ]
+                  : []),
                 {
                   label: 'Enviar por WhatsApp',
                   icone: <MessageCircle className="h-4 w-4" />,
@@ -377,6 +412,39 @@ export function EventoDetalhe() {
                     className="max-sm:flex-1"
                   >
                     E-mail
+                  </Button>
+                </div>
+              </div>
+            </motion.div>
+          )}
+          {oferecerContrato && (evento.status === 'EM_ABERTO' || evento.status === 'PENDENTE') && (
+            <motion.div key="contrato" {...FAIXA} className="overflow-hidden">
+              <div className="flex flex-col gap-3 border-t border-line bg-surface-2/70 px-4 py-3 sm:flex-row sm:items-center">
+                <div className="flex min-w-0 flex-1 items-center gap-3">
+                  <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand-ink">
+                    <FileSignature className="h-[18px] w-[18px]" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-ink">Aluguel cadastrado. Gerar o contrato de locação agora?</p>
+                    <p className="text-[13px] text-ink-2">
+                      Em PDF, para enviar ao cliente ler antes e assinar na retirada das máquinas.
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2 max-sm:w-full">
+                  <Button
+                    variante="soft"
+                    icone={<FileSignature className="h-4 w-4" />}
+                    onClick={() => {
+                      naoOferecerContrato()
+                      setContratoPeloMenu(true)
+                    }}
+                    className="max-sm:flex-1"
+                  >
+                    Gerar contrato
+                  </Button>
+                  <Button variante="ghost" onClick={naoOferecerContrato}>
+                    Agora não
                   </Button>
                 </div>
               </div>
@@ -517,6 +585,9 @@ export function EventoDetalhe() {
             )}
           </Card>
 
+          {/* Contrato de locação: situação, PDF, assinatura e cópia assinada */}
+          <CartaoContrato evento={evento} />
+
           {/* Bobinas */}
           <Card>
             <CardHeader
@@ -641,6 +712,12 @@ export function EventoDetalhe() {
         eventoId={evento.id}
       />
       <RepetirEventoModal aberto={repetirPeloMenu || repetirPelaUrl} aoFechar={fecharRepetir} evento={evento} />
+      <GerarContratoModal
+        aberto={contratoPeloMenu || contratoPelaUrl}
+        evento={evento}
+        aoFechar={fecharContrato}
+        aoGerar={naoOferecerContrato}
+      />
     </>
   )
 }

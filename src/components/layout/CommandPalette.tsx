@@ -1,12 +1,14 @@
-import { CalendarPlus, ClipboardPlus, CornerDownLeft, Search, Ticket, UserPlus } from 'lucide-react'
+import { CalendarPlus, ClipboardPlus, CornerDownLeft, FilePenLine, Search, Ticket, UserPlus } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { create } from 'zustand'
 import { calcularEvento } from '#shared/calc.ts'
+import { codigoContrato } from '#shared/contrato.ts'
 import { ESTADO_MAQUINA, localDaLocacao, TIPO_MAQUINA } from '#shared/maquinas.ts'
 import { cn } from '../../lib/cn'
+import { contratoCombina, STATUS_CONTRATO } from '../../lib/contratos'
 import { codigoEvento, normalizar, periodo } from '../../lib/format'
 import { useHoje } from '../../lib/hoje'
 import { maquinaCombina, USO_RESERVA_CURTO, usoDaReserva } from '../../lib/manutencao'
@@ -33,7 +35,7 @@ interface Resultado {
   ir: () => void
 }
 
-/** Busca global (Ctrl/⌘ + K): páginas, ações, clientes, eventos e máquinas. */
+/** Busca global (Ctrl/⌘ + K): páginas, ações, clientes, eventos, contratos e máquinas. */
 export function CommandPalette() {
   const { aberta, abrir, fechar } = usePaleta()
 
@@ -59,6 +61,7 @@ function Paleta({ fechar }: { fechar: () => void }) {
   const clientes = useDados((s) => s.clientes)
   const eventos = useDados((s) => s.eventos)
   const maquinas = useDados((s) => s.maquinas)
+  const contratos = useDados((s) => s.contratos)
   const situacoes = useSituacoes()
   const hoje = useHoje()
   const lista = useRef<HTMLDivElement>(null)
@@ -149,6 +152,32 @@ function Paleta({ fechar }: { fechar: () => void }) {
             }
           }),
       )
+      // Contratos: pelo número ("7", "nº 0007"), pelo cliente ou pelo evento; abre a aba com ele em destaque
+      const eventoPorId = new Map(eventos.map((e) => [e.id, e]))
+      out.push(
+        ...contratos
+          .map((c) => {
+            const evento = eventoPorId.get(c.eventoId)
+            const cliente = nomeCliente.get(c.clienteId) ?? ''
+            return { c, evento, cliente }
+          })
+          .filter(({ c, evento, cliente }) => contratoCombina(c, q, `${cliente} ${evento?.nome ?? ''}`))
+          .slice(0, 6)
+          .map(({ c, evento, cliente }) => ({
+            id: `k-${c.id}`,
+            grupo: 'Contratos',
+            titulo: `Contrato ${codigoContrato(c.numero)}`,
+            detalhe: [
+              cliente || c.dados.cliente.fantasia || c.dados.cliente.nome,
+              evento?.nome ?? `${c.dados.evento.nome} (excluído)`,
+              STATUS_CONTRATO[c.status].label,
+            ]
+              .filter(Boolean)
+              .join(' • '),
+            icone: <FilePenLine className="h-4 w-4" />,
+            ir: ir(`/contratos?contrato=${c.id}`),
+          })),
+      )
       out.push(
         ...maquinas
           // "reserva" acha as máquinas que estão hoje com algum cliente como reserva
@@ -175,7 +204,7 @@ function Paleta({ fechar }: { fechar: () => void }) {
       )
     }
     return out
-  }, [q, clientes, eventos, maquinas, situacoes, hoje, navegar, fechar])
+  }, [q, clientes, eventos, contratos, maquinas, situacoes, hoje, navegar, fechar])
 
   useEffect(() => {
     lista.current?.querySelector<HTMLElement>(`[data-idx="${ativo}"]`)?.scrollIntoView({ block: 'nearest' })
@@ -223,7 +252,7 @@ function Paleta({ fechar }: { fechar: () => void }) {
                 fechar()
               }
             }}
-            placeholder="Buscar clientes, eventos, máquinas ou páginas…"
+            placeholder="Buscar clientes, eventos, contratos, máquinas…"
             className="h-14 flex-1 bg-transparent text-[15px] text-ink outline-none placeholder:text-muted"
           />
           <kbd className="rounded-md border border-line bg-surface-2 px-1.5 py-0.5 text-[11px] text-muted">Esc</kbd>

@@ -25,10 +25,11 @@ Google Agenda — se ela cair, essas duas funções esperam e voltam sozinhas.
 | Visão geral | **Painel** | Faturamento do mês, valores a receber, máquinas em uso hoje, próximos eventos, pagamentos pendentes e bobinas a conferir |
 | | **Agenda** | Calendário mensal com a ocupação das máquinas por dia ("4+1" = 4 máquinas + 1 reserva) e os números das máquinas de cada evento; avisa quando passa de 80% ou do total de máquinas. Vai para qualquer mês ou ano (clique no nome do mês), mostra o ano inteiro num mapa de ocupação e compara com o mesmo mês do ano anterior |
 | Cadastros | **Clientes** | Empresa (CNPJ, com consulta automática na Receita), pessoa física (CPF) ou cliente avulso; histórico e total faturado |
-| | **Eventos** | Nome (o topo das fichas) e rodapé, dias de uso com a quantidade de máquinas e de **máquinas reserva** em cada dia (e se as máquinas ficam com o cliente entre um dia e outro), máquinas enviadas (titulares e reserva), andamento da programação, arquivos anexados (prints, logo, cardápio, PDF), valores, bobinas, desconto, pagamento, PDF do cliente, recibo (PIX ou dinheiro), envio por e-mail ou WhatsApp e **Repetir em outras datas** (para o cliente que já passou as datas do ano) |
+| | **Eventos** | Nome (o topo das fichas) e rodapé, dias de uso com a quantidade de máquinas e de **máquinas reserva** em cada dia (e se as máquinas ficam com o cliente entre um dia e outro), máquinas enviadas (titulares e reserva), andamento da programação, arquivos anexados (prints, logo, cardápio, PDF), valores, bobinas, desconto, pagamento, PDF do cliente, recibo (PIX ou dinheiro), **contrato de locação**, envio por e-mail ou WhatsApp e **Repetir em outras datas** (para o cliente que já passou as datas do ano) |
+| | **Contratos** | Contratos de locação gerados nos eventos: quais esperam a assinatura, PDF, envio ao cliente (WhatsApp ou e-mail) e a cópia assinada (foto ou PDF) |
 | Gestão | **Manutenção** | Máquinas P e G com identificação (P-01, G-03…), situação (disponível, locada, em manutenção, desativada) e onde cada uma está; registro das manutenções (preventiva ou corretiva, serviços feitos, problema relatado, responsável), lista de serviços cadastrados por você, reclamações de clientes e o histórico de cada máquina |
 | | **Relatórios** | Faturamento por mês/semana, recebido × a receber, ticket médio, formas de pagamento, ranking de clientes e planilha (CSV) |
-| | **Configurações** | Disponibilidade de máquinas (quantas P e G), valores padrão, dados do recibo, e-mail para envio de recibos, tema claro/escuro, backups, integração com o Google Agenda e zona de perigo (apagar dados) |
+| | **Configurações** | Disponibilidade de máquinas (quantas P e G), valores padrão, dados do recibo, contrato de locação (dados da empresa e valores de reposição), e-mail para envio de recibos, tema claro/escuro, backups, integração com o Google Agenda e zona de perigo (apagar dados) |
 
 Atalhos: **Ctrl/⌘ + K** abre a busca global e **Ctrl/⌘ + S** salva o evento.
 
@@ -65,6 +66,90 @@ empresa, configurado uma vez em **Configurações → E-mail** (servidor, usuár
 no Outlook é preciso criar uma "senha de app"). A senha fica só no servidor.
 **Enviar por WhatsApp** abre o WhatsApp com a mensagem pronta para o telefone do cliente; o PDF é
 baixado para você anexar na conversa (o WhatsApp não aceita anexo pelo link).
+
+## Contrato de locação
+
+Cada aluguel pode ter o seu **contrato de locação** em PDF, pronto para imprimir e o cliente
+assinar na retirada das máquinas. O texto já vem escrito dentro do Código de Defesa do Consumidor,
+com as regras escolhidas pela empresa (abaixo).
+
+**Como usar:**
+
+1. **Gerar:** ao cadastrar um aluguel, o sistema pergunta *"Gerar o contrato de locação agora?"*.
+   Também dá para gerar depois, pelo menu **…** do evento → **Gerar contrato**, ou pelo cartão
+   **Contrato de locação** no detalhe do evento. Na janela, confira o local do evento, a data e a
+   hora da retirada e da devolução (vêm das datas do evento; a hora em branco sai para preencher à
+   mão), quem assina pelo cliente (nome e CPF) e, se quiser, alguma condição só daquele contrato.
+   O sistema avisa o que vai sair em branco (ex.: cliente sem endereço).
+2. **Enviar antes:** no cartão do contrato, **Enviar** manda o PDF ao cliente por WhatsApp ou
+   e-mail. Mande **antes** da retirada: o CDC pede que o cliente possa ler o contrato antes de
+   assinar, e o próprio contrato traz essa declaração.
+3. **Imprimir e assinar na retirada:** imprima duas vias (uma fica com o cliente). A última
+   página é o **Termo de Entrega e Devolução**, para anotar as máquinas, os acessórios e as bobinas
+   na retirada e na devolução.
+4. **Guardar a cópia assinada:** no cartão do contrato, anexe (ou arraste) a foto ou o PDF do
+   contrato assinado (até 25 MB). O contrato passa a **Assinado**. Sem a cópia, dá para só
+   **Marcar como assinado**, com a data.
+
+O contrato guarda os dados do dia em que foi gerado: o PDF sai sempre igual, mesmo que o cliente,
+o evento ou as configurações mudem depois. Se o aluguel mudar (datas, máquinas, valores ou dados
+do cliente), o cartão avisa; é só gerar de novo, e o contrato anterior que esperava a assinatura é
+cancelado sozinho (*"Substituído pelo contrato nº …"*). Se o anterior já estava assinado, ele
+continua valendo até o cliente assinar o novo; aí o cartão mostra o botão para cancelar o anterior.
+
+A aba **Contratos** (no menu, em Cadastros) reúne todos os contratos gerados, com a situação de
+cada um (esperando assinatura, assinado ou cancelado) e a busca por número, cliente ou evento:
+dali também dá para baixar o PDF de novo, enviar ao cliente e guardar ou abrir a cópia assinada.
+
+**Regras do contrato** (escolhidas pela empresa, já escritas nas cláusulas):
+
+| Assunto | Regra |
+| --- | --- |
+| Cancelamento | Grátis até 7 dias antes do 1º dia de uso. Depois, a empresa retém no máximo 10% das diárias (20% se o cliente não vier retirar e não avisar). Se a empresa cancelar, devolve tudo e paga 10% ao cliente |
+| Arrependimento | Fechado por WhatsApp, telefone, e-mail ou internet: o cliente pode desistir em até 7 dias, com devolução total (art. 49 do CDC) |
+| Danos | Por mau uso, o cliente paga o conserto, com orçamento antes. Perda ou furto por descuido (ou dano sem conserto): o **valor de reposição** da máquina. Desgaste natural e roubo com boletim de ocorrência não são cobrados |
+| Caução | Não tem |
+| Bobinas | As lacradas voltam sem custo; as abertas contam como usadas e são cobradas |
+| Máquina reserva | Fica com o cliente sem custo; só é cobrada (pela diária) nos dias em que for usada |
+| Atraso no pagamento | Multa de 2%, juros pela taxa legal e correção pelo IPCA |
+| Atraso na devolução | Não é cobrado |
+| Retirada e devolução | Sempre na sede da empresa |
+| Assinatura | Sem testemunhas; vale no papel ou eletrônica (gov.br ou plataforma de assinatura) |
+| Foro | A cidade da empresa, sem tirar do cliente o direito de processar na cidade dele |
+| Texto | Letra corpo 12 e as cláusulas que limitam direitos em **negrito**, como pede o CDC |
+
+**Onde configurar:** em **Configurações → Contrato de locação** ficam o endereço, o telefone e o
+e-mail da empresa, quem assina pela empresa (nome e CPF), o foro (em branco, vale a cidade da
+empresa), o **valor de reposição** da máquina P e da G (em R$ 0,00, o contrato diz *"valor de
+mercado, por orçamento"*) e as condições que saem em todos os contratos. O nome, a razão social, o
+CNPJ e a cidade vêm de **Dados do recibo**.
+
+A cópia assinada fica no servidor, na pasta `dados/contratos`, fora do backup `.json` (como os
+arquivos anexados): para guardá-la, copie a pasta `dados` inteira. Os dados dos contratos vão no
+backup, e o PDF é gerado de novo igual.
+
+### Assinatura virtual
+
+**Hoje, sem custo, pelo gov.br:**
+
+1. Gere o contrato e envie o PDF ao cliente (WhatsApp ou e-mail).
+2. O cliente entra em [assinador.iti.br](https://assinador.iti.br) com a conta gov.br nível
+   **prata ou ouro** (a bronze não assina), envia o PDF, assina e baixa o arquivo assinado.
+3. Ele devolve o PDF assinado. Confira em [validar.iti.gov.br](https://validar.iti.gov.br): o
+   site mostra quem assinou e se o arquivo foi alterado depois.
+4. Anexe o PDF assinado no cartão **Contrato de locação** do evento (ou na aba **Contratos**).
+
+Se a empresa também for assinar pelo gov.br, quem assina pela empresa assina primeiro e manda ao
+cliente o arquivo já assinado; o cliente assina o mesmo arquivo.
+
+**Integrado com uma plataforma de assinatura:** a plataforma manda o contrato ao cliente, ele
+assina pelo celular e o contrato voltaria assinado sozinho para o sistema. **Autentique** e
+**Assinafy** têm 10 documentos por mês grátis, com API; **ZapSign** e **Clicksign** são pagos. A
+integração pode ser feita numa próxima versão; para isso, a empresa precisaria:
+
+1. criar a conta na plataforma escolhida, com o e-mail da empresa;
+2. gerar o **token da API** no painel da plataforma;
+3. informar o token em **Configurações** (ele ficaria só no servidor, como a senha do e-mail).
 
 ---
 
@@ -169,6 +254,8 @@ num computador da rede consiga ler os dados do sistema.
 - Recomendado: copiar a pasta `dados/backups` para um pendrive, HD externo ou nuvem uma vez por semana.
 - Os **arquivos anexados** aos eventos ficam em `dados/anexos` e não vão no backup `.json` (que
   seria grande demais): para guardá-los, copie a pasta `dados` inteira.
+- As **cópias assinadas dos contratos** ficam em `dados/contratos` e também não vão no backup
+  `.json`: copie a pasta `dados` inteira.
 - Os arquivos de eventos excluídos (ou que saíram numa restauração/limpeza) não são apagados:
   vão para `dados/anexos-removidos` e voltam sozinhos se o evento voltar (ex.: ao restaurar uma
   cópia). Essa pasta pode ser apagada à mão quando não precisar mais deles.

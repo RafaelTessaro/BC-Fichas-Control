@@ -15,7 +15,7 @@ export default defineConfig({
   build: {
     // recharts + motion + as telas formam o bloco principal (uso em rede local);
     // o jsPDF é carregado sob demanda
-    chunkSizeWarningLimit: 1300,
+    chunkSizeWarningLimit: 1400,
   },
   test: {
     environment: 'node',

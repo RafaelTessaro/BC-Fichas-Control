@@ -1,16 +1,17 @@
-// Envio do recibo ou do resumo do evento para o cliente, por e-mail ou WhatsApp: os textos
-// prontos, o telefone no formato do WhatsApp e o PDF em base64 para o e-mail. Sem React nem
-// jsPDF, para poder ser testado; a janela de envio fica em EnviarDocumentoModal.tsx.
+// Envio do recibo, do resumo do evento ou do contrato de locação para o cliente, por e-mail ou
+// WhatsApp: os textos prontos, o telefone no formato do WhatsApp e o PDF em base64 para o e-mail.
+// Sem React nem jsPDF, para poder ser testado; a janela de envio fica em EnviarDocumentoModal.tsx.
 
 import { calcularEvento, FORMAS_PAGAMENTO } from '#shared/calc.ts'
+import { codigoContrato, dataBR, reais } from '#shared/contrato.ts'
 import { emailValido } from '#shared/dominio.ts'
 import { datasOcupadas } from '#shared/maquinas.ts'
-import type { Cliente, Configuracoes, Evento } from '#shared/tipos.ts'
+import type { Cliente, Configuracoes, Contrato, DataHora, Evento } from '#shared/tipos.ts'
 import { codigoEvento, dataCurta, moeda } from './format'
 import { periodoRecibo } from './recibo'
 
-/** O que vai junto da mensagem: o recibo em PDF, o resumo do evento em PDF ou nada. */
-export type DocumentoEnvio = 'recibo' | 'resumo' | 'nenhum'
+/** O que vai junto da mensagem: o recibo, o resumo do evento ou o contrato de locação em PDF, ou nada. */
+export type DocumentoEnvio = 'recibo' | 'resumo' | 'contrato' | 'nenhum'
 
 // ---- Telefone e link do WhatsApp ----------------------------------------------------
 
@@ -74,6 +75,8 @@ export interface DadosMensagem {
   cliente: Cliente | undefined
   config: Pick<Configuracoes, 'empresaNome' | 'empresaRazaoSocial'>
   documento: DocumentoEnvio
+  /** O contrato enviado (com `documento: 'contrato'`): as linhas da mensagem saem dele, como foi gerado. */
+  contrato?: Pick<Contrato, 'numero' | 'dados'>
 }
 
 /** "JULIANA" e "juliana" → "Juliana"; nomes já escritos com maiúsculas e minúsculas ficam como estão. */
@@ -86,8 +89,12 @@ const capitalizar = (p: string) =>
  */
 export function primeiroNome(cliente: Cliente | undefined): string {
   if (!cliente) return ''
-  const nome = cliente.responsavel.trim() || (cliente.tipo === 'PF' ? cliente.nome.trim() : '')
-  const [primeiro = '', segundo = ''] = nome.split(/\s+/)
+  return primeiroNomeDe(cliente.responsavel.trim() || (cliente.tipo === 'PF' ? cliente.nome.trim() : ''))
+}
+
+/** Primeiro nome de um nome completo ("Pe. Antônio Carlos" → "Pe. Antônio"); vazio se não houver. */
+export function primeiroNomeDe(nome: string): string {
+  const [primeiro = '', segundo = ''] = nome.trim().split(/\s+/)
   if (!/\p{L}/u.test(primeiro)) return ''
   // "Pe. Antônio", "Dona Maria": o tratamento sozinho ("Olá, Pe.!") não chama ninguém
   if (TRATAMENTOS.has(primeiro.toLowerCase().replace(/\.$/, '')) && /\p{L}/u.test(segundo))
@@ -137,29 +144,88 @@ export function linhasResumo({ evento }: Pick<DadosMensagem, 'evento'>): Array<[
   return linhas
 }
 
-/** Assunto do e-mail: "Recibo nº 0031 – Baile da Cidade – Balanças.com". */
-export function assuntoEmail({ evento, config, documento }: DadosMensagem) {
-  const titulo = documento === 'recibo' ? `Recibo nº ${String(evento.codigo).padStart(4, '0')}` : 'Resumo da locação'
-  return [titulo, evento.nome.trim(), empresa(config)].filter(Boolean).join(' – ')
+/** "10/10/2026, às 09h00"; sem hora, só a data; sem data, "a combinar". */
+function quando(d: DataHora) {
+  if (!d.data) return 'a combinar'
+  const hora = /^\d{2}:\d{2}$/.test(d.hora) ? `, às ${d.hora.slice(0, 2)}h${d.hora.slice(3)}` : ''
+  return `${dataBR(d.data)}${hora}`
 }
 
-const ABERTURA: Record<DocumentoEnvio, string> = {
-  recibo: 'Segue em anexo o recibo do pagamento da locação das máquinas de fichas.',
-  resumo: 'Segue em anexo o resumo da locação das máquinas de fichas.',
-  nenhum: 'Segue o resumo da locação das máquinas de fichas.',
+/** Linhas do contrato (evento, datas, retirada, devolução e valor), como foi gerado. */
+export function linhasContrato({ dados: d }: Pick<Contrato, 'numero' | 'dados'>): Array<[rotulo: string, valor: string]> {
+  const datas = [...new Set(d.evento.dias.map((x) => x.data).filter(Boolean))]
+  const linhas: Array<[string, string]> = [
+    ['Evento', `${d.evento.nome} (${codigoEvento(d.evento.codigo)})${d.evento.local ? ` - ${d.evento.local}` : ''}`],
+  ]
+  if (datas.length) linhas.push([datas.length === 1 ? 'Data de uso' : 'Datas de uso', datasDoEvento(datas)])
+  if (d.evento.comCliente) {
+    linhas.push(['Máquinas com vocês', `de ${dataBR(d.evento.comCliente.inicio)} a ${dataBR(d.evento.comCliente.fim)}`])
+  }
+  linhas.push(['Retirada', quando(d.retirada)])
+  linhas.push(['Devolução', quando(d.devolucao)])
+  linhas.push(['Valor das diárias', reais(d.valores.total)])
+  return linhas
 }
+
+/** As linhas da mensagem: as do contrato, quando é ele que vai, ou o resumo do evento. */
+const linhasMensagem = (dados: DadosMensagem) =>
+  dados.documento === 'contrato' && dados.contrato ? linhasContrato(dados.contrato) : linhasResumo(dados)
+
+/** Quem vai ler: o primeiro nome do cliente ou, no contrato, o de quem assina por ele. */
+const nomeDeQuemLe = ({ cliente, documento, contrato }: DadosMensagem) =>
+  primeiroNome(cliente) || (documento === 'contrato' && contrato ? primeiroNomeDe(contrato.dados.assinante.nome) : '')
+
+/** "Contrato de locação nº 0007" (sem o contrato, só "Contrato de locação"). */
+const tituloContrato = (contrato: DadosMensagem['contrato']) =>
+  `Contrato de locação${contrato ? ` ${codigoContrato(contrato.numero)}` : ''}`
+
+/**
+ * Assunto do e-mail: "Recibo nº 0031 – Baile da Cidade – Balanças.com" ou
+ * "Contrato de locação nº 0007 – Baile da Cidade – Balanças.com".
+ */
+export function assuntoEmail({ evento, config, documento, contrato }: DadosMensagem) {
+  const titulo =
+    documento === 'recibo'
+      ? `Recibo nº ${String(evento.codigo).padStart(4, '0')}`
+      : documento === 'contrato'
+        ? tituloContrato(contrato)
+        : 'Resumo da locação'
+  const nome = documento === 'contrato' && contrato ? contrato.dados.evento.nome : evento.nome.trim()
+  return [titulo, nome, empresa(config)].filter(Boolean).join(' – ')
+}
+
+function abertura({ documento, contrato }: DadosMensagem) {
+  switch (documento) {
+    case 'recibo':
+      return 'Segue em anexo o recibo do pagamento da locação das máquinas de fichas.'
+    case 'resumo':
+      return 'Segue em anexo o resumo da locação das máquinas de fichas.'
+    case 'contrato':
+      return `Segue em anexo o ${tituloContrato(contrato).replace(/^C/, 'c')} das máquinas de fichas. Por favor, leia com calma antes da retirada.`
+    default:
+      return 'Segue o resumo da locação das máquinas de fichas.'
+  }
+}
+
+/** Como o cliente assina o contrato: no papel, na retirada, ou pelo gov.br (de graça). */
+const ASSINAR_EMAIL = [
+  'Para assinar, você pode:',
+  '- imprimir, assinar e trazer na retirada das máquinas (ou assinar aqui, na hora); ou',
+  '- assinar pelo gov.br, de graça, em https://assinador.iti.br, e nos devolver o PDF assinado respondendo este e-mail.',
+]
 
 /** Corpo do e-mail, em texto simples. */
 export function textoEmail(dados: DadosMensagem) {
-  const nome = primeiroNome(dados.cliente)
+  const nome = nomeDeQuemLe(dados)
   const assinatura = empresa(dados.config)
   return [
     nome ? `Olá, ${nome}!` : 'Olá!',
     '',
-    ABERTURA[dados.documento],
+    abertura(dados),
     '',
-    ...linhasResumo(dados).map(([rotulo, valor]) => `${rotulo}: ${valor}`),
+    ...linhasMensagem(dados).map(([rotulo, valor]) => `${rotulo}: ${valor}`),
     '',
+    ...(dados.documento === 'contrato' ? [...ASSINAR_EMAIL, ''] : []),
     'Qualquer dúvida, estamos à disposição.',
     '',
     'Atenciosamente,',
@@ -170,12 +236,15 @@ export function textoEmail(dados: DadosMensagem) {
 const FECHO_WHATSAPP: Record<DocumentoEnvio, string> = {
   recibo: 'O recibo em PDF vai logo abaixo.',
   resumo: 'O resumo em PDF vai logo abaixo.',
+  contrato:
+    'O contrato em PDF vai logo abaixo. Para assinar, traga impresso e assinado na retirada (ou assine aqui, na hora), ou' +
+    ' assine pelo gov.br, de graça, em assinador.iti.br e mande o PDF assinado por aqui.',
   nenhum: '',
 }
 
 /** Mensagem do WhatsApp, com os rótulos em *negrito* (como o WhatsApp mostra). */
 export function textoWhatsApp(dados: DadosMensagem) {
-  const nome = primeiroNome(dados.cliente)
+  const nome = nomeDeQuemLe(dados)
   const assinatura = empresa(dados.config)
   const fecho = FECHO_WHATSAPP[dados.documento]
   return [
@@ -183,9 +252,11 @@ export function textoWhatsApp(dados: DadosMensagem) {
     '',
     dados.documento === 'recibo'
       ? 'Segue o recibo do pagamento da locação das máquinas de fichas:'
-      : 'Segue o resumo da locação das máquinas de fichas:',
+      : dados.documento === 'contrato'
+        ? `Segue o ${tituloContrato(dados.contrato).replace(/^C/, 'c')} das máquinas de fichas. Por favor, leia antes da retirada:`
+        : 'Segue o resumo da locação das máquinas de fichas:',
     '',
-    ...linhasResumo(dados).map(([rotulo, valor]) => `*${rotulo}:* ${valor}`),
+    ...linhasMensagem(dados).map(([rotulo, valor]) => `*${rotulo}:* ${valor}`),
     '',
     ...(fecho ? [fecho] : []),
     'Qualquer dúvida, estamos à disposição.',

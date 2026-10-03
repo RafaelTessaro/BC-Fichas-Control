@@ -7,6 +7,7 @@ import { Agenda } from './pages/Agenda'
 import { ClienteDetalhe } from './pages/ClienteDetalhe'
 import { Clientes } from './pages/Clientes'
 import { Configuracoes } from './pages/Configuracoes'
+import { Contratos } from './pages/Contratos'
 import { EventoDetalhe } from './pages/EventoDetalhe'
 import { EventoForm } from './pages/EventoForm'
 import { Eventos } from './pages/Eventos'
@@ -31,6 +32,7 @@ function Rotas() {
         <Route path="/eventos/novo" element={<EventoForm />} />
         <Route path="/eventos/:id" element={<EventoDetalhe />} />
         <Route path="/eventos/:id/editar" element={<EventoForm />} />
+        <Route path="/contratos" element={<Contratos />} />
         <Route path="/manutencao" element={<Manutencao />} />
         <Route path="/manutencao/:id" element={<MaquinaDetalhe />} />
         <Route path="/relatorios" element={<Relatorios />} />

@@ -1,4 +1,4 @@
-// Envio do recibo (ou do resumo do evento) para o cliente, por WhatsApp ou e-mail.
+// Envio do recibo, do resumo do evento ou do contrato de locação para o cliente, por WhatsApp ou e-mail.
 // WhatsApp: abre a conversa com a mensagem pronta; o link não leva arquivo, então o PDF é baixado
 // para anexar na conversa. E-mail: o PDF é gerado aqui no navegador e enviado pelo servidor de
 // e-mail da empresa (configurado em Configurações → E-mail).
@@ -8,6 +8,7 @@ import {
   CircleAlert,
   Download,
   Eye,
+  FilePenLine,
   FileText,
   LoaderCircle,
   Mail,
@@ -23,9 +24,11 @@ import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useId, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { calcularEvento, FORMAS_PAGAMENTO } from '#shared/calc.ts'
-import type { Cliente, Configuracoes, Evento, Maquina } from '#shared/tipos.ts'
+import { codigoContrato, reais } from '#shared/contrato.ts'
+import type { Cliente, Configuracoes, Contrato, Evento, Maquina } from '#shared/tipos.ts'
 import { api, ErroApi, type ConfigEmail } from '../lib/api'
 import { cn } from '../lib/cn'
+import { STATUS_CONTRATO } from '../lib/contratos'
 import {
   assuntoEmail,
   linkWhatsApp,
@@ -37,7 +40,7 @@ import {
   textoWhatsApp,
   type DocumentoEnvio,
 } from '../lib/envio'
-import { mascaraTelefone, moeda } from '../lib/format'
+import { dataCurta, mascaraTelefone, moeda } from '../lib/format'
 import { podeGerarRecibo } from '../lib/recibo'
 import { useDados } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
@@ -55,6 +58,8 @@ export interface EnviarDocumentoModalProps {
   cliente: Cliente | undefined
   /** Por onde enviar ao abrir (dá para trocar dentro da janela). */
   canal: CanalEnvio
+  /** Envia este contrato de locação: o anexo é o PDF dele (no lugar do recibo ou do resumo). */
+  contrato?: Contrato
 }
 
 /** Situação da configuração do e-mail no servidor. */
@@ -67,7 +72,13 @@ async function gerarPdf(
   cliente: Cliente | undefined,
   config: Configuracoes,
   maquinas: Maquina[],
+  contrato?: Contrato,
 ) {
+  if (documento === 'contrato') {
+    if (!contrato) throw new Error('O contrato não foi encontrado.')
+    const { gerarContratoPDF } = await import('../lib/pdfContrato')
+    return gerarContratoPDF(contrato)
+  }
   if (documento === 'recibo') {
     const { gerarReciboPDF } = await import('../lib/pdfRecibo')
     return gerarReciboPDF(evento, cliente, config)
@@ -76,7 +87,14 @@ async function gerarPdf(
   return gerarResumoPDF(evento, cliente, config, maquinas)
 }
 
-export function EnviarDocumentoModal({ aberto, aoFechar, evento, cliente, canal: canalInicial }: EnviarDocumentoModalProps) {
+export function EnviarDocumentoModal({
+  aberto,
+  aoFechar,
+  evento,
+  cliente,
+  canal: canalInicial,
+  contrato,
+}: EnviarDocumentoModalProps) {
   const config = useDados((s) => s.config)
   const maquinas = useDados((s) => s.maquinas)
   const navegar = useNavigate()
@@ -88,8 +106,13 @@ export function EnviarDocumentoModal({ aberto, aoFechar, evento, cliente, canal:
 
   const [canal, setCanal] = useState<CanalEnvio>(canalInicial)
   const [documentoEscolhido, setDocumento] = useState<DocumentoEnvio>(temRecibo ? 'recibo' : 'resumo')
-  // O pagamento mudou com a janela aberta (ex.: outro computador) e o recibo deixou de valer
-  const documento = documentoEscolhido === 'recibo' && !temRecibo ? 'resumo' : documentoEscolhido
+  // Com um contrato, o anexo é sempre ele. Sem: o pagamento pode ter mudado com a janela aberta
+  // (ex.: outro computador) e o recibo deixado de valer
+  const documento: DocumentoEnvio = contrato
+    ? 'contrato'
+    : documentoEscolhido === 'recibo' && !temRecibo
+      ? 'resumo'
+      : documentoEscolhido
   const [para, setPara] = useState('')
   const [telefone, setTelefone] = useState('')
   // `null` = texto sugerido (acompanha o anexo escolhido); ao editar, passa a valer o digitado
@@ -131,7 +154,7 @@ export function EnviarDocumentoModal({ aberto, aoFechar, evento, cliente, canal:
     }
   }, [aberto, recarga])
 
-  const dados = { evento, cliente, config, documento }
+  const dados = { evento, cliente, config, documento, contrato }
   const assuntoFinal = assunto ?? assuntoEmail(dados)
   const textoEmailFinal = mensagemEmail ?? textoEmail(dados)
   const textoZapFinal = mensagemZap ?? textoWhatsApp(dados)
@@ -153,7 +176,7 @@ export function EnviarDocumentoModal({ aberto, aoFechar, evento, cliente, canal:
     const aba = acao === 'ver' ? window.open('', '_blank') : null
     setOcupado(acao)
     try {
-      const { doc, nome } = await gerarPdf(documento, evento, cliente, config, maquinas)
+      const { doc, nome } = await gerarPdf(documento, evento, cliente, config, maquinas, contrato)
       if (acao === 'baixar') {
         doc.save(nome)
         toast.sucesso('PDF baixado', canal === 'whatsapp' ? `${nome}. Agora é só anexar na conversa.` : nome)
@@ -188,7 +211,7 @@ export function EnviarDocumentoModal({ aberto, aoFechar, evento, cliente, canal:
     try {
       let anexos: Array<{ nome: string; tipo: string; conteudo: string }> = []
       if (documento !== 'nenhum') {
-        const { doc, nome } = await gerarPdf(documento, evento, cliente, config, maquinas)
+        const { doc, nome } = await gerarPdf(documento, evento, cliente, config, maquinas, contrato)
         anexos = [{ nome, tipo: 'application/pdf', conteudo: paraBase64(doc.output('arraybuffer')) }]
       }
       const resposta = await api.enviarEmail({
@@ -213,7 +236,7 @@ export function EnviarDocumentoModal({ aberto, aoFechar, evento, cliente, canal:
     navegar('/configuracoes?secao=email')
   }
 
-  const nomeDocumento = documento === 'recibo' ? 'recibo' : 'resumo'
+  const nomeDocumento = documento === 'recibo' ? 'recibo' : documento === 'contrato' ? 'contrato' : 'resumo'
 
   return (
     <Modal
@@ -221,8 +244,12 @@ export function EnviarDocumentoModal({ aberto, aoFechar, evento, cliente, canal:
       aoFechar={aoFechar}
       largura="max-w-2xl"
       icone={canal === 'whatsapp' ? <MessageCircle className="h-5 w-5" /> : <Mail className="h-5 w-5" />}
-      titulo="Enviar para o cliente"
-      descricao={`${evento.nome} • ${cliente?.nome ?? 'Cliente removido'} • ${moeda(r.total)}`}
+      titulo={contrato ? 'Enviar o contrato ao cliente' : 'Enviar para o cliente'}
+      descricao={
+        contrato
+          ? `${codigoContrato(contrato.numero)} • ${contrato.dados.evento.nome} • ${cliente?.nome || contrato.dados.cliente.nome || 'Cliente removido'}`
+          : `${evento.nome} • ${cliente?.nome ?? 'Cliente removido'} • ${moeda(r.total)}`
+      }
       rodape={
         canal === 'whatsapp' ? (
           <>
@@ -297,6 +324,7 @@ export function EnviarDocumentoModal({ aberto, aoFechar, evento, cliente, canal:
 
         {canal === 'email' && !emailPronto ? (
           <AvisoEmail
+            documento={nomeDocumento}
             estado={email}
             aoConfigurar={irParaConfiguracoes}
             aoTentarDeNovo={() => {
@@ -312,35 +340,59 @@ export function EnviarDocumentoModal({ aberto, aoFechar, evento, cliente, canal:
               <p id={`${ids}-doc`} className="text-[13px] font-medium text-ink-2">
                 {canal === 'whatsapp' ? 'PDF para mandar na conversa' : 'Anexo'}
               </p>
-              <div
-                role="radiogroup"
-                aria-labelledby={`${ids}-doc`}
-                className={cn('grid grid-cols-1 gap-2', temRecibo ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}
-              >
-                {temRecibo && (
+              {contrato ? (
+                <>
+                  <div className="flex min-w-0 items-start gap-2.5 rounded-xl border border-brand/60 bg-brand-soft px-3 py-2.5">
+                    <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-brand text-white">
+                      <FilePenLine className="h-4 w-4" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block text-[13px] font-semibold text-brand-ink">
+                        Contrato de locação {codigoContrato(contrato.numero)} em PDF
+                      </span>
+                      <span className="tnum block text-xs text-muted">
+                        Gerado em {dataCurta(contrato.dados.emitidoEm)} • {STATUS_CONTRATO[contrato.status].label} • diárias{' '}
+                        {reais(contrato.dados.valores.total)}
+                      </span>
+                    </span>
+                  </div>
+                  {contrato.status === 'CANCELADO' && (
+                    <Aviso tom="warning" icone={<TriangleAlert className="h-4 w-4" />}>
+                      Este contrato está cancelado: o PDF sai com o aviso “CONTRATO CANCELADO”.
+                    </Aviso>
+                  )}
+                </>
+              ) : (
+                <div
+                  role="radiogroup"
+                  aria-labelledby={`${ids}-doc`}
+                  className={cn('grid grid-cols-1 gap-2', temRecibo ? 'sm:grid-cols-3' : 'sm:grid-cols-2')}
+                >
+                  {temRecibo && (
+                    <OpcaoDocumento
+                      ativo={documento === 'recibo'}
+                      aoEscolher={() => setDocumento('recibo')}
+                      icone={<ReceiptText className="h-4 w-4" />}
+                      titulo="Recibo em PDF"
+                      detalhe={`${FORMAS_PAGAMENTO[evento.formaPagamento].label} • ${moeda(r.total)}`}
+                    />
+                  )}
                   <OpcaoDocumento
-                    ativo={documento === 'recibo'}
-                    aoEscolher={() => setDocumento('recibo')}
-                    icone={<ReceiptText className="h-4 w-4" />}
-                    titulo="Recibo em PDF"
-                    detalhe={`${FORMAS_PAGAMENTO[evento.formaPagamento].label} • ${moeda(r.total)}`}
+                    ativo={documento === 'resumo'}
+                    aoEscolher={() => setDocumento('resumo')}
+                    icone={<FileText className="h-4 w-4" />}
+                    titulo="Resumo do evento"
+                    detalhe="PDF: datas, máquinas e valores"
                   />
-                )}
-                <OpcaoDocumento
-                  ativo={documento === 'resumo'}
-                  aoEscolher={() => setDocumento('resumo')}
-                  icone={<FileText className="h-4 w-4" />}
-                  titulo="Resumo do evento"
-                  detalhe="PDF: datas, máquinas e valores"
-                />
-                <OpcaoDocumento
-                  ativo={documento === 'nenhum'}
-                  aoEscolher={() => setDocumento('nenhum')}
-                  icone={<AlignLeft className="h-4 w-4" />}
-                  titulo={canal === 'whatsapp' ? 'Só a mensagem' : 'Sem anexo'}
-                  detalhe="O resumo vai no texto"
-                />
-              </div>
+                  <OpcaoDocumento
+                    ativo={documento === 'nenhum'}
+                    aoEscolher={() => setDocumento('nenhum')}
+                    icone={<AlignLeft className="h-4 w-4" />}
+                    titulo={canal === 'whatsapp' ? 'Só a mensagem' : 'Sem anexo'}
+                    detalhe="O resumo vai no texto"
+                  />
+                </div>
+              )}
               <AnimatePresence initial={false}>
                 {documento === 'recibo' && bobinasAConferir && (
                   <Aviso key="bobinas" tom="warning" icone={<TriangleAlert className="h-4 w-4" />}>
@@ -601,11 +653,14 @@ function Aviso({ tom, icone, children }: { tom: 'warning' | 'danger' | 'info'; i
 
 /** E-mail ainda não configurado (ou servidor fora do ar): explica e leva para as Configurações. */
 function AvisoEmail({
+  documento,
   estado,
   aoConfigurar,
   aoTentarDeNovo,
   aoUsarWhatsApp,
 }: {
+  /** "recibo", "resumo" ou "contrato". */
+  documento: string
   estado: EstadoEmail
   aoConfigurar: () => void
   aoTentarDeNovo: () => void
@@ -643,7 +698,7 @@ function AvisoEmail({
       </span>
       <p className="text-[15px] font-semibold text-ink">O envio por e-mail ainda não foi configurado</p>
       <p className="mt-1.5 max-w-md text-[13px] leading-relaxed text-muted">
-        Para o sistema enviar o recibo pelo e-mail da empresa, informe uma vez em{' '}
+        Para o sistema enviar o {documento} pelo e-mail da empresa, informe uma vez em{' '}
         <b className="font-medium text-ink-2">Configurações → E-mail para envio de recibos</b> o e-mail (Gmail, Outlook…) e a
         senha de app. Depois é só voltar aqui.
       </p>

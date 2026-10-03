@@ -1,14 +1,17 @@
 import { describe, expect, it } from 'vitest'
+import { montarDadosContrato } from '#shared/contrato.ts'
 import { CLIENTE_VAZIO, CONFIG_PADRAO } from '#shared/dominio.ts'
-import type { Cliente, Evento } from '#shared/tipos.ts'
+import type { Cliente, Evento, NovoContrato } from '#shared/tipos.ts'
 import {
   assuntoEmail,
   datasDoEvento,
+  linhasContrato,
   linhasResumo,
   linkWhatsApp,
   listaEmails,
   paraBase64,
   primeiroNome,
+  primeiroNomeDe,
   telefoneLegivel,
   telefoneWhatsApp,
   textoEmail,
@@ -249,5 +252,100 @@ describe('textos prontos', () => {
     const soTexto = textoWhatsApp({ evento: evento(), cliente: undefined, config: CONFIG_PADRAO, documento: 'nenhum' })
     expect(soTexto.startsWith('Olá! Tudo bem?\n\nSegue o resumo da locação das máquinas de fichas:')).toBe(true)
     expect(soTexto).not.toContain('PDF')
+  })
+})
+
+describe('contrato de locação', () => {
+  const entrada = (extra: Partial<Omit<NovoContrato, 'eventoId'>> = {}): Omit<NovoContrato, 'eventoId'> => ({
+    local: 'Salão paroquial',
+    retirada: { data: '2026-10-10', hora: '09:00' },
+    devolucao: { data: '2026-10-13', hora: '' },
+    assinante: { nome: 'Juliana Martins', cpf: '' },
+    condicoes: '',
+    ...extra,
+  })
+  const contrato = (
+    c: Cliente | undefined = cliente(),
+    e: Evento = evento(),
+    extra?: Partial<Omit<NovoContrato, 'eventoId'>>,
+  ) => ({
+    numero: 7,
+    dados: montarDadosContrato({
+      evento: e,
+      cliente: c,
+      maquinas: [],
+      config: CONFIG_PADRAO,
+      entrada: entrada(extra),
+      hoje: '2026-10-01',
+    }),
+  })
+  const base = { evento: evento(), cliente: cliente(), config: CONFIG_PADRAO, documento: 'contrato' as const }
+
+  it('assunto com o número do contrato e o nome do evento como saiu nele', () => {
+    expect(assuntoEmail({ ...base, contrato: contrato() })).toBe('Contrato de locação nº 0007 – Baile da Cidade – Balanças.com')
+    // O evento foi renomeado depois: vale o nome que está no contrato
+    expect(assuntoEmail({ ...base, evento: evento({ nome: 'Outro nome' }), contrato: contrato() })).toContain('Baile da Cidade')
+    expect(assuntoEmail({ ...base, config: { empresaNome: '', empresaRazaoSocial: '' }, contrato: contrato() })).toBe(
+      'Contrato de locação nº 0007 – Baile da Cidade',
+    )
+  })
+
+  it('linhas: evento, datas de uso, retirada, devolução (sem hora, só a data) e valor das diárias', () => {
+    expect(linhasContrato(contrato())).toEqual([
+      ['Evento', 'Baile da Cidade (#0031) - Salão paroquial'],
+      ['Datas de uso', '11 a 12/10/2026'],
+      ['Retirada', '10/10/2026, às 09h00'],
+      ['Devolução', '13/10/2026'],
+      ['Valor das diárias', 'R$ 480,00'],
+    ])
+    // Sem datas combinadas e um dia só; período corrido mostra até quando as máquinas ficam
+    const corrido = evento({
+      periodoCorrido: true,
+      dias: ['2026-10-03', '2026-10-10'].map((data, i) => ({ id: `d${i}`, data, maquinas: 2, reservas: 0, reservasUsadas: 0 })),
+    })
+    const linhas = linhasContrato(
+      contrato(cliente(), corrido, { local: '', retirada: { data: '', hora: '' }, devolucao: { data: '', hora: '' } }),
+    )
+    expect(linhas).toContainEqual(['Máquinas com vocês', 'de 03/10/2026 a 10/10/2026'])
+    expect(linhas).toContainEqual(['Retirada', 'a combinar'])
+    expect(linhas[0]).toEqual(['Evento', 'Baile da Cidade (#0031)'])
+  })
+
+  it('e-mail pede para ler antes da retirada e explica as duas formas de assinar', () => {
+    const texto = textoEmail({ ...base, contrato: contrato() })
+    expect(texto.split('\n').slice(0, 3)).toEqual([
+      'Olá, Juliana!',
+      '',
+      'Segue em anexo o contrato de locação nº 0007 das máquinas de fichas. Por favor, leia com calma antes da retirada.',
+    ])
+    expect(texto).toContain('Valor das diárias: R$ 480,00')
+    expect(texto).toContain('imprimir, assinar e trazer na retirada')
+    expect(texto).toContain('https://assinador.iti.br')
+    expect(texto.endsWith('Atenciosamente,\nBalanças.com')).toBe(true)
+    // O recibo continua sem as instruções de assinatura
+    expect(textoEmail({ ...base, documento: 'recibo' })).not.toContain('assinador')
+  })
+
+  it('WhatsApp com negrito, o aviso do PDF e o gov.br', () => {
+    const texto = textoWhatsApp({ ...base, contrato: contrato() })
+    expect(texto).toContain('Olá, Juliana! Tudo bem?\n\nSegue o contrato de locação nº 0007 das máquinas de fichas.')
+    expect(texto).toContain('*Retirada:* 10/10/2026, às 09h00')
+    expect(texto).toContain('O contrato em PDF vai logo abaixo.')
+    expect(texto).toContain('assinador.iti.br')
+  })
+
+  it('empresa sem responsável no cadastro: chama quem assina pelo cliente', () => {
+    const empresa = cliente({ tipo: 'PJ', nome: 'Padaria Ideal' })
+    const c = contrato(empresa, evento(), { assinante: { nome: 'carlos eduardo', cpf: '' } })
+    expect(textoWhatsApp({ ...base, cliente: empresa, contrato: c }).startsWith('Olá, Carlos! Tudo bem?')).toBe(true)
+    // No recibo continua sem nome (o assinante é só do contrato)
+    expect(textoEmail({ ...base, cliente: empresa, documento: 'recibo' }).startsWith('Olá!')).toBe(true)
+  })
+
+  it('primeiro nome a partir de um nome completo', () => {
+    expect(primeiroNomeDe('  maria aparecida souza ')).toBe('Maria')
+    expect(primeiroNomeDe('Pe. Antônio Carlos')).toBe('Pe. Antônio')
+    expect(primeiroNomeDe('')).toBe('')
+    expect(primeiroNomeDe('123')).toBe('')
   })
 })

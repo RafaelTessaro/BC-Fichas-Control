@@ -1,27 +1,40 @@
 import { format } from 'date-fns'
 import {
+  Ban,
+  CalendarX2,
   Check,
   CircleAlert,
   CircleCheck,
+  Clock,
   Database,
   Download,
   Eye,
   EyeOff,
+  FileSignature,
   KeyRound,
   LoaderCircle,
   Mail,
+  MapPin,
+  MessageCircle,
   Monitor,
   Moon,
+  PackageOpen,
+  PackageX,
   Palette,
+  Percent,
   Receipt,
   RotateCcw,
   Save,
+  Scale,
   Send,
+  ShieldCheck,
   Stamp,
   Sun,
   Trash2,
   TriangleAlert,
+  Type,
   Upload,
+  Wrench,
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
@@ -31,12 +44,12 @@ import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { confirmar } from '../components/ui/Feedback'
-import { CurrencyInput, Field, Input, Select } from '../components/ui/Form'
+import { CurrencyInput, Field, Input, Select, Textarea } from '../components/ui/Form'
 import { PageHeader } from '../components/ui/Misc'
 import { cn } from '../lib/cn'
 import { numero } from '../lib/format'
 import { baixarArquivo } from '../lib/storage'
-import { cnpjValido, mascaraCnpj, normalizarCnpj } from '#shared/documentos.ts'
+import { cnpjValido, cpfValido, mascaraCnpj, mascaraCpf, normalizarCnpj, somenteDigitos } from '#shared/documentos.ts'
 import { emailValido } from '#shared/dominio.ts'
 import type { Configuracoes as Config } from '#shared/tipos.ts'
 import { CONFIG_PADRAO, useDados } from '../store/dados'
@@ -74,12 +87,13 @@ export function Configuracoes() {
   const [ocupado, setOcupado] = useState(false)
   const [copias, setCopias] = useState<CopiaServidor[] | null>(null)
 
-  // Vindo do envio do recibo ("Configurar e-mail"): rola até o cartão do e-mail
+  // Vindo do envio do recibo ("Configurar e-mail") ou do contrato (dados da empresa que faltam):
+  // rola até o cartão
   const [params] = useSearchParams()
   const secao = params.get('secao')
   useEffect(() => {
-    if (secao !== 'email') return
-    const t = setTimeout(() => document.getElementById('email')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150)
+    if (secao !== 'email' && secao !== 'contrato') return
+    const t = setTimeout(() => document.getElementById(secao)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150)
     return () => clearTimeout(t)
   }, [secao])
 
@@ -105,11 +119,44 @@ export function Configuracoes() {
         : 'CNPJ inválido. Confira o número digitado.'
       : null
 
+  // CPF de quem assina o contrato pela empresa: a mesma regra do servidor (vazio pode; preenchido, válido)
+  const cpfRep = somenteDigitos(f.empresaRepresentanteCpf)
+  const cpfRepOk = cpfValido(cpfRep)
+  const cpfRepInvalido = !!cpfRep && !cpfRepOk
+  const erroCpfRep =
+    cpfRepInvalido && (tentouSalvar || cpfRep.length >= 11)
+      ? cpfRep.length < 11
+        ? 'CPF incompleto. Complete o número ou deixe em branco.'
+        : 'CPF inválido. Confira o número digitado.'
+      : null
+
+  // E-mail que sai no contrato (contato do cliente com a empresa): vazio pode; preenchido, válido
+  const emailEmpresa = f.empresaEmail.trim()
+  const emailEmpresaInvalido = !!emailEmpresa && !emailValido(emailEmpresa)
+  const [saiuDoEmail, setSaiuDoEmail] = useState(false)
+  const erroEmailEmpresa =
+    emailEmpresaInvalido && (tentouSalvar || saiuDoEmail) ? 'E-mail inválido. Confira o endereço ou deixe em branco.' : null
+
   const salvar = async () => {
     if (cnpjInvalido) {
       setTentouSalvar(true)
       toast.erro('Confira o CNPJ do recibo', 'O número digitado não é um CNPJ válido. Corrija ou deixe em branco.')
       document.getElementById('cfg-cnpj')?.focus()
+      return
+    }
+    if (cpfRepInvalido) {
+      setTentouSalvar(true)
+      toast.erro(
+        'Confira o CPF de quem assina pela empresa',
+        'O número digitado não é um CPF válido. Corrija ou deixe em branco (o contrato sai com a linha para preencher à mão).',
+      )
+      document.getElementById('cfg-rep-cpf')?.focus()
+      return
+    }
+    if (emailEmpresaInvalido) {
+      setTentouSalvar(true)
+      toast.erro('Confira o e-mail do contrato', 'O endereço digitado não é um e-mail válido. Corrija ou deixe em branco.')
+      document.getElementById('cfg-emp-email')?.focus()
       return
     }
     setSalvando(true)
@@ -131,6 +178,7 @@ export function Configuracoes() {
   const descartar = () => {
     setF(config)
     setTentouSalvar(false)
+    setSaiuDoEmail(false)
   }
 
   const fazerBackup = async () => {
@@ -193,7 +241,7 @@ export function Configuracoes() {
     <>
       <PageHeader
         titulo="Configurações"
-        descricao="Máquinas, valores padrão, recibo, e-mail, aparência e backup dos dados."
+        descricao="Máquinas, valores padrão, recibo, contrato de locação, e-mail, aparência e backup dos dados."
         acoes={
           <>
             {alterado && (
@@ -422,6 +470,18 @@ export function Configuracoes() {
       </div>
 
       <div className="mt-6">
+        <ContratoConfig
+          id="contrato"
+          f={f}
+          set={(k, v) => setF((x) => ({ ...x, [k]: v }))}
+          cpfOk={cpfRepOk}
+          erroCpf={erroCpfRep}
+          erroEmail={erroEmailEmpresa}
+          aoSairDoEmail={() => setSaiuDoEmail(true)}
+        />
+      </div>
+
+      <div className="mt-6">
         <EmailConfig id="email" />
       </div>
 
@@ -471,6 +531,261 @@ export function Configuracoes() {
         )}
       </AnimatePresence>
     </>
+  )
+}
+
+// ---- Contrato de locação ------------------------------------------------------------
+
+/**
+ * Resumo das regras escolhidas pelo dono para o contrato (o texto das cláusulas fica em
+ * shared/contrato.ts). Só para leitura: não mudam por aqui.
+ */
+const REGRAS_CONTRATO: Array<{ icone: ReactNode; titulo: string; texto: ReactNode }> = [
+  {
+    icone: <CalendarX2 className="h-4 w-4" />,
+    titulo: 'Cancelamento',
+    texto: 'Grátis até 7 dias antes do 1º dia. Depois, até 10% das diárias; se não vier retirar, até 20%.',
+  },
+  {
+    icone: <MessageCircle className="h-4 w-4" />,
+    titulo: 'Arrependimento',
+    texto: '7 dias para desistir, com devolução total, quando fechado por WhatsApp ou telefone.',
+  },
+  {
+    icone: <Wrench className="h-4 w-4" />,
+    titulo: 'Danos por mau uso',
+    texto: 'O cliente paga o conserto, com orçamento apresentado antes.',
+  },
+  {
+    icone: <PackageX className="h-4 w-4" />,
+    titulo: 'Perda ou furto por descuido',
+    texto: 'O cliente paga o valor de reposição da máquina.',
+  },
+  {
+    icone: <ShieldCheck className="h-4 w-4" />,
+    titulo: 'Roubo e desgaste',
+    texto: 'Roubo com boletim de ocorrência e desgaste natural não são cobrados.',
+  },
+  { icone: <Ban className="h-4 w-4" />, titulo: 'Caução', texto: 'Não é cobrada.' },
+  {
+    icone: <PackageOpen className="h-4 w-4" />,
+    titulo: 'Bobinas',
+    texto: 'As lacradas voltam sem custo; as abertas são cobradas como usadas.',
+  },
+  {
+    icone: <Percent className="h-4 w-4" />,
+    titulo: 'Atraso no pagamento',
+    texto: 'Multa de 2% + juros (e correção pelo IPCA).',
+  },
+  { icone: <Clock className="h-4 w-4" />, titulo: 'Atraso na devolução', texto: 'Não é cobrado.' },
+  { icone: <MapPin className="h-4 w-4" />, titulo: 'Retirada e devolução', texto: 'Sempre na empresa.' },
+  {
+    icone: <Type className="h-4 w-4" />,
+    titulo: 'Texto',
+    texto:
+      'Letra corpo 12 e cláusulas importantes em negrito. Sem testemunhas; vale assinatura no papel ou eletrônica (gov.br ou plataforma).',
+  },
+]
+
+/** Título de um grupo de campos dentro do cartão. */
+function Grupo({ children }: { children: ReactNode }) {
+  return (
+    <p className="pt-2 text-[11px] font-semibold tracking-[0.06em] text-muted uppercase first:pt-0 @sm:col-span-2">{children}</p>
+  )
+}
+
+/**
+ * Dados da empresa e valores que saem no contrato de locação. Os campos são das configurações
+ * gerais: salvam com o mesmo botão “Salvar alterações” da página.
+ */
+function ContratoConfig({
+  id,
+  f,
+  set,
+  cpfOk,
+  erroCpf,
+  erroEmail,
+  aoSairDoEmail,
+}: {
+  id: string
+  f: Config
+  set: <K extends keyof Config>(k: K, v: Config[K]) => void
+  cpfOk: boolean
+  erroCpf: string | null
+  erroEmail: string | null
+  aoSairDoEmail: () => void
+}) {
+  const cidade = f.empresaCidade.trim()
+  const dicaReposicao = (valor: number, tipo: string) =>
+    valor > 0
+      ? `Cobrado se a máquina ${tipo} for perdida, furtada por descuido ou ficar sem conserto.`
+      : 'Em R$ 0,00, o contrato diz “valor de mercado, por orçamento”.'
+
+  return (
+    <Card id={id} className="scroll-mt-24">
+      <CardHeader
+        icone={<FileSignature className="h-4 w-4" />}
+        titulo="Contrato de locação"
+        descricao="Dados da empresa e valores que saem em todos os contratos. Cada contrato guarda os dados do dia em que foi gerado. Salve com o botão “Salvar alterações”."
+      />
+      <div className="@container px-5 pb-5">
+        <div className="grid grid-cols-1 items-start gap-6 @4xl:grid-cols-[minmax(0,1fr)_minmax(0,26rem)]">
+          <div className="@container">
+            <div className="grid grid-cols-1 gap-4 @sm:grid-cols-2">
+              <Grupo>Empresa no contrato</Grupo>
+              <Field
+                label="Endereço da empresa"
+                htmlFor="cfg-emp-end"
+                className="@sm:col-span-2"
+                hint="A sede da empresa: é onde as máquinas são retiradas e devolvidas."
+              >
+                <Input
+                  id="cfg-emp-end"
+                  value={f.empresaEndereco}
+                  onChange={(e) => set('empresaEndereco', e.target.value)}
+                  placeholder="Ex.: Rua 13, nº 650, Bairro da Boa Morte, Rio Claro - SP"
+                />
+              </Field>
+              <Field label="Telefone" htmlFor="cfg-emp-tel" hint="Para o suporte durante o evento.">
+                <Input
+                  id="cfg-emp-tel"
+                  type="tel"
+                  inputMode="tel"
+                  value={f.empresaTelefone}
+                  onChange={(e) => set('empresaTelefone', e.target.value)}
+                  placeholder="Ex.: (19) 3023-9050"
+                  className="tnum"
+                />
+              </Field>
+              <Field label="E-mail de contato" htmlFor="cfg-emp-email" erro={erroEmail} hint="Para avisos e pedidos do cliente.">
+                <Input
+                  id="cfg-emp-email"
+                  type="email"
+                  value={f.empresaEmail}
+                  onChange={(e) => set('empresaEmail', e.target.value)}
+                  onBlur={aoSairDoEmail}
+                  placeholder="Ex.: contato@empresa.com.br"
+                  spellCheck={false}
+                  aria-invalid={!!erroEmail}
+                  className={cn(erroEmail && 'border-danger! focus:ring-danger/20!')}
+                />
+              </Field>
+
+              <Grupo>Quem assina pela empresa</Grupo>
+              <Field
+                label="Nome"
+                htmlFor="cfg-rep-nome"
+                hint={f.empresaRepresentante.trim() ? undefined : 'Em branco, o contrato sai com a linha para preencher à mão.'}
+              >
+                <Input
+                  id="cfg-rep-nome"
+                  value={f.empresaRepresentante}
+                  onChange={(e) => set('empresaRepresentante', e.target.value)}
+                  placeholder="Ex.: Maria da Silva"
+                  autoComplete="off"
+                />
+              </Field>
+              <Field
+                label="CPF"
+                htmlFor="cfg-rep-cpf"
+                erro={erroCpf}
+                hint={
+                  cpfOk ? (
+                    <span className="inline-flex items-center gap-1 font-medium text-success">
+                      <CircleCheck className="h-3.5 w-3.5" />
+                      CPF válido
+                    </span>
+                  ) : (
+                    'Opcional. Sai no contrato junto do nome.'
+                  )
+                }
+              >
+                <Input
+                  id="cfg-rep-cpf"
+                  inputMode="numeric"
+                  autoComplete="off"
+                  value={f.empresaRepresentanteCpf}
+                  onChange={(e) => set('empresaRepresentanteCpf', mascaraCpf(e.target.value))}
+                  placeholder="000.000.000-00"
+                  aria-invalid={!!erroCpf}
+                  className={cn('tnum', erroCpf && 'border-danger! focus:ring-danger/20!')}
+                />
+              </Field>
+
+              <Grupo>Valores e foro</Grupo>
+              <Field label="Reposição da máquina P" htmlFor="cfg-rep-p" hint={dicaReposicao(f.valorReposicaoP, 'P')}>
+                <CurrencyInput id="cfg-rep-p" valor={f.valorReposicaoP} aoMudar={(v) => set('valorReposicaoP', v)} />
+              </Field>
+              <Field label="Reposição da máquina G" htmlFor="cfg-rep-g" hint={dicaReposicao(f.valorReposicaoG, 'G')}>
+                <CurrencyInput id="cfg-rep-g" valor={f.valorReposicaoG} aoMudar={(v) => set('valorReposicaoG', v)} />
+              </Field>
+              <Field
+                label="Foro (comarca)"
+                htmlFor="cfg-foro"
+                className="@sm:col-span-2"
+                hint={
+                  f.contratoForo.trim()
+                    ? 'O cliente consumidor ainda pode entrar na Justiça na cidade dele (o contrato avisa).'
+                    : cidade
+                      ? `Em branco, vale a cidade da empresa: ${cidade}.`
+                      : 'Em branco, vale a cidade da empresa (em “Dados do recibo”).'
+                }
+              >
+                <Input
+                  id="cfg-foro"
+                  value={f.contratoForo}
+                  onChange={(e) => set('contratoForo', e.target.value)}
+                  placeholder={cidade ? `Ex.: ${cidade}` : 'Ex.: Rio Claro - SP'}
+                />
+              </Field>
+
+              <Grupo>Condições a mais</Grupo>
+              <Field
+                label="Condições que saem em todos os contratos"
+                htmlFor="cfg-condicoes"
+                className="@sm:col-span-2"
+                hint="Opcional. Uma por linha: entram nas disposições gerais do contrato. Para valer num contrato só, escreva ao gerar o contrato."
+              >
+                <Textarea
+                  id="cfg-condicoes"
+                  rows={3}
+                  value={f.contratoCondicoes}
+                  onChange={(e) => set('contratoCondicoes', e.target.value)}
+                  placeholder="Ex.: As máquinas são entregues com um rolo de bobina de teste, sem custo."
+                />
+              </Field>
+            </div>
+          </div>
+
+          {/* As regras escolhidas pelo dono, já escritas nas cláusulas (só leitura) */}
+          <section aria-labelledby="regras-contrato" className="rounded-xl border border-line bg-surface-2/60 px-4 pt-3.5 pb-4">
+            <div className="flex items-start gap-2.5">
+              <Scale className="mt-0.5 h-4 w-4 shrink-0 text-brand-ink" />
+              <h4 id="regras-contrato" className="text-[13px] font-semibold text-ink">
+                Regras do contrato <span className="font-normal text-muted">(conforme o Código de Defesa do Consumidor)</span>
+              </h4>
+            </div>
+            <dl className="mt-3 flex flex-col gap-2.5">
+              {REGRAS_CONTRATO.map((r) => (
+                <div key={r.titulo} className="flex items-start gap-2.5 text-[13px] leading-snug">
+                  <span aria-hidden className="mt-px shrink-0 text-muted">
+                    {r.icone}
+                  </span>
+                  <div className="min-w-0">
+                    <dt className="inline font-medium text-ink">{r.titulo}: </dt>
+                    <dd className="inline text-ink-2">{r.texto}</dd>
+                  </div>
+                </div>
+              ))}
+            </dl>
+            <p className="mt-3.5 border-t border-line pt-3 text-xs text-muted">
+              Estas regras já estão escritas nas cláusulas e valem para todos os contratos. Para acrescentar alguma combinação,
+              use as condições a mais.
+            </p>
+          </section>
+        </div>
+      </div>
+    </Card>
   )
 }
 

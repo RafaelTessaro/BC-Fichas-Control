@@ -383,7 +383,9 @@ export function gerarDadosExemplo(hoje: Date) {
     const cliente = clientes.find((c) => c.id === evento.clienteId)
     const assinado = nome === 'Festa da Primavera'
     const retirada = retiradaPadrao(evento)
-    const emitido = format(addDays(new Date(`${retirada.data}T12:00:00`), -3), 'yyyy-MM-dd')
+    // Gerado 3 dias antes da retirada, mas nunca depois de hoje (a retirada pode estar perto)
+    const tresDiasAntes = format(addDays(new Date(`${retirada.data}T12:00:00`), -3), 'yyyy-MM-dd')
+    const emitido = tresDiasAntes < hojeIso ? tresDiasAntes : hojeIso
     contratos.push({
       id: novoId(),
       versao: 1,
