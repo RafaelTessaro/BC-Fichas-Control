@@ -99,57 +99,46 @@ export async function gerarResumoPDF(
   const meio = L + W / 2 + 4
   let extra = Math.max(campo('Cliente', cliente?.nome ?? '—', L, W / 2 - 6), campo('Evento', evento.nome, meio, W / 2 - 4))
   y += PASSO + extra
-  // A cidade do evento (só os antigos têm uma própria) ou a do cadastro do cliente
-  const cidade = evento.cidade.trim() || (cliente?.cidade ? [cliente.cidade, cliente.uf].filter(Boolean).join(' - ') : '')
-  extra = Math.max(campo('Período', periodo(r.dataInicio, r.dataFim), L, W / 2 - 6), campo('Cidade', cidade, meio, W / 2 - 4))
+  // Período e, com período corrido, de quando a quando as máquinas ficam com o cliente (as
+  // diárias continuam só nos dias de uso)
+  const ocupadas = evento.periodoCorrido ? datasOcupadas(evento) : []
+  const comCliente =
+    ocupadas.length > new Set(evento.dias.map((d) => d.data)).size
+      ? `De ${dataCurta(ocupadas[0])} a ${dataCurta(ocupadas[ocupadas.length - 1])} (${ocupadas.length} dias)`
+      : ''
+  extra = campo('Período', periodo(r.dataInicio, r.dataFim), L, W / 2 - 6)
+  if (comCliente) extra = Math.max(extra, campo('Máquinas com o cliente', comCliente, meio, W / 2 - 4))
   y += PASSO + extra
 
-  // Máquinas enviadas e, com período corrido, de quando a quando ficam com o cliente (só o que
-  // houver, lado a lado). O nome do evento, acima, é o que sai no topo das fichas.
-  const blocos: Array<{ rotulo: string; linhas: string[] }> = []
-  const larguraBloco = (i: number) => (i === 0 ? W / 2 - 6 : W / 2 - 4)
-  doc.setFont('helvetica', 'normal').setFontSize(11)
+  // Máquinas enviadas, na largura toda: "P-01, P-02, G-03 (3 máquinas)"; se passar de 3 linhas,
+  // "… e mais N (total)". O nome do evento, acima, é o que sai no topo das fichas.
   const porId = new Map(maquinas.map((m) => [m.id, m]))
   const enviadas = ordenarMaquinas(evento.maquinasIds.map((id) => porId.get(id)).filter((m): m is Maquina => !!m))
   if (enviadas.length) {
-    // "P-01, P-02, G-03 (3 máquinas)"; se passar de 4 linhas, "… e mais N (total)"
+    doc.setFont('helvetica', 'normal').setFontSize(11)
     const total = `(${enviadas.length} ${enviadas.length === 1 ? 'máquina' : 'máquinas'})`
     const ids = enviadas.map((m) => m.identificacao)
     let linhas: string[] = []
     for (let n = ids.length; n >= 1; n--) {
       const texto =
         n === ids.length ? `${ids.join(', ')} ${total}` : `${ids.slice(0, n).join(', ')} e mais ${ids.length - n} ${total}`
-      linhas = doc.splitTextToSize(txt(texto), larguraBloco(blocos.length)) as string[]
-      if (linhas.length <= 4) break
+      linhas = doc.splitTextToSize(txt(texto), W) as string[]
+      if (linhas.length <= 3) break
     }
-    blocos.push({ rotulo: 'Máquinas enviadas', linhas: linhas.slice(0, 4) })
-  }
-  // Período corrido: as máquinas ficam com o cliente também entre os dias de uso (as diárias, não)
-  const ocupadas = evento.periodoCorrido ? datasOcupadas(evento) : []
-  if (ocupadas.length > new Set(evento.dias.map((d) => d.data)).size) {
-    const texto = `De ${dataCurta(ocupadas[0])} a ${dataCurta(ocupadas[ocupadas.length - 1])} (${ocupadas.length} dias)`
-    blocos.push({
-      rotulo: 'Máquinas com o cliente',
-      linhas: (doc.splitTextToSize(txt(texto), larguraBloco(blocos.length)) as string[]).slice(0, 2),
-    })
-  }
-  if (blocos.length) {
+    linhas = linhas.slice(0, 3)
     const ENTRELINHA = 4.5
-    const altura = Math.max(...blocos.map((b) => (b.linhas.length - 1) * ENTRELINHA))
+    const altura = (linhas.length - 1) * ENTRELINHA
     garantirEspaco(5.5 + altura + 3)
-    blocos.forEach((b, i) => {
-      const x = i === 0 ? L : meio
-      doc
-        .setFont('helvetica', 'bold')
-        .setFontSize(7.5)
-        .setTextColor(...SECUNDARIO)
-      doc.text(b.rotulo.toUpperCase(), x, y)
-      doc
-        .setFont('helvetica', 'normal')
-        .setFontSize(11)
-        .setTextColor(...TINTA)
-      b.linhas.forEach((linha, j) => doc.text(linha, x, y + 5.5 + j * ENTRELINHA))
-    })
+    doc
+      .setFont('helvetica', 'bold')
+      .setFontSize(7.5)
+      .setTextColor(...SECUNDARIO)
+    doc.text('MÁQUINAS ENVIADAS', L, y)
+    doc
+      .setFont('helvetica', 'normal')
+      .setFontSize(11)
+      .setTextColor(...TINTA)
+    linhas.forEach((linha, j) => doc.text(linha, L, y + 5.5 + j * ENTRELINHA))
     y += PASSO + altura
   }
 
