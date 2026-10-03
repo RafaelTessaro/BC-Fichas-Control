@@ -23,9 +23,9 @@ Google Agenda — se ela cair, essas duas funções esperam e voltam sozinhas.
 | Grupo | Página | O que faz |
 | --- | --- | --- |
 | Visão geral | **Painel** | Faturamento do mês, valores a receber, máquinas em uso hoje, próximos eventos, pagamentos pendentes e bobinas a conferir |
-| | **Agenda** | Calendário mensal com a ocupação das máquinas por dia (e os números das máquinas de cada evento); avisa quando passa de 80% ou do total de máquinas |
+| | **Agenda** | Calendário mensal com a ocupação das máquinas por dia ("4+1" = 4 máquinas + 1 reserva) e os números das máquinas de cada evento; avisa quando passa de 80% ou do total de máquinas. Vai para qualquer mês ou ano (clique no nome do mês), mostra o ano inteiro num mapa de ocupação e compara com o mesmo mês do ano anterior |
 | Cadastros | **Clientes** | Empresa (CNPJ, com consulta automática na Receita), pessoa física (CPF) ou cliente avulso; histórico e total faturado |
-| | **Eventos** | Nome (o topo das fichas) e rodapé, dias de uso com a quantidade de máquinas em cada dia (e se as máquinas ficam com o cliente entre um dia e outro), máquinas enviadas, andamento da programação, arquivos anexados (prints, logo, cardápio, PDF), valores, bobinas, desconto, pagamento, PDF do cliente, recibo (PIX ou dinheiro) e envio por e-mail ou WhatsApp |
+| | **Eventos** | Nome (o topo das fichas) e rodapé, dias de uso com a quantidade de máquinas e de **máquinas reserva** em cada dia (e se as máquinas ficam com o cliente entre um dia e outro), máquinas enviadas (titulares e reserva), andamento da programação, arquivos anexados (prints, logo, cardápio, PDF), valores, bobinas, desconto, pagamento, PDF do cliente, recibo (PIX ou dinheiro), envio por e-mail ou WhatsApp e **Repetir em outras datas** (para o cliente que já passou as datas do ano) |
 | Gestão | **Manutenção** | Máquinas P e G com identificação (P-01, G-03…), situação (disponível, locada, em manutenção, desativada) e onde cada uma está; registro das manutenções (preventiva ou corretiva, serviços feitos, problema relatado, responsável), lista de serviços cadastrados por você, reclamações de clientes e o histórico de cada máquina |
 | | **Relatórios** | Faturamento por mês/semana, recebido × a receber, ticket médio, formas de pagamento, ranking de clientes e planilha (CSV) |
 | | **Configurações** | Disponibilidade de máquinas (quantas P e G), valores padrão, dados do recibo, e-mail para envio de recibos, tema claro/escuro, backups, integração com o Google Agenda e zona de perigo (apagar dados) |
@@ -36,7 +36,7 @@ Atalhos: **Ctrl/⌘ + K** abre a busca global e **Ctrl/⌘ + S** salva o evento.
 
 | Planilha | Sistema |
 | --- | --- |
-| `TOTAL DE DIÁRIAS = SOMA(QTD.)` | soma das máquinas de todos os dias do evento |
+| `TOTAL DE DIÁRIAS = SOMA(QTD.)` | soma das máquinas de todos os dias do evento, mais as **máquinas reserva que o cliente usou** (a reserva parada não é cobrada) |
 | `VALOR DAS DIÁRIAS = VALOR DA DIÁRIA × TOTAL DE DIÁRIAS` | igual |
 | `BOBINAS UTILIZADAS = CONSIGNADAS − DEVOLVIDAS` | igual — até registrar a devolução, aparecem como "A conferir" e não são cobradas |
 | `VALOR DAS BOBINAS = VALOR DE CADA BOBINA × UTILIZADAS` | igual |
@@ -50,7 +50,7 @@ As regras ficam em [`shared/calc.ts`](shared/calc.ts), com testes em [`shared/ca
 
 Eventos pagos em **PIX** ou **Dinheiro** têm o botão **Gerar recibo** (no detalhe do evento e no
 menu de cada evento da lista). O recibo sai em PDF no papel timbrado, com o número do evento, o
-valor em algarismos e por extenso, o detalhamento (diárias, bobinas e desconto), a forma e a data
+valor em algarismos e por extenso, o detalhamento (diárias, reserva usada, bobinas e desconto), a forma e a data
 do pagamento e o espaço para assinatura. O nome, a razão social, o CNPJ e a cidade que aparecem
 no recibo ficam em **Configurações → Dados do recibo**. Para cliente avulso sem nome, o recibo
 deixa o espaço do nome em branco para preencher à mão. O texto traz o que um recibo precisa ter:
@@ -216,6 +216,16 @@ Não exponha a porta do servidor para a internet.
   de uso"**. Elas passam a contar como ocupadas do primeiro ao último dia (na agenda, na
   disponibilidade e na escolha das máquinas de outros eventos); as diárias continuam só nos dias
   de uso.
+- **Máquina reserva:** além das máquinas do dia (titulares), o cliente pode levar **reservas**:
+  máquinas a mais que ficam com ele sem custo, para o caso de alguma dar problema ou de o movimento
+  ser grande. Nos dias de utilização, informe as reservas de cada dia (podem mudar de um dia para o
+  outro). A reserva conta como máquina fora da empresa (na agenda aparece "4+1"), mas só é cobrada
+  se o cliente usar: marque **"Usou a reserva"** no dia (no formulário ou direto no detalhe do
+  evento) e ela entra nas diárias pelo mesmo valor da diária. Nas máquinas enviadas, escolha
+  "Enviar como: Reserva" (ou clique com o botão direito na máquina) para marcar qual vai como
+  reserva. A agenda e o Painel mostram as **reservas paradas** de cada dia: se faltar máquina para
+  outro cliente, você sabe onde tem uma sem uso. No resumo em PDF a reserva aparece com a
+  explicação de que só é cobrada quando usada; no recibo, a reserva usada vem numa linha própria.
 - **Identificação:** no cadastro da máquina, a letra vem do tipo (P ou G) e o número é livre
   (P-07, G-12…). O sistema não aceita duas máquinas com a mesma identificação.
 - **Texto das fichas:** o **nome do evento** é o que sai no topo das fichas programadas nas
@@ -225,6 +235,14 @@ Não exponha a porta do servidor para a internet.
 - **Programação:** cada evento mostra o andamento da programação das máquinas (não iniciada, em
   programação, enviada ao cliente, concluída). O Painel lista os próximos eventos com a programação
   pendente, para a secretária acompanhar.
+- **Aluguéis futuros (cliente que já passou as datas do ano):** cadastre o primeiro evento e use
+  **Repetir em outras datas** (no menu "…" do evento). Escolha as datas no calendário — ou use
+  "Repetir todo mês" (ex.: todo 2º sábado) — e o sistema cria um evento para cada data, com os
+  mesmos valores, máquinas por dia e reservas. Cada data é um evento separado, com pagamento,
+  recibo e status próprios; as máquinas enviadas são escolhidas perto de cada data. Os eventos
+  criados juntos formam uma **série**: o detalhe mostra as outras datas e a lista de eventos pode
+  ser filtrada por ela. Para ver tudo o que vem pela frente, use em Eventos o período
+  **"Próximos"**, ou a Agenda (que vai para qualquer mês ou ano).
 - **Arquivos do evento:** no evento dá para anexar prints da conversa (até colando com Ctrl+V),
   PDFs, imagens, logo e cardápio que o cliente mandou. Imagens e PDFs abrem na própria tela e
   qualquer arquivo pode ser baixado. Ficam no servidor, na pasta `dados/anexos` (até 25 MB cada).
