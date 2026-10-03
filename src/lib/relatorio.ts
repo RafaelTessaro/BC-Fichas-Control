@@ -17,7 +17,10 @@ import type { FormaPagamento } from '#shared/tipos.ts'
 
 export interface Totais {
   eventos: number
+  /** Diárias cobradas: as das máquinas titulares e as das reservas que o cliente usou. */
   diarias: number
+  /** Quantas de `diarias` são de máquina reserva usada (a reserva parada não é cobrada). */
+  diariasReserva: number
   valorDiarias: number
   bobinasConsignadas: number
   bobinasUtilizadas: number
@@ -31,6 +34,7 @@ export interface Totais {
 export const totaisVazios = (): Totais => ({
   eventos: 0,
   diarias: 0,
+  diariasReserva: 0,
   valorDiarias: 0,
   bobinasConsignadas: 0,
   bobinasUtilizadas: 0,
@@ -44,6 +48,7 @@ export const totaisVazios = (): Totais => ({
 export function somar(t: Totais, { resumo, evento }: EventoCompleto) {
   t.eventos++
   t.diarias += resumo.totalDiarias
+  t.diariasReserva += resumo.diariasReserva
   t.valorDiarias += resumo.valorDiarias
   t.bobinasConsignadas += evento.bobinasConsignadas
   t.bobinasUtilizadas += resumo.bobinasUtilizadas ?? 0

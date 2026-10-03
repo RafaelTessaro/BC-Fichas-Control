@@ -29,6 +29,7 @@ import {
   localDaLocacao,
   osEmAberto,
   periodoEvento,
+  reservasUsadasDia,
   STATUS_MAQUINA_LISTA,
   STATUS_OS,
   TIPO_MAQUINA,
@@ -37,7 +38,7 @@ import {
 } from '#shared/maquinas.ts'
 import type { Evento, OrdemServico, OrdemServicoInput, Reclamacao, StatusMaquina } from '#shared/tipos.ts'
 import { IconeMaquinaFichas } from '../components/IconeMaquinaFichas'
-import { SituacaoBadge, StatusOSBadge, TipoMaquinaBadge, useSituacoes } from '../components/Maquinas'
+import { SeloReserva, SituacaoBadge, StatusOSBadge, TipoMaquinaBadge, useSituacoes } from '../components/Maquinas'
 import { MaquinaFormModal } from '../components/MaquinaFormModal'
 import { OrdemServicoModal } from '../components/OrdemServicoModal'
 import { ReclamacaoModal } from '../components/ReclamacaoModal'
@@ -52,6 +53,7 @@ import { codigoEvento, dataCurta, numero, periodo } from '../lib/format'
 import { useHoje } from '../lib/hoje'
 import {
   avisoLocacoes,
+  DICA_RESERVA,
   diasEntre,
   historicoMaquina,
   locacoesDeHojeEmDiante,
@@ -59,6 +61,7 @@ import {
   perguntaSituacao,
   problemaDaReclamacao,
   resumoMaquina,
+  usoDaReserva,
   type ItemHistorico,
   type Locacao,
 } from '../lib/manutencao'
@@ -267,6 +270,12 @@ export function MaquinaDetalhe() {
             <span>{ident}</span>
             <TipoMaquinaBadge tipo={maquina.tipo} className="h-6 min-w-6 text-xs tracking-normal" />
             <SituacaoBadge estado={situacao.estado} className="tracking-normal" />
+            {situacao.estado === 'LOCADA' && situacao.reserva && (
+              <Badge tom="warning" ponto={false} className="gap-1 pl-1.5 tracking-normal">
+                <SeloReserva pequeno />
+                Reserva
+              </Badge>
+            )}
           </span>
         }
         descricao={`${TIPO_MAQUINA[maquina.tipo].label} (${TIPO_MAQUINA[maquina.tipo].descricao.toLowerCase()}) · cadastrada em ${dataCurta(hojeLocalIso(new Date(maquina.criadoEm)))}`}
@@ -339,7 +348,23 @@ export function MaquinaDetalhe() {
           valor={resumo.diarias}
           formatar={(v) => numero(Math.round(v))}
           icone={<CalendarClock className="h-4 w-4" />}
-          detalhe="Dias em eventos"
+          detalhe={
+            resumo.diasReserva ? (
+              <span
+                title={`Dias em que ela ficou com o cliente como reserva: não contam diária, a não ser que ele use.${
+                  !resumo.diasReservaUsada
+                    ? ''
+                    : resumo.diasReserva === 1
+                      ? ' Ela foi usada nesse dia.'
+                      : ` Ela foi usada em ${numero(resumo.diasReservaUsada)} deles.`
+                }`}
+              >
+                + {numero(resumo.diasReserva)} {resumo.diasReserva === 1 ? 'dia' : 'dias'} como reserva
+              </span>
+            ) : (
+              'Dias em eventos'
+            )
+          }
           delay={0.12}
         />
       </div>
@@ -351,6 +376,7 @@ export function MaquinaDetalhe() {
           <div className="flex flex-col gap-4 px-5 pb-5">
             <OndeEsta
               situacao={situacao}
+              hoje={hoje}
               ordemAberta={ordens.find(osEmAberto)}
               nomeCliente={nomeCliente}
               aoAbrirOS={() => setModalOS({})}
@@ -507,16 +533,18 @@ export function MaquinaDetalhe() {
 /** Situação de hoje em destaque: locada (com o evento), disponível, em manutenção ou desativada. */
 function OndeEsta({
   situacao,
+  hoje,
   ordemAberta,
   nomeCliente,
   aoAbrirOS,
 }: {
   situacao: SituacaoMaquina
+  hoje: string
   ordemAberta: OrdemServico | undefined
   nomeCliente: Map<string, string>
   aoAbrirOS: () => void
 }) {
-  const { estado, evento } = situacao
+  const { estado, evento, reserva } = situacao
   const caixa = {
     DISPONIVEL: 'bg-success-soft text-success',
     LOCADA: 'bg-info-soft text-info',
@@ -532,10 +560,18 @@ function OndeEsta({
       className={cn('rounded-xl px-4 py-3.5', caixa)}
     >
       <p className="text-xs font-semibold tracking-[0.04em] uppercase">
-        {estado === 'LOCADA' ? 'Locada agora' : ESTADO_MAQUINA[estado].label}
+        {estado === 'LOCADA' ? (reserva ? 'Locada agora · como reserva' : 'Locada agora') : ESTADO_MAQUINA[estado].label}
       </p>
       {estado === 'LOCADA' && evento ? (
-        <DadosEvento evento={evento} nomeCliente={nomeCliente} />
+        <>
+          <DadosEvento evento={evento} nomeCliente={nomeCliente} />
+          {reserva && (
+            <p className="mt-2.5 flex items-start gap-1.5 border-t border-current/15 pt-2.5 text-[13px] text-ink-2">
+              <SeloReserva className="mt-px" />
+              {DICA_RESERVA[usoDaReserva(evento, hoje)]}
+            </p>
+          )}
+        </>
       ) : estado === 'DISPONIVEL' ? (
         <p className="mt-1 text-sm text-ink-2">Livre hoje: não está em nenhum evento.</p>
       ) : estado === 'DESATIVADA' ? (
@@ -568,7 +604,7 @@ function OndeEsta({
           )}
           {evento && (
             <p className="mt-2 border-t border-current/15 pt-2 text-[13px] font-medium">
-              Atenção: está marcada hoje em{' '}
+              Atenção: está marcada hoje{reserva ? ' como reserva' : ''} em{' '}
               <Link to={`/eventos/${evento.id}`} className="underline underline-offset-2">
                 {localDaLocacao(evento)}
               </Link>
@@ -619,8 +655,12 @@ function ProximasLocacoes({ locacoes }: { locacoes: Locacao[] }) {
               <CalendarClock className="h-4 w-4 shrink-0 text-muted" />
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[13px] font-medium text-ink">{localDaLocacao(l.evento)}</span>
-                <span className="tnum block text-xs text-muted">{periodo(l.inicio, l.fim)}</span>
+                <span className="tnum block text-xs text-muted">
+                  {periodo(l.inicio, l.fim)}
+                  {l.reserva && ' · como reserva'}
+                </span>
               </span>
+              {l.reserva && <SeloReserva className="shrink-0" />}
             </Link>
           </li>
         ))}
@@ -1055,13 +1095,31 @@ function ItemLocacao({
   const e = item.evento
   const cliente = nomeCliente.get(e.clienteId)
   const rotulo = { passada: null, agora: 'Acontecendo agora', futura: 'Agendada' }[item.quando]
+  // Como reserva: em quantos dias ela com certeza foi usada (cobrada); com mais de uma reserva e só
+  // parte usada, não dá para saber qual
+  const usoReserva =
+    !item.reserva || item.quando === 'futura'
+      ? null
+      : item.diasUsada
+        ? `reserva usada${e.dias.length > 1 ? ` em ${item.diasUsada} ${item.diasUsada === 1 ? 'dia' : 'dias'}` : ''}`
+        : e.dias.some((d) => reservasUsadasDia(d) > 0)
+          ? 'o cliente usou parte das reservas'
+          : item.quando === 'agora'
+            ? 'reserva sem uso até agora'
+            : 'reserva sem uso'
   return (
     <>
-      <Marcador icone={<Ticket className="h-4 w-4" />} classe="bg-info-soft text-info" />
+      <span
+        className="relative shrink-0"
+        title={item.reserva ? 'Foi como reserva: fica com o cliente e só é cobrada se ele usar' : undefined}
+      >
+        <Marcador icone={<Ticket className="h-4 w-4" />} classe="bg-info-soft text-info" />
+        {item.reserva && <SeloReserva pequeno className="absolute -right-1 bottom-0 ring-2 ring-surface" />}
+      </span>
       <div className="min-w-0 flex-1 pt-0.5">
         <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
           <Link to={`/eventos/${e.id}`} className="text-sm font-medium break-words text-ink hover:text-brand-ink hover:underline">
-            Locada · {localDaLocacao(e)}
+            {item.reserva ? 'Reserva' : 'Locada'} · {localDaLocacao(e)}
           </Link>
           {rotulo && (
             <Badge tom={item.quando === 'agora' ? 'info' : 'neutral'}>
@@ -1073,6 +1131,7 @@ function ItemLocacao({
           {periodo(item.data, item.fim)} · {codigoEvento(e.codigo)}
           {cliente && ` · ${cliente}`}
           {e.periodoCorrido && ' · período todo com o cliente'}
+          {usoReserva && ` · ${usoReserva}`}
         </p>
       </div>
     </>

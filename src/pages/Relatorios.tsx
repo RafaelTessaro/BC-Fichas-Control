@@ -85,6 +85,7 @@ export function Relatorios() {
         'Período',
         'Eventos',
         'Diárias',
+        'Diárias de reserva usada',
         'Valor diárias',
         'Bobinas utilizadas',
         'Valor bobinas',
@@ -98,6 +99,7 @@ export function Relatorios() {
           b.rotuloLongo,
           b.eventos,
           b.diarias,
+          b.diariasReserva,
           b.valorDiarias,
           b.bobinasUtilizadas,
           b.valorBobinas,
@@ -110,6 +112,7 @@ export function Relatorios() {
           'TOTAL',
           dados.totais.eventos,
           dados.totais.diarias,
+          dados.totais.diariasReserva,
           dados.totais.valorDiarias,
           dados.totais.bobinasUtilizadas,
           dados.totais.valorBobinas,
@@ -345,7 +348,13 @@ export function Relatorios() {
               <CardHeader titulo="Operação" descricao="Volume de máquinas e bobinas." />
               <div className="grid grid-cols-2 gap-2 px-5 pb-5">
                 <Indicador icone={<Ticket className="h-4 w-4" />} rotulo="Eventos" valor={numero(t.eventos)} />
-                <Indicador icone={<ChartColumn className="h-4 w-4" />} rotulo="Diárias" valor={numero(t.diarias)} />
+                <Indicador
+                  icone={<ChartColumn className="h-4 w-4" />}
+                  rotulo="Diárias"
+                  valor={numero(t.diarias)}
+                  // A reserva só é cobrada quando o cliente usa: essas diárias já estão no total
+                  detalhe={t.diariasReserva > 0 ? `inclui ${numero(t.diariasReserva)} de reserva usada` : undefined}
+                />
                 <Indicador
                   icone={<Package className="h-4 w-4" />}
                   rotulo="Bobinas consignadas"
@@ -409,7 +418,9 @@ export function Relatorios() {
                     <tr key={b.chave} className={cn(b.eventos === 0 && 'opacity-60')}>
                       <Td className="whitespace-nowrap text-ink">{b.rotuloLongo}</Td>
                       <Td alinhar="right">{b.eventos}</Td>
-                      <Td alinhar="right">{numero(b.diarias)}</Td>
+                      <Td alinhar="right" title={dicaReserva(b.diariasReserva)}>
+                        {numero(b.diarias)}
+                      </Td>
                       <Td alinhar="right" className="max-md:hidden">
                         {moeda(b.valorDiarias)}
                       </Td>
@@ -437,7 +448,7 @@ export function Relatorios() {
                     <Td alinhar="right" className="border-t border-line-strong text-ink">
                       {t.eventos}
                     </Td>
-                    <Td alinhar="right" className="border-t border-line-strong text-ink">
+                    <Td alinhar="right" className="border-t border-line-strong text-ink" title={dicaReserva(t.diariasReserva)}>
                       {numero(t.diarias)}
                     </Td>
                     <Td alinhar="right" className="border-t border-line-strong text-ink max-md:hidden">
@@ -469,15 +480,21 @@ export function Relatorios() {
   )
 }
 
+/** Balão das diárias na tabela: quantas são de reserva usada (nada quando não há). */
+const dicaReserva = (n: number) => (n > 0 ? `Inclui ${numero(n)} ${n === 1 ? 'diária' : 'diárias'} de reserva usada` : undefined)
+
 function Indicador({
   rotulo,
   valor,
   icone,
+  detalhe,
   className,
 }: {
   rotulo: string
   valor: string
   icone?: ReactNode
+  /** Linha miúda embaixo do valor. */
+  detalhe?: string
   className?: string
 }) {
   return (
@@ -487,6 +504,7 @@ function Indicador({
         {rotulo}
       </p>
       <p className="tnum mt-1 text-base font-semibold text-ink">{valor}</p>
+      {detalhe && <p className="mt-0.5 text-xs text-muted">{detalhe}</p>}
     </div>
   )
 }

@@ -9,6 +9,7 @@ import {
   Database,
   ListChecks,
   PackageCheck,
+  PauseCircle,
   Settings,
   Ticket,
   UserPlus,
@@ -18,12 +19,24 @@ import {
 import { motion } from 'motion/react'
 import { useMemo, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { capacidade, diasOcupados, osEmAberto, type Capacidade, type EstadoMaquina } from '#shared/maquinas.ts'
+import {
+  capacidade,
+  diasOcupados,
+  ordenarMaquinas,
+  osEmAberto,
+  reservasDia,
+  reservasParadas,
+  totalDia,
+  type Capacidade,
+  type EstadoMaquina,
+  type ReservaParada,
+} from '#shared/maquinas.ts'
+import type { Maquina } from '#shared/tipos.ts'
 import { StatusBadge } from '../components/Badges'
 import { IconeMaquinaFichas } from '../components/IconeMaquinaFichas'
 import { ProgramacaoBadge } from '../components/Programacao'
 import { GraficoFaturamento, Legenda } from '../components/charts/Charts'
-import { useSituacoes } from '../components/Maquinas'
+import { SeloReserva, useSituacoes } from '../components/Maquinas'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
@@ -40,6 +53,7 @@ import { useHoje } from '../lib/hoje'
 export function Painel() {
   const todos = useEventosCompletos()
   const clientes = useDados((s) => s.clientes)
+  const eventos = useDados((s) => s.eventos)
   const maquinas = useDados((s) => s.maquinas)
   const config = useDados((s) => s.config)
   const carregarExemplo = useDados((s) => s.carregarExemplo)
@@ -49,7 +63,8 @@ export function Painel() {
 
   const d = useMemo(() => {
     const f = (x: Date) => format(x, 'yyyy-MM-dd')
-    const agora = new Date()
+    // A partir do "hoje" que vira à meia-noite: os meses do painel acompanham a troca do dia
+    const agora = parseISO(hoje)
     const mesDe = f(startOfMonth(agora))
     const mesAte = f(endOfMonth(agora))
     const antDe = f(startOfMonth(subMonths(agora, 1)))
@@ -63,15 +78,16 @@ export function Painel() {
 
     const ativos = todos.filter((x) => x.evento.status !== 'CANCELADO')
     const aReceber = ativos.filter((x) => !x.resumo.pago).reduce((s, x) => s + x.resumo.total, 0)
-    // Máquinas fora hoje: pelos dias ocupados (com período corrido, também os dias em que as
-    // máquinas só ficam com o cliente, entre os dias de uso)
+    // Máquinas fora hoje: titulares + reservas, pelos dias ocupados (com período corrido, também
+    // os dias em que as máquinas só ficam com o cliente, entre os dias de uso)
     const foraHoje = ativos.flatMap((x) => {
       const dd = diasOcupados(x.evento).find((o) => o.data === hoje)
-      return dd ? [{ x, maquinas: dd.maquinas, uso: dd.uso }] : []
+      return dd ? [{ x, maquinas: totalDia(dd), reservas: reservasDia(dd), uso: dd.uso }] : []
     })
     const maquinasHoje = foraHoje.reduce((s, f) => s + f.maquinas, 0)
-    // Máquinas de hoje ainda sem número escolhido, evento por evento (reserva a mais num evento
-    // não cobre a falta em outro)
+    const reservasHoje = foraHoje.reduce((s, f) => s + f.reservas, 0)
+    // Máquinas de hoje (titulares + reservas) ainda sem número escolhido, evento por evento
+    // (máquina a mais num evento não cobre a falta em outro)
     const semNumeroHoje = foraHoje.reduce((s, f) => s + Math.max(0, f.maquinas - f.x.evento.maquinasIds.length), 0)
 
     // Programação das máquinas ainda não concluída, dos eventos de hoje em diante (o mais próximo primeiro)
@@ -96,6 +112,7 @@ export function Painel() {
       baldes,
       aReceber,
       maquinasHoje,
+      reservasHoje,
       semNumeroHoje,
       proximos,
       semPagamento,
@@ -105,6 +122,9 @@ export function Painel() {
       soComCliente: foraHoje.filter((f) => !f.uso).length,
     }
   }, [todos, hoje])
+
+  // Reservas com clientes, sem uso hoje: onde buscar uma máquina se faltar
+  const paradasHoje = useMemo(() => reservasParadas(eventos, hoje), [eventos, hoje])
 
   const variacao = d.anterior.total > 0 ? (d.mes.total - d.anterior.total) / d.anterior.total : null
   const vazio = todos.length === 0 && clientes.length === 0
@@ -223,12 +243,12 @@ export function Painel() {
           valor={d.maquinasHoje}
           formatar={(v) => `${Math.round(v)} / ${cap.total}`}
           icone={<IconeMaquinaFichas className="h-4 w-4" />}
-          detalhe={textoMaquinasHoje(d.eventosHoje, d.soComCliente)}
+          detalhe={textoMaquinasHoje(d.eventosHoje, d.soComCliente, d.reservasHoje)}
           delay={0.12}
         />
       </div>
 
-      {(cap.cadastradas || !vazio) && <SituacaoMaquinas cap={cap} semNumero={d.semNumeroHoje} />}
+      {(cap.cadastradas || !vazio) && <SituacaoMaquinas cap={cap} semNumero={d.semNumeroHoje} paradas={paradasHoje} />}
 
       {!vazio && <ProgramacaoMaquinas itens={d.programacao} hoje={hoje} />}
 
@@ -314,7 +334,7 @@ const COR_ESTADO: Record<Exclude<EstadoMaquina, 'DESATIVADA'>, string> = {
 }
 
 /** Faixa compacta com a situação das máquinas agora: locadas, em manutenção, disponíveis e manutenções em aberto. */
-function SituacaoMaquinas({ cap, semNumero }: { cap: Capacidade; semNumero: number }) {
+function SituacaoMaquinas({ cap, semNumero, paradas }: { cap: Capacidade; semNumero: number; paradas: ReservaParada[] }) {
   const maquinas = useDados((s) => s.maquinas)
   const ordens = useDados((s) => s.ordens)
   const situacoes = useSituacoes()
@@ -344,85 +364,165 @@ function SituacaoMaquinas({ cap, semNumero }: { cap: Capacidade; semNumero: numb
 
   return (
     <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.16, duration: 0.4 }}>
-      <Card className="mb-6 flex flex-col gap-4 p-4 sm:px-5 lg:flex-row lg:items-center lg:gap-6">
-        <div className="flex min-w-0 items-center gap-3 lg:w-56 lg:shrink-0">
-          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-ink-2">
-            <IconeMaquinaFichas className="h-4 w-4" />
+      <Card className="mb-6">
+        <div className="flex flex-col gap-4 p-4 sm:px-5 lg:flex-row lg:items-center lg:gap-6">
+          <div className="flex min-w-0 items-center gap-3 lg:w-56 lg:shrink-0">
+            <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-ink-2">
+              <IconeMaquinaFichas className="h-4 w-4" />
+            </div>
+            <div className="min-w-0">
+              <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">Situação das máquinas</h3>
+              <p className="text-[13px] text-muted">
+                {cap.cadastradas ? `Agora · ${numero(cap.P)} P e ${numero(cap.G)} G` : 'Ainda não informadas'}
+              </p>
+            </div>
           </div>
-          <div className="min-w-0">
-            <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">Situação das máquinas</h3>
-            <p className="text-[13px] text-muted">
-              {cap.cadastradas ? `Agora · ${numero(cap.P)} P e ${numero(cap.G)} G` : 'Ainda não informadas'}
-            </p>
-          </div>
-        </div>
 
-        {cap.cadastradas ? (
-          <>
-            <div className="min-w-0 flex-1">
-              <div
-                className="flex h-2 w-full gap-0.5 overflow-hidden rounded-full bg-surface-3"
-                role="img"
-                aria-label={partes.map((p) => `${p.qtd} ${p.rotulo}`).join(', ')}
-              >
-                {partes.map(
-                  (p) =>
-                    p.qtd > 0 && (
-                      <motion.div
-                        key={p.estado}
-                        initial={{ width: 0 }}
-                        animate={{ width: `${(p.qtd / Math.max(1, soma)) * 100}%` }}
-                        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-                        className={cn('h-full first:rounded-l-full last:rounded-r-full', COR_ESTADO[p.estado])}
-                      />
-                    ),
+          {cap.cadastradas ? (
+            <>
+              <div className="min-w-0 flex-1">
+                <div
+                  className="flex h-2 w-full gap-0.5 overflow-hidden rounded-full bg-surface-3"
+                  role="img"
+                  aria-label={partes.map((p) => `${p.qtd} ${p.rotulo}`).join(', ')}
+                >
+                  {partes.map(
+                    (p) =>
+                      p.qtd > 0 && (
+                        <motion.div
+                          key={p.estado}
+                          initial={{ width: 0 }}
+                          animate={{ width: `${(p.qtd / Math.max(1, soma)) * 100}%` }}
+                          transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
+                          className={cn('h-full first:rounded-l-full last:rounded-r-full', COR_ESTADO[p.estado])}
+                        />
+                      ),
+                  )}
+                </div>
+                <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-muted">
+                  {partes.map((p) => (
+                    <li key={p.estado} className="inline-flex items-center gap-1.5 whitespace-nowrap">
+                      <span className={cn('h-2 w-2 rounded-full', COR_ESTADO[p.estado])} />
+                      <b className="tnum font-semibold text-ink">{numero(p.qtd)}</b> {p.rotulo}
+                    </li>
+                  ))}
+                </ul>
+                {semNumero > 0 && (
+                  <p className="mt-1 text-xs text-warning">
+                    {semNumero === 1
+                      ? '1 máquina agendada para hoje ainda está sem número escolhido no evento.'
+                      : `${semNumero} máquinas agendadas para hoje ainda estão sem número escolhido no evento.`}
+                  </p>
                 )}
               </div>
-              <ul className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[13px] text-muted">
-                {partes.map((p) => (
-                  <li key={p.estado} className="inline-flex items-center gap-1.5 whitespace-nowrap">
-                    <span className={cn('h-2 w-2 rounded-full', COR_ESTADO[p.estado])} />
-                    <b className="tnum font-semibold text-ink">{numero(p.qtd)}</b> {p.rotulo}
-                  </li>
-                ))}
-              </ul>
-              {semNumero > 0 && (
-                <p className="mt-1 text-xs text-warning">
-                  {semNumero === 1
-                    ? '1 máquina reservada para hoje ainda está sem número escolhido no evento.'
-                    : `${semNumero} máquinas reservadas para hoje ainda estão sem número escolhido no evento.`}
-                </p>
-              )}
-            </div>
-            <div className="flex items-center justify-between gap-3 lg:shrink-0 lg:justify-end">
-              {os > 0 ? (
-                <Badge tom="warning">{os === 1 ? '1 manutenção em aberto' : `${os} manutenções em aberto`}</Badge>
-              ) : (
-                <Badge tom="success">Nenhuma manutenção em aberto</Badge>
-              )}
-              {link('/manutencao', 'Manutenção')}
-            </div>
-          </>
-        ) : (
-          <>
-            <p className="min-w-0 flex-1 text-[13px] text-ink-2">
-              Informe quantas máquinas P e G a empresa tem para acompanhar aqui quantas estão locadas, em manutenção e
-              disponíveis.
-            </p>
-            {link('/configuracoes', 'Informar máquinas')}
-          </>
-        )}
+              <div className="flex items-center justify-between gap-3 lg:shrink-0 lg:justify-end">
+                {os > 0 ? (
+                  <Badge tom="warning">{os === 1 ? '1 manutenção em aberto' : `${os} manutenções em aberto`}</Badge>
+                ) : (
+                  <Badge tom="success">Nenhuma manutenção em aberto</Badge>
+                )}
+                {link('/manutencao', 'Manutenção')}
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="min-w-0 flex-1 text-[13px] text-ink-2">
+                Informe quantas máquinas P e G a empresa tem para acompanhar aqui quantas estão locadas, em manutenção e
+                disponíveis.
+              </p>
+              {link('/configuracoes', 'Informar máquinas')}
+            </>
+          )}
+        </div>
+        {cap.cadastradas && <ReservasParadasHoje paradas={paradas} />}
       </Card>
     </motion.div>
   )
 }
 
-/** Detalhe do cartão "Máquinas hoje": eventos acontecendo e os que só estão com as máquinas. */
-function textoMaquinasHoje(acontecendo: number, comCliente: number) {
+/**
+ * Indicador "Reservas paradas hoje": as máquinas reserva que estão com clientes sem uso, com o
+ * evento, o cliente e os números das máquinas (para saber onde buscar uma se faltar).
+ */
+function ReservasParadasHoje({ paradas }: { paradas: ReservaParada[] }) {
+  const maquinas = useDados((s) => s.maquinas)
+  const clientes = useDados((s) => s.clientes)
+  const porId = useMemo(() => new Map(maquinas.map((m) => [m.id, m])), [maquinas])
+  const nomes = useMemo(() => new Map(clientes.map((c) => [c.id, c.nome])), [clientes])
+  const quantas = paradas.reduce((s, p) => s + p.paradas, 0)
+  return (
+    <div className="border-t border-line px-4 py-3 sm:px-5">
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <PauseCircle className="h-4 w-4 shrink-0 text-ink-2" />
+        <h4 className="text-[13px] font-semibold text-ink">Reservas paradas hoje</h4>
+        <span
+          className={cn(
+            'tnum rounded-full px-2 py-0.5 text-[11px] font-semibold',
+            quantas ? 'bg-info-soft text-info' : 'bg-surface-2 text-muted',
+          )}
+        >
+          {quantas}
+        </span>
+        <span className="text-xs text-muted sm:ml-1">
+          {quantas
+            ? 'Se precisar de uma máquina a mais, estas estão com clientes, sem uso.'
+            : 'Nenhuma máquina reserva parada com cliente hoje.'}
+        </span>
+      </div>
+      {paradas.length > 0 && (
+        <ul className="mt-2 flex flex-wrap gap-x-7 gap-y-0.5 px-2">
+          {paradas.map((p) => {
+            const ids = ordenarMaquinas(p.maquinasIds.map((id) => porId.get(id)).filter((m): m is Maquina => !!m))
+            const faltam = Math.max(0, p.paradas - ids.length)
+            return (
+              <li key={p.evento.id} className="max-w-full min-w-0">
+                <Link
+                  to={`/eventos/${p.evento.id}`}
+                  className="-mx-2 flex min-w-0 items-center gap-3 rounded-lg px-2 py-1.5 transition-colors hover:bg-surface-2"
+                >
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-medium text-ink">{p.evento.nome}</span>
+                    <span className="block truncate text-xs text-muted">{nomes.get(p.evento.clienteId) ?? '—'}</span>
+                  </span>
+                  <span className="flex shrink-0 flex-wrap gap-1">
+                    <span className="sr-only">Máquinas reserva:</span>
+                    {/* Mesmo visual da reserva no resto do sistema: tracejado âmbar e o selinho "R" */}
+                    {ids.map((m) => (
+                      <span
+                        key={m.id}
+                        className="tnum inline-flex items-center gap-1 rounded-md border border-dashed border-warning-dot px-1.5 py-0.5 text-[11px] leading-4 font-semibold text-ink-2"
+                      >
+                        {m.identificacao}
+                        <SeloReserva pequeno />
+                      </span>
+                    ))}
+                    {faltam > 0 && (
+                      <span className="rounded-md bg-warning-soft px-1.5 py-0.5 text-[11px] leading-4 font-medium text-warning">
+                        {ids.length
+                          ? `+${faltam} não ${faltam === 1 ? 'marcada' : 'marcadas'}`
+                          : faltam === 1
+                            ? 'Não marcada'
+                            : `${faltam} não marcadas`}
+                      </span>
+                    )}
+                  </span>
+                </Link>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+/** Detalhe do cartão "Máquinas hoje": eventos acontecendo, os que só estão com as máquinas e as reservas. */
+function textoMaquinasHoje(acontecendo: number, comCliente: number, reservas: number) {
   const evs = (n: number) => `${n} ${n === 1 ? 'evento' : 'eventos'}`
-  if (acontecendo && comCliente) return `Em ${evs(acontecendo)} acontecendo e ${comCliente} com o cliente`
-  if (acontecendo) return `Em ${evs(acontecendo)} acontecendo`
-  if (comCliente) return `Com o cliente em ${evs(comCliente)}, sem uso hoje`
+  const comReservas = reservas ? ` (${reservas} ${reservas === 1 ? 'reserva' : 'reservas'})` : ''
+  if (acontecendo && comCliente) return `Em ${evs(acontecendo)} acontecendo e ${comCliente} com o cliente${comReservas}`
+  if (acontecendo) return `Em ${evs(acontecendo)} acontecendo${comReservas}`
+  if (comCliente) return `Com o cliente em ${evs(comCliente)}, sem uso hoje${comReservas}`
   return 'Nenhum evento hoje'
 }
 

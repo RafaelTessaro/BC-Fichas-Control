@@ -3,6 +3,7 @@ import {
   Banknote,
   CalendarDays,
   CalendarRange,
+  ChevronRight,
   Clock,
   Copy,
   CreditCard,
@@ -21,6 +22,7 @@ import {
   QrCode,
   Receipt,
   ReceiptText,
+  Repeat,
   Send,
   StickyNote,
   User,
@@ -28,10 +30,10 @@ import {
   Wallet,
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { AnexosEvento } from '../components/AnexosEvento'
-import { ConferenciaBadge, PagamentoBadge } from '../components/Badges'
+import { ConferenciaBadge, PagamentoBadge, StatusBadge } from '../components/Badges'
 import { EnviarDocumentoModal, type CanalEnvio } from '../components/EnviarDocumentoModal'
 import { useAcoesEvento } from '../components/EventosTabela'
 import { IconeMaquinaFichas } from '../components/IconeMaquinaFichas'
@@ -39,6 +41,7 @@ import { MaquinaChip, useSituacoes } from '../components/Maquinas'
 import { MaquinasEnviadas } from '../components/MaquinasEvento'
 import { SeletorProgramacao } from '../components/Programacao'
 import { ReclamacaoModal } from '../components/ReclamacaoModal'
+import { RepetirEventoModal } from '../components/RepetirEventoModal'
 import { TextoFicha } from '../components/TextoFicha'
 import { GoogleSyncBadge } from '../components/GoogleSyncBadge'
 import { Button } from '../components/ui/Button'
@@ -47,12 +50,21 @@ import { confirmar } from '../components/ui/Feedback'
 import { Field, Input, NumberInput } from '../components/ui/Form'
 import { Modal } from '../components/ui/Modal'
 import { Avatar, EmptyState, Menu, PageHeader, Segmented } from '../components/ui/Misc'
-import { calcularEvento, FORMAS_PAGAMENTO, STATUS_EVENTO } from '#shared/calc.ts'
-import { diasOcupados, STATUS_PROGRAMACAO } from '#shared/maquinas.ts'
+import { calcularEvento, FORMAS_PAGAMENTO, STATUS_EVENTO, type ResumoEvento } from '#shared/calc.ts'
+import {
+  dataCurtinha,
+  diasOcupados,
+  quantidadePorExtenso,
+  reservasDia,
+  reservasUsadasDia,
+  STATUS_PROGRAMACAO,
+} from '#shared/maquinas.ts'
+import { ehReserva } from '../lib/bloqueioMaquinas'
 import { cn } from '../lib/cn'
 import { codigoEvento, dataCurta, dataExtensa, enderecoCompleto, hojeISO, moeda, numero, periodo } from '../lib/format'
 import { useHoje } from '../lib/hoje'
-import type { Evento, EventoPatch, FormaPagamento, Maquina, Reclamacao, StatusEvento } from '#shared/tipos.ts'
+import { rotuloCopia } from '../lib/repeticao'
+import type { DiaEvento, Evento, EventoPatch, FormaPagamento, Maquina, Reclamacao, StatusEvento } from '#shared/tipos.ts'
 import { useDados } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
 import { cidadeDoEvento, podeGerarRecibo } from '../lib/recibo'
@@ -77,6 +89,7 @@ export function EventoDetalhe() {
   const { id } = useParams()
   const navegar = useNavigate()
   const local = useLocation()
+  const [params, setParams] = useSearchParams()
   const evento = useDados((s) => s.eventos.find((e) => e.id === id))
   const cliente = useDados((s) => s.clientes.find((c) => c.id === evento?.clienteId))
   const alterarEvento = useDados((s) => s.alterarEvento)
@@ -88,13 +101,28 @@ export function EventoDetalhe() {
   // Janelas que guardam o último conteúdo enquanto fecham (sem trocar o título na animação de saída)
   const [envio, setEnvio] = useState<{ aberto: boolean; canal: CanalEnvio }>({ aberto: false, canal: 'whatsapp' })
   const [reclamacao, setReclamacao] = useState<{ aberto: boolean; editar?: Reclamacao }>({ aberto: false })
+  // "Repetir em outras datas": pelo menu "…" ou pela lista de eventos (que abre com ?repetir=1)
+  const [repetirPeloMenu, setRepetirPeloMenu] = useState(false)
+  const repetirPelaUrl = params.get('repetir') === '1'
+  const fecharRepetir = () => {
+    setRepetirPeloMenu(false)
+    if (repetirPelaUrl) {
+      setParams(
+        (p) => {
+          p.delete('repetir')
+          return p
+        },
+        { replace: true },
+      )
+    }
+  }
   // Logo depois de finalizar (aqui ou no formulário): sugere registrar o que o cliente reclamou das máquinas
   const veioFinalizado = (local.state as { sugerirReclamacao?: boolean } | null)?.sugerirReclamacao === true
   const [sugerirReclamacao, setSugerirReclamacao] = useState(veioFinalizado)
   // A sugestão vale uma vez: recarregar a página ou voltar para ela não mostra de novo
   useEffect(() => {
-    if (veioFinalizado) navegar(local.pathname, { replace: true, state: null })
-  }, [veioFinalizado, local.pathname, navegar])
+    if (veioFinalizado) navegar({ pathname: local.pathname, search: local.search }, { replace: true, state: null })
+  }, [veioFinalizado, local.pathname, local.search, navegar])
   const [salvandoProgramacao, setSalvandoProgramacao] = useState(false)
 
   if (!evento) {
@@ -248,6 +276,11 @@ export function EventoDetalhe() {
                 { label: 'Enviar por e-mail', icone: <Mail className="h-4 w-4" />, aoClicar: () => enviar('email') },
                 'sep',
                 { label: 'Duplicar evento', icone: <Copy className="h-4 w-4" />, aoClicar: () => acoes.duplicar(evento.id) },
+                {
+                  label: 'Repetir em outras datas',
+                  icone: <Repeat className="h-4 w-4" />,
+                  aoClicar: () => setRepetirPeloMenu(true),
+                },
                 'sep',
                 {
                   label: 'Excluir evento',
@@ -395,7 +428,7 @@ export function EventoDetalhe() {
             <div className="px-5">
               <table className="w-full text-sm">
                 <tbody className="divide-y divide-line">
-                  <LinhaResumo rotulo="Quantidade de diárias utilizadas" valor={numero(r.totalDiarias)} />
+                  <LinhaResumo rotulo="Quantidade de diárias utilizadas" valor={numero(r.totalDiarias)} sub={notaReservas(r)} />
                   <LinhaResumo rotulo="Valor unitário da diária" valor={moeda(evento.valorDiaria)} />
                   <LinhaResumo rotulo="Valor total das diárias" valor={moeda(r.valorDiarias)} forte />
                   <LinhaResumo
@@ -443,11 +476,13 @@ export function EventoDetalhe() {
           <AnexosEvento eventoId={evento.id} id="arquivos" />
 
           {/* Dias */}
-          <DiasDeUtilizacao evento={evento} totalDiarias={r.totalDiarias} />
+          <DiasDeUtilizacao evento={evento} resumo={r} />
         </div>
 
         <div className="flex flex-col gap-6">
           <MaquinasEnviadas evento={evento} />
+
+          <SerieDoEvento evento={evento} />
 
           <ReclamacoesDoEvento
             evento={evento}
@@ -605,6 +640,7 @@ export function EventoDetalhe() {
         maquinasIds={evento.maquinasIds}
         eventoId={evento.id}
       />
+      <RepetirEventoModal aberto={repetirPeloMenu || repetirPelaUrl} aoFechar={fecharRepetir} evento={evento} />
     </>
   )
 }
@@ -622,14 +658,67 @@ function PontoProgramacao({ status }: { status: Evento['programacao'] }) {
   )
 }
 
+/**
+ * Nota das diárias no resumo financeiro: quantas são de reserva usada e, se houver reserva parada,
+ * que ela não é cobrada.
+ */
+function notaReservas(r: ResumoEvento): ReactNode {
+  const usadas = r.diariasReserva > 0
+  const paradas = r.reservas > r.diariasReserva
+  if (!usadas && !paradas) return undefined
+  return (
+    <>
+      {usadas && (
+        <span className="block">
+          {numero(r.totalDiarias - r.diariasReserva)} das máquinas + {numero(r.diariasReserva)} de reserva{' '}
+          {r.diariasReserva === 1 ? 'usada' : 'usadas'}
+        </span>
+      )}
+      {paradas && <span className="block">Reserva sem uso não é cobrada</span>}
+    </>
+  )
+}
+
 /** Dias de uso; com período corrido, deixa claro de quando a quando as máquinas ficam com o cliente. */
-function DiasDeUtilizacao({ evento, totalDiarias }: { evento: Evento; totalDiarias: number }) {
+function DiasDeUtilizacao({ evento, resumo }: { evento: Evento; resumo: ResumoEvento }) {
+  const salvarEvento = useDados((s) => s.salvarEvento)
+  // Dia cujo uso da reserva está sendo gravado (os controles ficam travados até terminar)
+  const [gravando, setGravando] = useState<string | null>(null)
   const ocupados = useMemo(() => diasOcupados(evento), [evento])
   const usos = ocupados.filter((d) => d.uso).length
   // Só faz diferença quando há dias sem uso entre o primeiro e o último
   const corrido = evento.periodoCorrido && ocupados.length > usos
   const inicio = ocupados[0]?.data
   const fim = ocupados[ocupados.length - 1]?.data
+  const comReserva = evento.dias.some((d) => reservasDia(d) > 0)
+  const { totalDiarias, diariasReserva } = resumo
+
+  /** Grava o evento inteiro (com controle de versão) mudando só o uso da reserva do dia. */
+  const usarReserva = async (dia: DiaEvento, usadas: number) => {
+    setGravando(dia.id)
+    try {
+      const { id, versao, codigo: _c, criadoEm: _cr, atualizadoEm: _a, google: _g, ...dados } = evento
+      const salvo = await salvarEvento(
+        { ...dados, dias: evento.dias.map((d) => (d.id === dia.id ? { ...d, reservasUsadas: usadas } : d)) },
+        { id, versao },
+      )
+      const quando = dataCurtinha(dia.data)
+      const cobrado = moeda(usadas * evento.valorDiaria)
+      toast.sucesso(
+        usadas === 0
+          ? `${reservasDia(dia) === 1 ? 'Reserva' : 'Reservas'} de ${quando} sem cobrança`
+          : usadas === 1
+            ? `Reserva de ${quando} cobrada: + ${cobrado}`
+            : `${usadas} reservas de ${quando} cobradas: + ${cobrado}`,
+        `Total do evento: ${moeda(calcularEvento(salvo).total)}.`,
+      )
+    } catch (e) {
+      avisarErro('Não foi possível salvar o uso da reserva', e)
+    } finally {
+      setGravando(null)
+    }
+  }
+
   return (
     <Card>
       <CardHeader
@@ -639,6 +728,7 @@ function DiasDeUtilizacao({ evento, totalDiarias }: { evento: Evento; totalDiari
           <span className="tnum">
             {evento.dias.length} {evento.dias.length === 1 ? 'data' : 'datas'} de uso • {numero(totalDiarias)}{' '}
             {totalDiarias === 1 ? 'diária' : 'diárias'}
+            {diariasReserva > 0 && ` (${numero(diariasReserva)} de reserva)`}
           </span>
         }
       />
@@ -653,29 +743,236 @@ function DiasDeUtilizacao({ evento, totalDiarias }: { evento: Evento; totalDiari
           </p>
         </div>
       )}
-      <div className="grid grid-cols-1 gap-2 px-5 pb-5 sm:grid-cols-2">
-        {evento.dias.map((d, i) => (
-          <motion.div
-            key={d.id}
-            initial={{ opacity: 0, y: 6 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: i * 0.03 }}
-            className="flex items-center gap-3 rounded-xl border border-line px-3 py-2.5"
-          >
-            <div className="flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-lg bg-surface-2 leading-none">
-              <span className="text-[10px] font-semibold text-muted uppercase">{dataExtensa(d.data, 'MMM')}</span>
-              <span className="tnum mt-0.5 text-base font-semibold text-ink">{dataExtensa(d.data, 'dd')}</span>
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium text-ink">{dataExtensa(d.data, 'EEEE')}</p>
-              <p className="tnum text-xs text-muted">{dataCurta(d.data)}</p>
-            </div>
-            <span className="tnum rounded-lg bg-brand-soft px-2 py-1 text-xs font-semibold text-brand-ink">
-              {d.maquinas} {d.maquinas === 1 ? 'máquina' : 'máquinas'}
-            </span>
-          </motion.div>
-        ))}
+      {/* Com reserva, cada dia tem o controle de uso: um por linha até haver largura para dois */}
+      <div className="@container px-5 pb-5">
+        <div className={cn('grid grid-cols-1 gap-2', comReserva ? '@2xl:grid-cols-2' : 'sm:grid-cols-2')}>
+          {evento.dias.map((d, i) => {
+            const reservas = reservasDia(d)
+            const usadas = reservasUsadasDia(d)
+            const quantidade = (
+              <>
+                {quantidadePorExtenso(d.maquinas, reservas)}
+                {usadas > 0 && (reservas === 1 ? ' (usada)' : ` (${usadas} ${usadas === 1 ? 'usada' : 'usadas'})`)}
+              </>
+            )
+            return (
+              <motion.div
+                key={d.id}
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: i * 0.03 }}
+                className="overflow-hidden rounded-xl border border-line"
+              >
+                <div className="flex items-center gap-3 px-3 py-2.5">
+                  <div className="flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-lg bg-surface-2 leading-none">
+                    <span className="text-[10px] font-semibold text-muted uppercase">{dataExtensa(d.data, 'MMM')}</span>
+                    <span className="tnum mt-0.5 text-base font-semibold text-ink">{dataExtensa(d.data, 'dd')}</span>
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-ink">{dataExtensa(d.data, 'EEEE')}</p>
+                    <p className="tnum text-xs text-muted">{dataCurta(d.data)}</p>
+                    {/* No celular a quantidade vem aqui (ao lado não cabe junto com o dia da semana) */}
+                    <p className="tnum mt-1 text-xs font-semibold text-brand-ink sm:hidden">{quantidade}</p>
+                  </div>
+                  <span className="tnum shrink-0 rounded-lg bg-brand-soft px-2 py-1 text-xs font-semibold text-brand-ink max-sm:hidden">
+                    {quantidade}
+                  </span>
+                </div>
+                {reservas > 0 && (
+                  <UsoDaReserva
+                    dia={d}
+                    valorDiaria={evento.valorDiaria}
+                    gravando={gravando !== null}
+                    aoMudar={(n) => void usarReserva(d, n)}
+                  />
+                )}
+              </motion.div>
+            )
+          })}
+        </div>
       </div>
+    </Card>
+  )
+}
+
+/**
+ * "Usou a reserva": a reserva fica parada com o cliente e não é cobrada; se o movimento for grande
+ * e ele usar, é cobrada pelo mesmo valor da diária. Com mais de uma reserva, escolhe quantas.
+ */
+function UsoDaReserva({
+  dia,
+  valorDiaria,
+  gravando,
+  aoMudar,
+}: {
+  dia: DiaEvento
+  valorDiaria: number
+  gravando: boolean
+  aoMudar: (usadas: number) => void
+}) {
+  const id = `reserva-${dia.id}`
+  const reservas = reservasDia(dia)
+  const usadas = reservasUsadasDia(dia)
+  return (
+    <div
+      className={cn(
+        'flex items-center justify-between gap-3 border-t px-3 py-2 transition-colors duration-200',
+        usadas > 0 ? 'border-brand/20 bg-brand-soft/50' : 'border-line bg-surface-2/50',
+      )}
+    >
+      <label htmlFor={id} className="min-w-0 cursor-pointer">
+        <span className="block text-[13px] font-medium text-ink">{reservas === 1 ? 'Usou a reserva' : 'Reservas usadas'}</span>
+        <span className="tnum block text-xs text-muted">
+          {usadas > 0
+            ? `${usadas === 1 ? 'Cobrada' : 'Cobradas'} como diária: + ${moeda(usadas * valorDiaria)}`
+            : reservas === 1
+              ? 'Parada com o cliente, sem cobrança'
+              : 'Paradas com o cliente, sem cobrança'}
+        </span>
+      </label>
+      {reservas === 1 ? (
+        <Interruptor id={id} ligado={usadas > 0} aoMudar={(v) => aoMudar(v ? 1 : 0)} disabled={gravando} />
+      ) : (
+        <select
+          id={id}
+          value={usadas}
+          disabled={gravando}
+          onChange={(e) => aoMudar(Number(e.target.value))}
+          aria-label={`Reservas usadas em ${dataCurtinha(dia.data)}`}
+          className="tnum h-8 shrink-0 cursor-pointer rounded-lg border border-line-strong/80 bg-surface px-2.5 text-[13px] font-medium text-ink shadow-xs focus:border-brand focus:ring-4 focus:ring-[var(--ring)] focus:outline-none disabled:cursor-wait disabled:opacity-70"
+        >
+          {Array.from({ length: reservas + 1 }, (_, n) => (
+            <option key={n} value={n}>
+              {n === 0 ? 'Nenhuma' : `${n} de ${reservas}`}
+            </option>
+          ))}
+        </select>
+      )}
+    </div>
+  )
+}
+
+/** Chave liga/desliga (o rótulo fica fora, ligado pelo `id`). */
+function Interruptor({
+  id,
+  ligado,
+  aoMudar,
+  disabled,
+}: {
+  id: string
+  ligado: boolean
+  aoMudar: (v: boolean) => void
+  disabled?: boolean
+}) {
+  return (
+    <button
+      id={id}
+      type="button"
+      role="switch"
+      aria-checked={ligado}
+      disabled={disabled}
+      onClick={() => aoMudar(!ligado)}
+      className={cn(
+        'relative inline-flex h-6 w-10 shrink-0 cursor-pointer items-center rounded-full p-0.5 transition-colors duration-200',
+        'focus-visible:ring-4 focus-visible:ring-[var(--ring)] focus-visible:outline-none disabled:cursor-wait disabled:opacity-70',
+        ligado ? 'justify-end bg-brand' : 'justify-start bg-surface-3 ring-1 ring-line-strong ring-inset',
+      )}
+    >
+      <motion.span
+        layout
+        transition={{ type: 'spring', stiffness: 700, damping: 35 }}
+        className="h-5 w-5 rounded-full bg-white shadow-xs"
+      />
+    </button>
+  )
+}
+
+/**
+ * Os outros eventos da mesma série (criados juntos por "Repetir em outras datas"), em ordem de
+ * data, com o atual destacado.
+ */
+function SerieDoEvento({ evento }: { evento: Evento }) {
+  const eventos = useDados((s) => s.eventos)
+  const hoje = useHoje()
+  const lista = useRef<HTMLUListElement>(null)
+  const atual = useRef<HTMLLIElement>(null)
+  const serie = useMemo(
+    () =>
+      evento.grupoId
+        ? eventos
+            .filter((e) => e.grupoId === evento.grupoId)
+            .map((e) => ({ evento: e, resumo: calcularEvento(e) }))
+            .sort(
+              (a, b) => (a.resumo.dataInicio ?? '').localeCompare(b.resumo.dataInicio ?? '') || a.evento.codigo - b.evento.codigo,
+            )
+        : [],
+    [eventos, evento.grupoId],
+  )
+  // Numa série longa, a lista já abre mostrando a data deste evento
+  useEffect(() => {
+    const ul = lista.current
+    const li = atual.current
+    if (ul && li && ul.scrollHeight > ul.clientHeight) ul.scrollTop = li.offsetTop - ul.clientHeight / 2 + li.clientHeight / 2
+  }, [evento.id, serie.length])
+  if (serie.length < 2) return null
+
+  const aAcontecer = serie.filter((x) => x.evento.status !== 'CANCELADO' && (x.resumo.dataFim ?? '') >= hoje).length
+
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader
+        icone={<Repeat className="h-4 w-4" />}
+        titulo="Outras datas desta série"
+        descricao={
+          <span className="tnum">
+            {serie.length} datas · {aAcontecer} a acontecer
+          </span>
+        }
+      />
+      <ul ref={lista} className="scroll-fino relative max-h-[352px] divide-y divide-line overflow-y-auto border-t border-line">
+        {serie.map(({ evento: e, resumo: r }) => {
+          const esse = e.id === evento.id
+          const conteudo = (
+            <>
+              <div className="min-w-0 flex-1">
+                <p className="tnum truncate text-[13px] font-medium text-ink">
+                  {r.dataInicio && r.dataFim ? `${rotuloCopia([r.dataInicio, r.dataFim])}/${r.dataFim.slice(0, 4)}` : 'Sem datas'}
+                </p>
+                <p className="tnum truncate text-xs text-muted">
+                  {codigoEvento(e.codigo)} ·{' '}
+                  <span className={r.pago ? 'text-success' : undefined}>{r.pago ? 'Pago' : 'Não pago'}</span>
+                  {esse && <span className="font-medium text-brand-ink"> · este evento</span>}
+                </p>
+              </div>
+              <StatusBadge status={e.status} />
+              <ChevronRight className={cn('h-4 w-4 shrink-0 text-muted', esse && 'invisible')} />
+            </>
+          )
+          return (
+            <li key={e.id} ref={esse ? atual : undefined}>
+              {esse ? (
+                <div aria-current="page" className="flex items-center gap-3 bg-brand-soft/60 py-2.5 pr-3 pl-5">
+                  {conteudo}
+                </div>
+              ) : (
+                <Link
+                  to={`/eventos/${e.id}`}
+                  className="flex items-center gap-3 py-2.5 pr-3 pl-5 transition-colors hover:bg-surface-2/70"
+                >
+                  {conteudo}
+                </Link>
+              )}
+            </li>
+          )
+        })}
+      </ul>
+      <Link
+        to={`/eventos?grupo=${encodeURIComponent(evento.grupoId)}`}
+        className="flex items-center justify-center gap-1 border-t border-line px-5 py-3 text-[13px] font-medium text-brand-ink transition-colors hover:bg-surface-2/70"
+      >
+        Ver na lista de eventos
+        <ChevronRight className="h-3.5 w-3.5" />
+      </Link>
     </Card>
   )
 }
@@ -763,6 +1060,7 @@ function ReclamacoesDoEvento({
                         <MaquinaChip
                           maquina={m}
                           estado={situacoes.get(m.id)?.estado ?? 'DISPONIVEL'}
+                          reserva={ehReserva(evento, m.id)}
                           className="min-w-[52px] cursor-pointer justify-center"
                         />
                       </Link>
@@ -815,10 +1113,13 @@ function ReclamacoesDoEvento({
   )
 }
 
-function LinhaResumo({ rotulo, valor, forte }: { rotulo: string; valor: string; forte?: boolean }) {
+function LinhaResumo({ rotulo, valor, forte, sub }: { rotulo: string; valor: string; forte?: boolean; sub?: ReactNode }) {
   return (
     <tr>
-      <td className="py-3 text-ink-2">{rotulo}</td>
+      <td className="py-3 text-ink-2">
+        {rotulo}
+        {sub && <span className="tnum mt-0.5 block text-xs text-muted">{sub}</span>}
+      </td>
       <td className={cn('tnum py-3 text-right whitespace-nowrap', forte ? 'font-semibold text-ink' : 'text-ink-2')}>{valor}</td>
     </tr>
   )

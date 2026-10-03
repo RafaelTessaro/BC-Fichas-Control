@@ -8,7 +8,8 @@ import { calcularEvento } from '#shared/calc.ts'
 import { ESTADO_MAQUINA, localDaLocacao, TIPO_MAQUINA } from '#shared/maquinas.ts'
 import { cn } from '../../lib/cn'
 import { codigoEvento, normalizar, periodo } from '../../lib/format'
-import { maquinaCombina } from '../../lib/manutencao'
+import { useHoje } from '../../lib/hoje'
+import { maquinaCombina, USO_RESERVA_CURTO, usoDaReserva } from '../../lib/manutencao'
 import { useDados } from '../../store/dados'
 import { IconeMaquinaFichas } from '../IconeMaquinaFichas'
 import { TipoMaquinaBadge, useSituacoes } from '../Maquinas'
@@ -59,6 +60,7 @@ function Paleta({ fechar }: { fechar: () => void }) {
   const eventos = useDados((s) => s.eventos)
   const maquinas = useDados((s) => s.maquinas)
   const situacoes = useSituacoes()
+  const hoje = useHoje()
   const lista = useRef<HTMLDivElement>(null)
 
   const resultados = useMemo<Resultado[]>(() => {
@@ -149,11 +151,18 @@ function Paleta({ fechar }: { fechar: () => void }) {
       )
       out.push(
         ...maquinas
-          .filter((m) => maquinaCombina(m, q))
+          // "reserva" acha as máquinas que estão hoje com algum cliente como reserva
+          .filter((m) => maquinaCombina(m, q) || (/^reservas?$/.test(termo) && !!situacoes.get(m.id)?.reserva))
           .slice(0, 6)
           .map((m) => {
             const sit = situacoes.get(m.id)
-            const onde = sit?.evento && sit.estado === 'LOCADA' ? ` · ${localDaLocacao(sit.evento)}` : ''
+            const locada = sit?.evento && sit.estado === 'LOCADA' ? sit.evento : undefined
+            // Como reserva: "Locada · reserva · Festa X (parada com o cliente)"
+            const onde = !locada
+              ? ''
+              : sit?.reserva
+                ? ` · reserva · ${localDaLocacao(locada)} (${USO_RESERVA_CURTO[usoDaReserva(locada, hoje)]})`
+                : ` · ${localDaLocacao(locada)}`
             return {
               id: `m-${m.id}`,
               grupo: 'Máquinas',
@@ -166,7 +175,7 @@ function Paleta({ fechar }: { fechar: () => void }) {
       )
     }
     return out
-  }, [q, clientes, eventos, maquinas, situacoes, navegar, fechar])
+  }, [q, clientes, eventos, maquinas, situacoes, hoje, navegar, fechar])
 
   useEffect(() => {
     lista.current?.querySelector<HTMLElement>(`[data-idx="${ativo}"]`)?.scrollIntoView({ block: 'nearest' })

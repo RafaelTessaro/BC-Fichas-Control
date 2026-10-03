@@ -1,7 +1,8 @@
-import { Copy, Ellipsis, FileDown, Pencil, ReceiptText, Trash2 } from 'lucide-react'
+import { Copy, Ellipsis, FileDown, Pencil, ReceiptText, Repeat, Trash2 } from 'lucide-react'
+import { useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { calcularEvento, FORMAS_PAGAMENTO } from '#shared/calc.ts'
-import { STATUS_PROGRAMACAO } from '#shared/maquinas.ts'
+import { quantidadePorExtenso, STATUS_PROGRAMACAO } from '#shared/maquinas.ts'
 import { cn } from '../lib/cn'
 import { codigoEvento, moeda, numero, periodo } from '../lib/format'
 import { useHoje } from '../lib/hoje'
@@ -27,6 +28,8 @@ export function useAcoesEvento() {
 
   return {
     editar: (id: string) => navegar(`/eventos/${id}/editar`),
+    /** "Repetir em outras datas" abre no detalhe do evento. */
+    repetir: (id: string) => navegar(`/eventos/${id}?repetir=1`),
     duplicar: async (id: string) => {
       try {
         const novo = await duplicarEvento(id)
@@ -106,6 +109,13 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
   const navegar = useNavigate()
   const acoes = useAcoesEvento()
   const hoje = useHoje()
+  // Quantas datas tem cada série ("Repetir em outras datas"), contando também as que estão fora da lista
+  const eventos = useDados((s) => s.eventos)
+  const tamanhoSerie = useMemo(() => {
+    const mapa = new Map<string, number>()
+    for (const e of eventos) if (e.grupoId) mapa.set(e.grupoId, (mapa.get(e.grupoId) ?? 0) + 1)
+    return mapa
+  }, [eventos])
   return (
     <Tabela>
       <thead>
@@ -136,11 +146,26 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
           // Programação das máquinas: aparece nos eventos de hoje em diante (inclusive "Concluída",
           // para a secretária ver que já está pronta); nos que já passaram, não interessa mais
           const programacao = e.status !== 'CANCELADO' && (r.dataFim ?? '') >= hoje
+          const serie = e.grupoId ? (tamanhoSerie.get(e.grupoId) ?? 0) : 0
+          // As reservas são parte das máquinas enviadas: "3 máquinas + 1 reserva"
+          const reservas = e.reservasIds?.length ?? 0
           return (
             <Linha key={e.id} indice={i} aoClicar={() => navegar(`/eventos/${e.id}`)}>
               <Td className="tnum text-xs font-medium text-muted max-2xl:hidden">{codigoEvento(e.codigo)}</Td>
               <Td>
-                <p className="max-w-[150px] truncate font-medium text-ink sm:max-w-[200px] 2xl:max-w-[260px]">{e.nome}</p>
+                <p className="flex max-w-[150px] items-center gap-1.5 font-medium text-ink sm:max-w-[200px] 2xl:max-w-[260px]">
+                  <span className="truncate">{e.nome}</span>
+                  {serie > 1 && (
+                    <span
+                      role="img"
+                      title={`Faz parte de uma série de ${serie} datas`}
+                      aria-label={`Faz parte de uma série de ${serie} datas`}
+                      className="shrink-0 text-muted"
+                    >
+                      <Repeat className="h-3.5 w-3.5" />
+                    </span>
+                  )}
+                </p>
                 <p className="max-w-[150px] truncate text-xs text-muted sm:max-w-[200px] 2xl:max-w-[260px]">
                   {/* No celular o período aparece aqui (a coluna some) */}
                   <span className="tnum sm:hidden">{periodo(r.dataInicio, r.dataFim)} • </span>
@@ -162,13 +187,13 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
                       </span>
                     )
                   )}
-                  {e.maquinasIds.length > 0 && (
-                    <>
-                      <span className={cidade || (!ocultarCliente && cliente) ? undefined : '2xl:hidden'}> • </span>
-                      {e.maquinasIds.length} {e.maquinasIds.length === 1 ? 'máquina' : 'máquinas'}
-                    </>
-                  )}
                 </p>
+                {/* Máquinas enviadas numa linha própria ("3 máquinas + 1 reserva" não caberia junto) */}
+                {e.maquinasIds.length > 0 && (
+                  <p className="tnum max-w-[150px] truncate text-xs text-muted sm:max-w-[200px] 2xl:max-w-[260px]">
+                    {quantidadePorExtenso(e.maquinasIds.length - reservas, reservas)}
+                  </p>
+                )}
                 {/* No celular as colunas de situação somem: a programação aparece aqui */}
                 {programacao && <SeloProgramacao evento={e} className="mt-1 flex sm:hidden" />}
               </Td>
@@ -215,6 +240,11 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
                       ? [{ label: 'Gerar recibo', icone: <ReceiptText className="h-4 w-4" />, aoClicar: () => acoes.recibo(it) }]
                       : []),
                     { label: 'Duplicar', icone: <Copy className="h-4 w-4" />, aoClicar: () => acoes.duplicar(e.id) },
+                    {
+                      label: 'Repetir em outras datas',
+                      icone: <Repeat className="h-4 w-4" />,
+                      aoClicar: () => acoes.repetir(e.id),
+                    },
                     'sep',
                     { label: 'Excluir', icone: <Trash2 className="h-4 w-4" />, aoClicar: () => acoes.excluir(it), perigo: true },
                   ]}

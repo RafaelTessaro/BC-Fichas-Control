@@ -4,7 +4,10 @@ import {
   Banknote,
   CalendarDays,
   CalendarRange,
+  Check,
   Clock,
+  CopyCheck,
+  CornerDownRight,
   CreditCard,
   Landmark,
   MoveHorizontal,
@@ -42,7 +45,17 @@ import { listaDatas, resumoTrocas, trocasMaquinas } from '../lib/bloqueioMaquina
 import { cn } from '../lib/cn'
 import { codigoEvento, dataExtensa, hojeISO, moeda, normalizar, numero } from '../lib/format'
 import { CLIENTE_VAZIO, LIMITES } from '#shared/dominio.ts'
-import { capacidade, diasOcupados, ordenarMaquinas, STATUS_PROGRAMACAO, type DiaOcupado } from '#shared/maquinas.ts'
+import {
+  capacidade,
+  diasOcupados,
+  ordenarMaquinas,
+  quantidadeCurta,
+  reservasDia,
+  reservasUsadasDia,
+  STATUS_PROGRAMACAO,
+  totalDia,
+  type DiaOcupado,
+} from '#shared/maquinas.ts'
 import { novoId } from '../lib/storage'
 import type { DiaEvento, Evento, FormaPagamento, StatusEvento, TipoCliente } from '#shared/tipos.ts'
 import { useDados, type EventoInput } from '../store/dados'
@@ -58,6 +71,14 @@ const ICONES_PAGAMENTO: Record<FormaPagamento, ReactNode> = {
   BOLETO: <Landmark className="h-4 w-4" />,
 }
 const ORDEM_PAGAMENTO: FormaPagamento[] = ['NAO_PAGO', 'PIX', 'DINHEIRO', 'DEBITO', 'CREDITO', 'BOLETO']
+
+/** O que é a reserva, na descrição dos dias de utilização. */
+const explicacaoReserva = (
+  <>
+    <b className="font-medium text-ink-2">Reserva:</b> máquina a mais que fica com o cliente sem custo; se ele usar, marque “Usou
+    a reserva” para cobrar pelo valor da diária.
+  </>
+)
 
 type Erros = Partial<Record<'cliente' | 'nome' | 'dias' | 'bobinas', string>>
 
@@ -79,7 +100,13 @@ export function EventoForm() {
   const [f, setF] = useState<EventoInput>(() => {
     if (existente) {
       const { id: _i, versao: _v, codigo: _c, criadoEm: _cr, atualizadoEm: _a, google: _g, ...resto } = existente
-      return { ...resto, dias: resto.dias.map((d) => ({ ...d })) }
+      // Dias gravados antes da máquina reserva não têm as reservas: começam com zero
+      return {
+        ...resto,
+        dias: resto.dias.map((d) => ({ ...d, reservas: reservasDia(d), reservasUsadas: reservasUsadasDia(d) })),
+        reservasIds: (resto.reservasIds ?? []).filter((x) => resto.maquinasIds.includes(x)),
+        grupoId: resto.grupoId ?? '',
+      }
     }
     return {
       clienteId: params.get('cliente') ?? '',
@@ -116,6 +143,8 @@ export function EventoForm() {
 
   const set = <K extends keyof EventoInput>(k: K, v: EventoInput[K]) => setF((s) => ({ ...s, [k]: v }))
   const resumo = useMemo(() => calcularEvento(f), [f])
+  // Reservas com o cliente que não foram usadas (somando os dias): ficam sem custo
+  const reservasSemUso = resumo.reservas - resumo.diariasReserva
   const ocupacao = useMemo(() => ocupacaoPorDia(eventos, id), [eventos, id])
   // Máquinas que a empresa tem (sem as desativadas); sem cadastro, a quantidade das configurações
   const cap = useMemo(() => capacidade(maquinas, config), [maquinas, config])
@@ -224,7 +253,8 @@ export function EventoForm() {
 
   // ---- Dias ocupados: com período corrido, também os do meio (com a maior quantidade) ----
   const ocupados = useMemo(() => diasOcupados({ dias: f.dias, periodoCorrido: f.periodoCorrido }), [f.dias, f.periodoCorrido])
-  const qtdOcupada = useMemo(() => new Map(ocupados.map((d) => [d.data, d.maquinas])), [ocupados])
+  // Máquinas fora da empresa em cada data: titulares + reservas (a reserva também sai)
+  const qtdOcupada = useMemo(() => new Map(ocupados.map((d) => [d.data, totalDia(d)])), [ocupados])
   /** Datas de uso distintas, em ordem. */
   const datasUso = useMemo(() => [...new Set(f.dias.map((d) => d.data).filter(Boolean))].sort(), [f.dias])
   // Há dias sem uso entre o primeiro e o último: aí faz sentido perguntar se as máquinas voltam
@@ -234,13 +264,48 @@ export function EventoForm() {
   /** Máquinas livres na data (sem as deste evento), descontando as em manutenção de hoje em diante. */
   const livresEm = (data: string) => totalMaquinas - emManutencao(data) - (ocupacao.get(data) ?? 0)
   // Dias do meio (só com o cliente) sem máquinas suficientes para as deste evento
-  const faltasNoMeio = ocupados.filter((d) => !d.uso && d.maquinas > livresEm(d.data))
+  const faltasNoMeio = ocupados.filter((d) => !d.uso && totalDia(d) > livresEm(d.data))
 
+  // As usadas nunca passam das reservas do dia (diminuiu a reserva: o uso acompanha)
   const atualizarDia = (diaId: string, patch: Partial<DiaEvento>) =>
     set(
       'dias',
-      f.dias.map((d) => (d.id === diaId ? { ...d, ...patch } : d)),
+      f.dias.map((d) => {
+        if (d.id !== diaId) return d
+        const novo = { ...d, ...patch }
+        return { ...novo, reservasUsadas: reservasUsadasDia(novo) }
+      }),
     )
+
+  // ---- Reserva: a mesma em todos os dias -------------------------------------------
+  const maiorReserva = Math.max(0, ...f.dias.map(reservasDia))
+  const mostrarMesmaReserva = f.dias.length > 1 && maiorReserva > 0
+  const reservaJaIgual = f.dias.every((d) => reservasDia(d) === maiorReserva)
+  const mesmaReserva = () => {
+    set(
+      'dias',
+      f.dias.map((d) => ({ ...d, reservas: maiorReserva, reservasUsadas: Math.min(reservasUsadasDia(d), maiorReserva) })),
+    )
+    toast.sucesso(
+      'Mesma reserva em todos os dias',
+      `${maiorReserva} ${maiorReserva === 1 ? 'reserva' : 'reservas'} por dia, como no dia que tinha mais.`,
+    )
+  }
+  const botaoMesmaReserva = (className?: string) => (
+    <BotaoTexto
+      icone={<CopyCheck className="h-3.5 w-3.5" />}
+      onClick={mesmaReserva}
+      disabled={reservaJaIgual}
+      title={
+        reservaJaIgual
+          ? `Todos os dias já têm ${maiorReserva} ${maiorReserva === 1 ? 'reserva' : 'reservas'}`
+          : `Coloca ${maiorReserva} ${maiorReserva === 1 ? 'reserva' : 'reservas'} (a maior quantidade) em todos os dias`
+      }
+      className={className}
+    >
+      Mesma reserva em todos os dias
+    </BotaoTexto>
+  )
 
   const adicionarDia = () => {
     const ordenados = [...f.dias].filter((d) => d.data).sort((a, b) => a.data.localeCompare(b.data))
@@ -253,19 +318,20 @@ export function EventoForm() {
     ])
   }
 
-  const adicionarPeriodo = (de: string, ate: string, maquinas: number) => {
+  const adicionarPeriodo = (de: string, ate: string, maquinas: number, reservas: number) => {
     const n = differenceInCalendarDays(parseISO(ate), parseISO(de))
     const existentes = new Set(f.dias.map((d) => d.data))
     const novos: DiaEvento[] = []
     for (let i = 0; i <= n; i++) {
       const data = format(addDays(parseISO(de), i), 'yyyy-MM-dd')
-      if (!existentes.has(data)) novos.push({ id: novoId(), data, maquinas, reservas: 0, reservasUsadas: 0 })
+      if (!existentes.has(data)) novos.push({ id: novoId(), data, maquinas, reservas, reservasUsadas: 0 })
     }
-    // Remove a linha inicial "vazia" (padrão de hoje com 1 máquina) se o usuário ainda não mexeu nela
+    // Remove a linha inicial "vazia" (padrão de hoje com 1 máquina, sem reserva) se o usuário ainda não mexeu nela
     const base =
       !existente &&
       f.dias.length === 1 &&
       f.dias[0].maquinas === 1 &&
+      reservasDia(f.dias[0]) === 0 &&
       !novos.some((x) => x.data === f.dias[0].data) &&
       f.dias[0].data === hojeISO()
         ? []
@@ -303,6 +369,8 @@ export function EventoForm() {
     // Máquina excluída por outra pessoa enquanto o formulário estava aberto: sai da lista
     const existentes = new Set(maquinas.map((m) => m.id))
     const maquinasIds = f.maquinasIds.filter((x) => existentes.has(x))
+    // A reserva é sempre uma das máquinas enviadas
+    const reservasIds = f.reservasIds.filter((x) => maquinasIds.includes(x))
     // Máquina em manutenção ou já em outro evento nas mesmas datas não pode ir: explica e não envia
     const trocas = trocasMaquinas({
       selecionadas: maquinasIds,
@@ -333,7 +401,10 @@ export function EventoForm() {
     const dados = {
       ...f,
       nome: f.nome.trim(),
+      // As usadas nunca passam das reservas do dia
+      dias: f.dias.map((d) => ({ ...d, reservas: reservasDia(d), reservasUsadas: reservasUsadasDia(d) })),
       maquinasIds,
+      reservasIds,
       dataPagamento: f.formaPagamento === 'NAO_PAGO' ? '' : f.dataPagamento || hojeISO(),
     }
     const statusAntes = existente?.status
@@ -545,17 +616,28 @@ export function EventoForm() {
             <CardHeader
               icone={<CalendarDays className="h-4 w-4" />}
               titulo="Dias de utilização"
-              descricao="Cada máquina em cada dia de uso conta como uma diária."
+              descricao={
+                <>
+                  Cada máquina em cada dia de uso conta como uma diária.{' '}
+                  <span className="mt-1 block max-md:hidden">{explicacaoReserva}</span>
+                </>
+              }
               acoes={
-                <span className="tnum rounded-lg bg-brand-soft px-2.5 py-1 text-xs font-semibold text-brand-ink">
-                  {numero(resumo.totalDiarias)} {resumo.totalDiarias === 1 ? 'diária' : 'diárias'}
-                </span>
+                <div className="flex flex-col items-end gap-2">
+                  <span className="tnum rounded-lg bg-brand-soft px-2.5 py-1 text-xs font-semibold text-brand-ink">
+                    {numero(resumo.totalDiarias)} {resumo.totalDiarias === 1 ? 'diária' : 'diárias'}
+                  </span>
+                  {mostrarMesmaReserva && botaoMesmaReserva('max-md:hidden')}
+                </div>
               }
             />
             <div className="px-5 pb-5">
-              <div className="hidden grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)_36px] gap-3 px-1 pb-2 text-xs font-medium text-muted sm:grid">
+              {/* No celular a explicação vem na largura toda (ao lado do selo de diárias ficaria espremida) */}
+              <p className="-mt-1 mb-3 text-[13px] text-muted md:hidden">{explicacaoReserva}</p>
+              <div className="hidden grid-cols-[150px_104px_104px_minmax(0,1fr)_36px] gap-3 px-1 pb-2 text-xs font-medium text-muted md:grid">
                 <span>Data</span>
                 <span>Máquinas</span>
+                <span>Reserva</span>
                 <span>Disponibilidade</span>
                 <span />
               </div>
@@ -563,15 +645,20 @@ export function EventoForm() {
                 <AnimatePresence initial={false}>
                   {f.dias.map((d) => {
                     const livres = livresEm(d.data)
-                    // Com período corrido, o cliente fica com a maior quantidade em todos os dias
-                    const fora = qtdOcupada.get(d.data) ?? d.maquinas
+                    // Titulares + reservas: a reserva também sai da empresa. Com período corrido, o
+                    // cliente fica com a maior quantidade em todos os dias
+                    const total = totalDia(d)
+                    const reservas = reservasDia(d)
+                    const fora = qtdOcupada.get(d.data) ?? total
                     const excede = fora > livres
                     const repetida = datasRepetidas.has(d.data)
-                    // Explica a conta no balão: a maior quantidade (período corrido) e as em manutenção
+                    // Explica a conta no balão: a reserva, a maior quantidade (período corrido) e as em manutenção
                     const manut = emManutencao(d.data)
                     const nota = [
+                      reservas > 0 &&
+                        `Contam ${quantidadeCurta(d.maquinas, reservas)}: a reserva também sai da empresa, mesmo sem uso.`,
                       f.periodoCorrido &&
-                        fora !== d.maquinas &&
+                        fora !== total &&
                         `As máquinas ficam com o cliente entre os dias de uso: neste dia contam as ${fora} do evento.`,
                       manut > 0 && `${manut} em manutenção não ${manut > 1 ? 'entram' : 'entra'} na conta.`,
                     ]
@@ -586,8 +673,15 @@ export function EventoForm() {
                         exit={{ opacity: 0, height: 0 }}
                         transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
                       >
-                        <div className="grid grid-cols-[minmax(0,1fr)_104px_32px] items-center gap-2 rounded-xl border border-line bg-surface-2/50 p-2 sm:grid-cols-[minmax(0,1fr)_150px_minmax(0,1fr)_36px] sm:gap-3 sm:border-0 sm:bg-transparent sm:p-0">
-                          <div className="relative">
+                        {/* No celular: data e lixeira; máquinas e reserva lado a lado; uso da reserva; disponibilidade */}
+                        <div
+                          className={cn(
+                            'grid grid-cols-[minmax(0,1fr)_32px] items-center gap-2 rounded-xl border border-line bg-surface-2/50 p-2',
+                            'md:grid-cols-[150px_104px_104px_minmax(0,1fr)_36px] md:gap-x-3 md:border-0 md:bg-transparent md:p-0',
+                            reservas > 0 && 'md:pb-1',
+                          )}
+                        >
+                          <div className="relative order-1 md:order-none">
                             <Input
                               type="date"
                               value={d.data}
@@ -596,14 +690,34 @@ export function EventoForm() {
                               aria-label="Data"
                             />
                           </div>
-                          <NumberInput
-                            valor={d.maquinas}
-                            min={1}
-                            max={999}
-                            aoMudar={(v) => atualizarDia(d.id, { maquinas: v ?? 1 })}
-                            aria-label="Máquinas"
-                          />
-                          <div className="order-last col-span-3 flex min-w-0 items-center gap-2 text-xs sm:order-none sm:col-span-1">
+                          <div className="order-3 col-span-2 grid grid-cols-2 gap-2 md:order-none md:col-span-1 md:contents">
+                            <div className="min-w-0">
+                              <span aria-hidden className="mb-1 block text-[11px] font-medium text-muted md:hidden">
+                                Máquinas
+                              </span>
+                              <NumberInput
+                                valor={d.maquinas}
+                                min={1}
+                                max={999}
+                                aoMudar={(v) => atualizarDia(d.id, { maquinas: v ?? 1 })}
+                                aria-label="Máquinas"
+                              />
+                            </div>
+                            <div className="min-w-0">
+                              <span aria-hidden className="mb-1 block text-[11px] font-medium text-muted md:hidden">
+                                Reserva
+                              </span>
+                              <NumberInput
+                                valor={reservas}
+                                min={0}
+                                max={99}
+                                aoMudar={(v) => atualizarDia(d.id, { reservas: v ?? 0 })}
+                                aria-label="Reservas"
+                                className={cn(reservas > 0 && 'border-warning-dot/70!')}
+                              />
+                            </div>
+                          </div>
+                          <div className="order-5 col-span-2 flex min-w-0 items-center gap-2 text-xs md:order-none md:col-span-1">
                             {d.data && (
                               <>
                                 <span className="min-w-0 truncate text-muted">{dataExtensa(d.data, 'EEE, d MMM')}</span>
@@ -636,10 +750,20 @@ export function EventoForm() {
                                 f.dias.filter((x) => x.id !== d.id),
                               )
                             }
-                            className="hover:bg-danger-soft hover:text-danger"
+                            className="order-2 hover:bg-danger-soft hover:text-danger md:order-none"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
+                          {/* Uso da reserva no dia: só é cobrada se o cliente usar */}
+                          {reservas > 0 && (
+                            <div className="order-4 col-span-2 min-w-0 md:order-none md:col-span-3 md:col-start-3">
+                              <UsoReserva
+                                reservas={reservas}
+                                usadas={reservasUsadasDia(d)}
+                                aoMudar={(n) => atualizarDia(d.id, { reservasUsadas: n })}
+                              />
+                            </div>
+                          )}
                         </div>
                       </motion.div>
                     )
@@ -647,13 +771,14 @@ export function EventoForm() {
                 </AnimatePresence>
               </motion.div>
               {erros.dias && <p className="mt-2 text-xs font-medium text-danger">{erros.dias}</p>}
-              <div className="mt-4 flex flex-wrap gap-2">
+              <div className="mt-4 flex flex-wrap items-center gap-2">
                 <Button variante="soft" tamanho="sm" icone={<Plus className="h-4 w-4" />} onClick={adicionarDia}>
                   Adicionar dia
                 </Button>
                 <Button tamanho="sm" icone={<CalendarRange className="h-4 w-4" />} onClick={() => setPeriodoModal(true)}>
                   Adicionar período
                 </Button>
+                {mostrarMesmaReserva && botaoMesmaReserva('md:hidden')}
               </div>
 
               {/* As máquinas ficam com o cliente entre os dias de uso: só faz sentido com dias soltos */}
@@ -672,7 +797,7 @@ export function EventoForm() {
                       temIntervalo={temIntervalo}
                       ocupados={ocupados}
                       diasDeUso={datasUso.length}
-                      faltas={faltasNoMeio.map((d) => ({ data: d.data, livres: livresEm(d.data), precisa: d.maquinas }))}
+                      faltas={faltasNoMeio.map((d) => ({ data: d.data, livres: livresEm(d.data), precisa: totalDia(d) }))}
                     />
                   </motion.div>
                 )}
@@ -685,6 +810,8 @@ export function EventoForm() {
             id="maquinas-enviadas"
             maquinasIds={f.maquinasIds}
             aoMudar={(ids) => set('maquinasIds', ids)}
+            reservasIds={f.reservasIds}
+            aoMudarReservas={(ids) => set('reservasIds', ids)}
             dias={f.dias}
             periodoCorrido={f.periodoCorrido}
             eventoId={id}
@@ -831,12 +958,33 @@ export function EventoForm() {
               </p>
             </div>
             <dl className="divide-y divide-line px-5 text-sm">
-              <Linha rotulo="Total de diárias" valor={numero(resumo.totalDiarias)} />
+              <Linha
+                rotulo="Total de diárias"
+                valor={numero(resumo.totalDiarias)}
+                sub={
+                  resumo.diariasReserva > 0
+                    ? `inclui ${numero(resumo.diariasReserva)} de ${resumo.diariasReserva === 1 ? 'reserva usada' : 'reservas usadas'}`
+                    : undefined
+                }
+              />
               <Linha
                 rotulo="Valor das diárias"
                 valor={moeda(resumo.valorDiarias)}
                 sub={`${numero(resumo.totalDiarias)} × ${moeda(f.valorDiaria)}`}
               />
+              {/* A reserva parada fica com o cliente, mas não é cobrada */}
+              {reservasSemUso > 0 && (
+                <Linha
+                  discreta
+                  rotulo="Reserva sem uso"
+                  valor="Sem custo"
+                  sub={
+                    reservasSemUso === 1
+                      ? '1 reserva parada com o cliente'
+                      : `${numero(reservasSemUso)} reservas paradas, somando os dias`
+                  }
+                />
+              )}
               <Linha
                 rotulo="Bobinas utilizadas"
                 valor={resumo.bobinasUtilizadas === null ? 'A conferir' : numero(resumo.bobinasUtilizadas)}
@@ -1025,14 +1173,74 @@ function Interruptor({ id, ligado, aoMudar }: { id: string; ligado: boolean; aoM
   )
 }
 
-function Linha({ rotulo, valor, sub }: { rotulo: string; valor: string; sub?: string }) {
+function Linha({ rotulo, valor, sub, discreta }: { rotulo: string; valor: string; sub?: string; discreta?: boolean }) {
   return (
-    <div className="flex items-start justify-between gap-3 py-3">
+    <div className={cn('flex items-start justify-between gap-3', discreta ? 'py-2.5' : 'py-3')}>
       <div>
-        <dt className="text-ink-2">{rotulo}</dt>
+        <dt className={discreta ? 'text-[13px] text-muted' : 'text-ink-2'}>{rotulo}</dt>
         {sub && <p className="tnum mt-0.5 text-xs text-muted">{sub}</p>}
       </div>
-      <dd className="tnum font-semibold whitespace-nowrap text-ink">{valor}</dd>
+      <dd className={cn('tnum whitespace-nowrap', discreta ? 'text-[13px] font-medium text-muted' : 'font-semibold text-ink')}>
+        {valor}
+      </dd>
+    </div>
+  )
+}
+
+/**
+ * Uso da reserva no dia: com 1 reserva, um botão "Usou a reserva" (liga/desliga); com mais, quantas
+ * foram usadas. A usada é cobrada pelo mesmo valor da diária; a parada não custa nada.
+ */
+function UsoReserva({ reservas, usadas, aoMudar }: { reservas: number; usadas: number; aoMudar: (n: number) => void }) {
+  const cobradas = Math.min(usadas, reservas)
+  const nota = cobradas
+    ? `+${cobradas} ${cobradas === 1 ? 'diária cobrada' : 'diárias cobradas'}`
+    : reservas === 1
+      ? 'Parada: sem custo'
+      : 'Paradas: sem custo'
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-x-2.5 gap-y-1.5">
+      <CornerDownRight aria-hidden className="h-3.5 w-3.5 shrink-0 text-muted max-md:hidden" />
+      {reservas === 1 ? (
+        <button
+          type="button"
+          aria-pressed={cobradas > 0}
+          aria-label="Cobrar a reserva usada neste dia"
+          onClick={() => aoMudar(cobradas ? 0 : 1)}
+          className={cn(
+            'inline-flex h-8 cursor-pointer items-center gap-2 rounded-lg border px-2.5 text-[13px] font-medium whitespace-nowrap transition-colors duration-150',
+            'focus-visible:ring-4 focus-visible:ring-[var(--ring)] focus-visible:outline-none',
+            cobradas
+              ? 'border-warning-dot bg-warning-soft text-warning'
+              : 'border-line-strong/80 bg-surface text-ink-2 shadow-xs hover:border-line-strong hover:bg-surface-2',
+          )}
+        >
+          <span
+            aria-hidden
+            className={cn(
+              'flex h-4 w-4 shrink-0 items-center justify-center rounded-[5px] border transition-colors',
+              cobradas ? 'border-warning bg-warning text-surface' : 'border-line-strong bg-surface',
+            )}
+          >
+            {cobradas > 0 && <Check className="h-3 w-3" strokeWidth={3} />}
+          </span>
+          Usou a reserva
+        </button>
+      ) : (
+        <span className="inline-flex items-center gap-2 text-[13px] font-medium text-ink-2">
+          Usadas
+          <NumberInput
+            valor={cobradas}
+            min={0}
+            max={reservas}
+            aoMudar={(v) => aoMudar(v ?? 0)}
+            aria-label="Reservas usadas"
+            className={cn('h-8! w-[104px]', cobradas > 0 && 'border-warning-dot!')}
+          />
+          <span className="tnum font-normal text-muted">de {reservas}</span>
+        </span>
+      )}
+      <span className={cn('tnum text-xs', cobradas ? 'font-medium text-warning' : 'text-muted')}>{nota}</span>
     </div>
   )
 }
@@ -1044,11 +1252,12 @@ function PeriodoModal({
 }: {
   aberto: boolean
   aoFechar: () => void
-  aoConfirmar: (de: string, ate: string, maquinas: number) => void
+  aoConfirmar: (de: string, ate: string, maquinas: number, reservas: number) => void
 }) {
   const [de, setDe] = useState(hojeISO)
   const [ate, setAte] = useState(() => format(addDays(new Date(), 2), 'yyyy-MM-dd'))
   const [maq, setMaq] = useState(1)
+  const [res, setRes] = useState(0)
   const dias = de && ate ? differenceInCalendarDays(parseISO(ate), parseISO(de)) + 1 : 0
   const valido = dias >= 1 && dias <= 120
   return (
@@ -1057,7 +1266,7 @@ function PeriodoModal({
       aoFechar={aoFechar}
       icone={<CalendarRange className="h-5 w-5" />}
       titulo="Adicionar período"
-      descricao="Cria um dia para cada data do intervalo com a mesma quantidade de máquinas."
+      descricao="Cria um dia para cada data do intervalo, com as mesmas quantidades de máquinas e de reservas."
       largura="max-w-md"
       rodape={
         <>
@@ -1066,7 +1275,7 @@ function PeriodoModal({
             variante="primary"
             disabled={!valido}
             onClick={() => {
-              aoConfirmar(de, ate, maq)
+              aoConfirmar(de, ate, maq, res)
               aoFechar()
             }}
           >
@@ -1082,13 +1291,16 @@ function PeriodoModal({
         <Field label="Até" htmlFor="per-ate">
           <Input id="per-ate" type="date" value={ate} min={de} onChange={(e) => setAte(e.target.value)} />
         </Field>
-        <Field
-          label="Máquinas por dia"
-          htmlFor="per-maq"
-          className="col-span-2"
-          erro={dias > 120 ? 'Período máximo de 120 dias.' : dias < 1 ? 'A data final deve ser depois da inicial.' : null}
-        >
+        {(dias > 120 || dias < 1) && (
+          <p className="col-span-2 -mt-2 text-xs font-medium text-danger">
+            {dias > 120 ? 'Período máximo de 120 dias.' : 'A data final deve ser depois da inicial.'}
+          </p>
+        )}
+        <Field label="Máquinas por dia" htmlFor="per-maq">
           <NumberInput id="per-maq" valor={maq} min={1} aoMudar={(v) => setMaq(v ?? 1)} />
+        </Field>
+        <Field label="Reservas por dia" htmlFor="per-res" hint="Sem custo, se não usar.">
+          <NumberInput id="per-res" valor={res} min={0} max={99} aoMudar={(v) => setRes(v ?? 0)} />
         </Field>
       </div>
     </Modal>

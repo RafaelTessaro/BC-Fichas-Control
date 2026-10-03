@@ -7,12 +7,15 @@ import { LIMITES } from '#shared/dominio.ts'
 import {
   chaveIdentificacao,
   chaveServico,
+  diasOcupados,
   localDaLocacao,
   numeroDaIdentificacao,
   osEmAberto,
   periodoEvento,
+  type DiaOcupado,
 } from '#shared/maquinas.ts'
 import type { Evento, Maquina, OrdemServico, Reclamacao, StatusMaquina, StatusOS } from '#shared/tipos.ts'
+import { ehReserva } from './bloqueioMaquinas'
 import { codigoEvento, dataCurta, normalizar, periodo } from './format'
 
 /** A máquina combina com a busca pela identificação ("p1" acha "P-01", "máquina 1" acha P-01 e G-01). */
@@ -70,6 +73,40 @@ export function reclamacoesPorMaquina(reclamacoes: Pick<Reclamacao, 'maquinaId'>
   return mapa
 }
 
+// ---- Máquina reserva ---------------------------------------------------------------
+
+/**
+ * O uso das reservas é anotado por dia, sem dizer qual máquina: só dá para ter certeza de que
+ * uma máquina reserva foi usada quando o cliente usou todas as reservas do dia (com uma reserva
+ * só, o caso comum, basta ela ter sido usada).
+ */
+const reservaUsadaNoDia = (d: Pick<DiaOcupado, 'reservas' | 'reservasUsadas'>, marcadas: number) =>
+  d.reservasUsadas > 0 && d.reservasUsadas >= Math.max(d.reservas, marcadas)
+
+/** Como está a máquina reserva num dia: parada com o cliente, usada, ou o cliente usou só parte das reservas. */
+export type UsoReserva = 'PARADA' | 'USADA' | 'PARTE'
+
+/** Uso da reserva do evento em `data` (dia fora do evento ou sem uso anotado: parada). */
+export function usoDaReserva(evento: Pick<Evento, 'dias' | 'periodoCorrido' | 'reservasIds'>, data: string): UsoReserva {
+  const dia = diasOcupados(evento).find((d) => d.data === data)
+  if (!dia?.reservasUsadas) return 'PARADA'
+  return reservaUsadaNoDia(dia, evento.reservasIds?.length ?? 0) ? 'USADA' : 'PARTE'
+}
+
+/** Dica de quando a máquina está com o cliente como reserva, conforme o uso de hoje. */
+export const DICA_RESERVA: Record<UsoReserva, string> = {
+  PARADA: 'Está com o cliente como reserva (sem uso, a não ser que ele use).',
+  USADA: 'Está com o cliente como reserva e foi usada hoje: é cobrada como uma diária.',
+  PARTE: 'Está com o cliente como reserva. Hoje ele usou só parte das reservas: esta pode estar parada.',
+}
+
+/** Uso da reserva hoje em poucas palavras: "parada com o cliente", "usada hoje". */
+export const USO_RESERVA_CURTO: Record<UsoReserva, string> = {
+  PARADA: 'parada com o cliente',
+  USADA: 'usada hoje',
+  PARTE: 'cliente usou parte das reservas hoje',
+}
+
 export interface ResumoMaquina {
   concluidas: number
   emAberto: number
@@ -81,8 +118,15 @@ export interface ResumoMaquina {
   ultimaReclamacao: string | null
   /** Eventos (não cancelados) para os quais a máquina foi enviada. */
   eventos: number
-  /** Dias desses eventos até hoje: cada dia com a máquina conta uma diária (os futuros ficam de fora). */
+  /**
+   * Dias de uso desses eventos até hoje em que a máquina foi como titular: cada um conta uma
+   * diária (os futuros ficam de fora).
+   */
   diarias: number
+  /** Dias de uso até hoje em que ela ficou com o cliente como reserva (sem diária, a não ser que ele use). */
+  diasReserva: number
+  /** Desses dias como reserva, em quantos ela com certeza foi usada (ver `reservaUsadaNoDia`). */
+  diasReservaUsada: number
   /** Desses eventos, quantos ainda vão começar. */
   agendados: number
 }
@@ -102,6 +146,8 @@ export function resumoMaquina(
     ultimaReclamacao: null,
     eventos: 0,
     diarias: 0,
+    diasReserva: 0,
+    diasReservaUsada: 0,
     agendados: 0,
   }
   for (const o of ordens) {
@@ -115,7 +161,12 @@ export function resumoMaquina(
   for (const e of eventos) {
     if (e.status === 'CANCELADO' || !e.maquinasIds.includes(maquinaId)) continue
     r.eventos++
-    r.diarias += new Set(e.dias.map((d) => d.data).filter((d) => d && d <= hoje)).size
+    // Só os dias de uso (com período corrido, os do meio não contam diária)
+    const dias = diasOcupados(e).filter((d) => d.uso && d.data <= hoje)
+    if (ehReserva(e, maquinaId)) {
+      r.diasReserva += dias.length
+      r.diasReservaUsada += dias.filter((d) => reservaUsadaNoDia(d, e.reservasIds.length)).length
+    } else r.diarias += dias.length
     const p = periodoEvento(e)
     if (p && p.inicio > hoje) r.agendados++
   }
@@ -131,6 +182,8 @@ export interface Locacao {
   evento: Evento
   inicio: string
   fim: string
+  /** A máquina vai (ou foi) como reserva neste evento. */
+  reserva: boolean
 }
 
 /** Eventos (não cancelados) com a máquina que terminam hoje ou depois, do mais próximo ao mais distante. */
@@ -139,14 +192,25 @@ export function locacoesDeHojeEmDiante(maquinaId: string, eventos: Evento[], hoj
   for (const evento of eventos) {
     if (evento.status === 'CANCELADO' || !evento.maquinasIds.includes(maquinaId)) continue
     const p = periodoEvento(evento)
-    if (p && p.fim >= hoje) lista.push({ evento, ...p })
+    if (p && p.fim >= hoje) lista.push({ evento, ...p, reserva: ehReserva(evento, maquinaId) })
   }
   return lista.sort((a, b) => a.inicio.localeCompare(b.inicio) || a.evento.codigo - b.evento.codigo)
 }
 
 export type ItemHistorico =
   | { tipo: 'os'; id: string; data: string; ordem: OrdemServico }
-  | { tipo: 'locacao'; id: string; data: string; fim: string; evento: Evento; quando: 'passada' | 'agora' | 'futura' }
+  | {
+      tipo: 'locacao'
+      id: string
+      data: string
+      fim: string
+      evento: Evento
+      quando: 'passada' | 'agora' | 'futura'
+      /** Foi como reserva (ficou com o cliente, só cobrada se usada). */
+      reserva: boolean
+      /** Como reserva: em quantos dias de uso ela com certeza foi usada (0 quando não é reserva). */
+      diasUsada: number
+    }
   | { tipo: 'reclamacao'; id: string; data: string; reclamacao: Reclamacao; evento?: Evento }
 
 /**
@@ -182,7 +246,11 @@ export function historicoMaquina(
     const p = periodoEvento(evento)
     if (!p) continue
     const quando = p.inicio > hoje ? 'futura' : p.fim < hoje ? 'passada' : 'agora'
-    itens.push({ tipo: 'locacao', id: evento.id, data: p.inicio, fim: p.fim, evento, quando })
+    const reserva = ehReserva(evento, maquinaId)
+    const diasUsada = reserva
+      ? diasOcupados(evento).filter((d) => d.uso && reservaUsadaNoDia(d, evento.reservasIds.length)).length
+      : 0
+    itens.push({ tipo: 'locacao', id: evento.id, data: p.inicio, fim: p.fim, evento, quando, reserva, diasUsada })
   }
   const desempate = (a: ItemHistorico, b: ItemHistorico) => {
     if (a.tipo === 'os' && b.tipo === 'os') return b.ordem.numero - a.ordem.numero
@@ -204,7 +272,7 @@ export function eventosDaMaquina(maquinaId: string, eventos: Evento[], hoje: str
   for (const evento of eventos) {
     if (evento.status === 'CANCELADO' || !evento.maquinasIds.includes(maquinaId)) continue
     const p = periodoEvento(evento)
-    if (p && p.inicio <= hoje) lista.push({ evento, ...p })
+    if (p && p.inicio <= hoje) lista.push({ evento, ...p, reserva: ehReserva(evento, maquinaId) })
   }
   return lista.sort((a, b) => b.fim.localeCompare(a.fim) || b.inicio.localeCompare(a.inicio) || b.evento.codigo - a.evento.codigo)
 }
@@ -332,7 +400,7 @@ export function avisoLocacoes(locacoes: Locacao[]) {
   if (!n) return ''
   const lista = locacoes
     .slice(0, 3)
-    .map((l) => `${localDaLocacao(l.evento)} (${periodo(l.inicio, l.fim)})`)
+    .map((l) => `${localDaLocacao(l.evento)} (${periodo(l.inicio, l.fim)}${l.reserva ? ', como reserva' : ''})`)
     .join('; ')
   return `Atenção: ela está em ${n === 1 ? '1 evento' : `${n} eventos`} de hoje em diante — ${lista}${n > 3 ? ' e outros' : ''}. Troque a máquina ${n === 1 ? 'nesse evento' : 'nesses eventos'}.`
 }

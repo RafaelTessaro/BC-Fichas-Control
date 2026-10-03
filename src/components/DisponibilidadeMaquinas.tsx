@@ -20,10 +20,12 @@ import {
 import type { Maquina, TipoMaquina } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
 import { dataCurta, numero } from '../lib/format'
+import { ehReserva } from '../lib/bloqueioMaquinas'
+import { USO_RESERVA_CURTO, usoDaReserva } from '../lib/manutencao'
 import { useDados } from '../store/dados'
 import { toast } from '../store/ui'
 import { IconeMaquinaFichas } from './IconeMaquinaFichas'
-import { MaquinaChip, TipoMaquinaBadge, useSituacoes } from './Maquinas'
+import { MaquinaChip, SeloReserva, TipoMaquinaBadge, useSituacoes } from './Maquinas'
 import { Button } from './ui/Button'
 import { Card, CardHeader } from './ui/Card'
 import { confirmar } from './ui/Feedback'
@@ -101,11 +103,21 @@ function linhasDoPlano(p: PlanoAjuste): Array<{ tipo: TipoLinha; texto: string }
   return linhas
 }
 
-/** Texto do balão de cada chip: situação, onde está e o próximo evento. */
-function tituloChip(m: Maquina, s: SituacaoMaquina) {
+/** Locada hoje como reserva (com o cliente, só cobrada se ele usar). */
+const locadaComoReserva = (s: SituacaoMaquina) => s.estado === 'LOCADA' && !!s.reserva
+
+/** Texto do balão de cada chip: situação, onde está (e se é reserva, parada ou usada) e o próximo evento. */
+function tituloChip(m: Maquina, s: SituacaoMaquina, hoje: string) {
   let texto = `${m.identificacao} · ${ESTADO_MAQUINA[s.estado].label}`
-  if (s.estado === 'LOCADA' && s.evento) texto += ` em ${localDaLocacao(s.evento)}`
-  if (s.proxima && s.dataProxima) texto += ` · Próximo evento: ${s.proxima.nome}, ${dataCurta(s.dataProxima)}`
+  if (s.estado === 'LOCADA' && s.evento) {
+    texto = locadaComoReserva(s)
+      ? `${m.identificacao} · Reserva em ${localDaLocacao(s.evento)} (${USO_RESERVA_CURTO[usoDaReserva(s.evento, hoje)]})`
+      : `${texto} em ${localDaLocacao(s.evento)}`
+  }
+  if (s.proxima && s.dataProxima) {
+    texto += ` · Próximo evento: ${s.proxima.nome}, ${dataCurta(s.dataProxima)}`
+    if (ehReserva(s.proxima, m.id)) texto += ' (como reserva)'
+  }
   return texto
 }
 
@@ -137,8 +149,13 @@ export function DisponibilidadeMaquinas() {
   const bloqueado = planos.some((p) => p.faltam > 0 || p.criar.length > LIMITES.lote)
 
   const contagem = useMemo(() => {
-    const c: Record<EstadoMaquina, number> = { DISPONIVEL: 0, LOCADA: 0, MANUTENCAO: 0, DESATIVADA: 0 }
-    for (const m of maquinas) c[situacoes.get(m.id)?.estado ?? 'DISPONIVEL']++
+    const c: Record<EstadoMaquina | 'RESERVA', number> = { DISPONIVEL: 0, LOCADA: 0, MANUTENCAO: 0, DESATIVADA: 0, RESERVA: 0 }
+    for (const m of maquinas) {
+      const s = situacoes.get(m.id)
+      c[s?.estado ?? 'DISPONIVEL']++
+      // As reservas também estão entre as locadas: só mostra quantas delas
+      if (s && locadaComoReserva(s)) c.RESERVA++
+    }
     return c
   }, [maquinas, situacoes])
 
@@ -339,7 +356,12 @@ export function DisponibilidadeMaquinas() {
                             animate={{ opacity: 1, scale: 1 }}
                             transition={{ delay: Math.min(i, 30) * 0.012 }}
                           >
-                            <MaquinaChip maquina={m} estado={s.estado} titulo={tituloChip(m, s)} />
+                            <MaquinaChip
+                              maquina={m}
+                              estado={s.estado}
+                              reserva={locadaComoReserva(s)}
+                              titulo={tituloChip(m, s, hoje)}
+                            />
                           </motion.span>
                         )
                       })}
@@ -354,6 +376,12 @@ export function DisponibilidadeMaquinas() {
                       <span className={cn('h-2 w-2 rounded-full', COR_LEGENDA[e])} />
                       {ESTADO_MAQUINA[e].label}
                       <b className="tnum font-semibold text-ink-2">{contagem[e]}</b>
+                      {e === 'LOCADA' && contagem.RESERVA > 0 && (
+                        <span title="As reservas ficam com o cliente sem uso, a não ser que ele use: dá para buscar uma delas se faltar máquina.">
+                          (<SeloReserva pequeno className="mr-1 align-[-2px]" />
+                          <span className="tnum">{contagem.RESERVA}</span> como reserva)
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>

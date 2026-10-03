@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { calcularEvento } from '#shared/calc.ts'
 import type { EventoCompleto } from './hooks'
-import { agruparPorPeriodo, filtrarPeriodo, periodoAnterior } from './relatorio'
+import { agruparPorPeriodo, filtrarPeriodo, periodoAnterior, somar, totaisVazios } from './relatorio'
 import type { Evento } from '#shared/tipos.ts'
 
 function ev(id: string, datas: string[], extra: Partial<Evento> = {}): EventoCompleto {
@@ -43,6 +43,21 @@ describe('relatórios', () => {
     expect(baldes.map((b) => b.total)).toEqual([230, 130, 130])
     expect(baldes[2].aReceber).toBe(130)
     expect(baldes[0].diarias).toBe(2)
+  })
+
+  it('soma as diárias de reserva usada (já incluídas nas diárias); a reserva parada não conta', () => {
+    const comReserva = ev('r', ['2026-08-10', '2026-08-11'], {
+      dias: [
+        { id: 'r0', data: '2026-08-10', maquinas: 3, reservas: 1, reservasUsadas: 1 },
+        { id: 'r1', data: '2026-08-11', maquinas: 3, reservas: 1, reservasUsadas: 0 },
+      ],
+    })
+    const t = [comReserva, itens[1]].reduce(somar, totaisVazios())
+    expect(t.diarias).toBe(8) // 3 + 1 usada + 3 do primeiro, mais 1 do outro evento
+    expect(t.diariasReserva).toBe(1)
+    expect(t.valorDiarias).toBe(800)
+    const { baldes } = agruparPorPeriodo(filtrarPeriodo([comReserva], '2026-08-01', '2026-08-31'), '2026-08-01', '2026-08-31')
+    expect(baldes.reduce((s, b) => s + b.diariasReserva, 0)).toBe(1)
   })
 
   it('usa semanas em períodos curtos', () => {

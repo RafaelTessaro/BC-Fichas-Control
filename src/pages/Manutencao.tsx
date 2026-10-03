@@ -31,7 +31,7 @@ import {
 } from '#shared/maquinas.ts'
 import type { Maquina, OrdemServico, TipoMaquina } from '#shared/tipos.ts'
 import { IconeMaquinaFichas } from '../components/IconeMaquinaFichas'
-import { MaquinaChip, SituacaoBadge, StatusOSBadge, TipoMaquinaBadge, useSituacoes } from '../components/Maquinas'
+import { MaquinaChip, SeloReserva, SituacaoBadge, StatusOSBadge, TipoMaquinaBadge, useSituacoes } from '../components/Maquinas'
 import { MaquinaFormModal } from '../components/MaquinaFormModal'
 import { OrdemServicoModal } from '../components/OrdemServicoModal'
 import { ServicosManutencaoModal } from '../components/ServicosManutencaoModal'
@@ -40,9 +40,19 @@ import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Select } from '../components/ui/Form'
 import { EmptyState, PageHeader, SearchInput, Segmented, StatCard } from '../components/ui/Misc'
+import { ehReserva } from '../lib/bloqueioMaquinas'
 import { cn } from '../lib/cn'
 import { dataCurta, numero, periodo } from '../lib/format'
-import { haQuantoTempo, indicesOrdens, maquinaCombina, ordenarOrdens, reclamacoesPorMaquina } from '../lib/manutencao'
+import {
+  DICA_RESERVA,
+  haQuantoTempo,
+  indicesOrdens,
+  maquinaCombina,
+  ordenarOrdens,
+  reclamacoesPorMaquina,
+  USO_RESERVA_CURTO,
+  usoDaReserva,
+} from '../lib/manutencao'
 import { useDados } from '../store/dados'
 import { useHoje } from '../lib/hoje'
 
@@ -89,10 +99,13 @@ export function Manutencao() {
   const estadoDe = (m: Maquina): EstadoMaquina => situacoes.get(m.id)?.estado ?? m.status
 
   const contagem = useMemo(() => {
-    const n = { total: 0, P: 0, G: 0, DISPONIVEL: 0, LOCADA: 0, MANUTENCAO: 0, DESATIVADA: 0 }
+    const n = { total: 0, P: 0, G: 0, DISPONIVEL: 0, LOCADA: 0, MANUTENCAO: 0, DESATIVADA: 0, RESERVA: 0 }
     for (const m of maquinas) {
-      const e = situacoes.get(m.id)?.estado ?? m.status
+      const s = situacoes.get(m.id)
+      const e = s?.estado ?? m.status
       n[e]++
+      // Locadas como reserva (também contam entre as locadas)
+      if (e === 'LOCADA' && s?.reserva) n.RESERVA++
       if (e !== 'DESATIVADA') {
         n.total++
         n[m.tipo]++
@@ -204,7 +217,15 @@ export function Manutencao() {
               valor={contagem.LOCADA}
               formatar={(v) => numero(Math.round(v))}
               icone={<MapPin className="h-4 w-4" />}
-              detalhe="Em eventos hoje"
+              detalhe={
+                contagem.RESERVA ? (
+                  <span title="As reservas ficam com o cliente sem uso, a não ser que ele use">
+                    Inclui {numero(contagem.RESERVA)} como reserva
+                  </span>
+                ) : (
+                  'Em eventos hoje'
+                )
+              }
               delay={0.08}
             />
             <StatCard
@@ -294,7 +315,8 @@ export function Manutencao() {
                   <option value="todas">Todas as situações</option>
                   {ORDEM_ESTADOS.map((e) => (
                     <option key={e} value={e}>
-                      {ESTADO_MAQUINA[e].label} ({contagem[e]})
+                      {ESTADO_MAQUINA[e].label} ({contagem[e]}
+                      {e === 'LOCADA' && contagem.RESERVA > 0 && `, ${contagem.RESERVA} como reserva`})
                     </option>
                   ))}
                 </Select>
@@ -309,6 +331,7 @@ export function Manutencao() {
                     maquina={m}
                     indice={i}
                     situacao={situacoes.get(m.id) ?? { estado: estadoDe(m) }}
+                    hoje={hoje}
                     ultimaManutencao={indices.ultima.get(m.id)}
                     emAberto={indices.abertas.get(m.id) ?? 0}
                     reclamacoes={queixas.get(m.id) ?? 0}
@@ -425,6 +448,7 @@ function CartaoMaquina({
   maquina,
   indice,
   situacao,
+  hoje,
   ultimaManutencao,
   emAberto,
   reclamacoes,
@@ -432,6 +456,7 @@ function CartaoMaquina({
   maquina: Maquina
   indice: number
   situacao: SituacaoMaquina
+  hoje: string
   ultimaManutencao: string | undefined
   emAberto: number
   /** Reclamações de clientes registradas para a máquina. */
@@ -467,11 +492,19 @@ function CartaoMaquina({
             {TIPO_MAQUINA[maquina.tipo].label} · {TIPO_MAQUINA[maquina.tipo].descricao.toLowerCase()}
           </p>
         </div>
-        <SituacaoBadge estado={situacao.estado} />
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5">
+          {situacao.estado === 'LOCADA' && situacao.reserva && (
+            <Badge tom="warning" ponto={false} className="gap-1 pl-1.5">
+              <SeloReserva pequeno />
+              Reserva
+            </Badge>
+          )}
+          <SituacaoBadge estado={situacao.estado} />
+        </div>
       </div>
 
       <div className="mt-3 flex-1 text-[13px]">
-        <OndeEsta situacao={situacao} />
+        <OndeEsta maquinaId={maquina.id} situacao={situacao} hoje={hoje} />
       </div>
 
       <div className="mt-3 flex min-h-6 items-center justify-between gap-2 border-t border-line pt-3 text-xs text-muted">
@@ -504,8 +537,8 @@ function CartaoMaquina({
 }
 
 /** Onde a máquina está hoje (ou a próxima locação), em uma ou duas linhas. */
-function OndeEsta({ situacao }: { situacao: SituacaoMaquina }) {
-  const { estado, evento, proxima, dataProxima } = situacao
+function OndeEsta({ maquinaId, situacao, hoje }: { maquinaId: string; situacao: SituacaoMaquina; hoje: string }) {
+  const { estado, evento, reserva, proxima, dataProxima } = situacao
   if (estado === 'DESATIVADA') {
     return (
       <LinhaInfo icone={<IconeMaquinaFichas className="h-3.5 w-3.5" />}>Fora de uso. O histórico continua guardado.</LinhaInfo>
@@ -514,15 +547,25 @@ function OndeEsta({ situacao }: { situacao: SituacaoMaquina }) {
   if (evento) {
     const p = periodoEvento(evento)
     const emManutencao = estado === 'MANUTENCAO'
+    // Como reserva: fica com o cliente e só é cobrada se ele usar (diz se hoje está parada ou foi usada)
+    const uso = reserva ? usoDaReserva(evento, hoje) : null
     return (
       <LinhaInfo
         icone={emManutencao ? <TriangleAlert className="h-3.5 w-3.5" /> : <MapPin className="h-3.5 w-3.5" />}
         tom={emManutencao ? 'text-warning' : 'text-info'}
+        titulo={uso ? DICA_RESERVA[uso] : undefined}
         detalhe={
-          p && [periodo(p.inicio, p.fim), evento.periodoCorrido && 'período todo com o cliente'].filter(Boolean).join(' · ')
+          p &&
+          [periodo(p.inicio, p.fim), uso && USO_RESERVA_CURTO[uso], evento.periodoCorrido && 'período todo com o cliente']
+            .filter(Boolean)
+            .join(' · ')
         }
       >
-        {emManutencao ? 'Em manutenção, mas marcada em ' : 'Locada · '}
+        {emManutencao
+          ? `Em manutenção, mas marcada${reserva ? ' como reserva' : ''} em `
+          : reserva
+            ? 'Locada · reserva · '
+            : 'Locada · '}
         <LinkEvento id={evento.id}>{localDaLocacao(evento)}</LinkEvento>
       </LinhaInfo>
     )
@@ -532,6 +575,7 @@ function OndeEsta({ situacao }: { situacao: SituacaoMaquina }) {
       <LinhaInfo icone={<CalendarClock className="h-3.5 w-3.5" />} tom={estado === 'MANUTENCAO' ? 'text-warning' : undefined}>
         Próxima locação: {dataProxima ? dataCurta(dataProxima).slice(0, 5) : '—'} ·{' '}
         <LinkEvento id={proxima.id}>{localDaLocacao(proxima)}</LinkEvento>
+        {ehReserva(proxima, maquinaId) && ' (como reserva)'}
       </LinhaInfo>
     )
   }
@@ -546,15 +590,18 @@ function LinhaInfo({
   icone,
   tom,
   detalhe,
+  titulo,
   children,
 }: {
   icone: ReactNode
   tom?: string
   detalhe?: ReactNode
+  /** Dica ao parar o mouse (ex.: o que significa estar como reserva). */
+  titulo?: string
   children: ReactNode
 }) {
   return (
-    <div className="flex items-start gap-2">
+    <div className="flex items-start gap-2" title={titulo}>
       <span className={cn('mt-[3px] shrink-0', tom ?? 'text-muted')}>{icone}</span>
       <div className="min-w-0">
         <p className={cn('line-clamp-2 break-words', tom ? `font-medium ${tom}` : 'text-ink-2')}>{children}</p>

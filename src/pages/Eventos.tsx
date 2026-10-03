@@ -1,5 +1,5 @@
-import { endOfMonth, endOfYear, format, startOfMonth, startOfYear, subMonths } from 'date-fns'
-import { Download, Plus, Ticket } from 'lucide-react'
+import { endOfMonth, endOfYear, format, startOfMonth, startOfYear, subMonths, subYears } from 'date-fns'
+import { Download, Plus, Repeat, Ticket, X } from 'lucide-react'
 import { useCallback, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { EventosTabela } from '../components/EventosTabela'
@@ -17,25 +17,30 @@ import { useDados } from '../store/dados'
 import type { StatusEvento, StatusProgramacao } from '#shared/tipos.ts'
 
 type FiltroStatus = 'todos' | StatusEvento
-type FiltroPeriodo = 'todos' | 'proximos' | 'mes' | 'mes-passado' | 'ano'
+type FiltroPeriodo = 'todos' | 'proximos' | 'passados' | 'mes' | 'mes-passado' | 'ano' | 'ano-passado'
 type FiltroPagamento = 'todos' | 'pagos' | 'nao-pagos'
 /** "pendente": eventos de hoje em diante, não cancelados, com a programação ainda não concluída. */
 type FiltroProgramacao = 'todos' | 'pendente' | StatusProgramacao
 
 const FILTROS_PROGRAMACAO: FiltroProgramacao[] = ['todos', 'pendente', ...STATUS_PROGRAMACAO_LISTA]
 
+/** Período do filtro: os eventos com algum dia dentro dele (com "passados", os que já terminaram). */
 function intervalo(p: FiltroPeriodo): [string, string] | null {
   const hoje = new Date()
   const f = (d: Date) => format(d, 'yyyy-MM-dd')
   switch (p) {
     case 'proximos':
       return [hojeISO(), '9999-12-31']
+    case 'passados':
+      return ['0000-01-01', hojeISO()]
     case 'mes':
       return [f(startOfMonth(hoje)), f(endOfMonth(hoje))]
     case 'mes-passado':
       return [f(startOfMonth(subMonths(hoje, 1))), f(endOfMonth(subMonths(hoje, 1)))]
     case 'ano':
       return [f(startOfYear(hoje)), f(endOfYear(hoje))]
+    case 'ano-passado':
+      return [f(startOfYear(subYears(hoje, 1))), f(endOfYear(subYears(hoje, 1)))]
     default:
       return null
   }
@@ -54,9 +59,28 @@ export function Eventos() {
         .join(', '),
     [identificacoes],
   )
+  // Na planilha, as máquinas que vão como reserva ficam marcadas: "P-01, P-02, P-03 (reserva)"
+  const maquinasEnviadas = useCallback(
+    (ids: string[], reservas: string[]) =>
+      ids
+        .filter((id) => identificacoes.has(id))
+        .map((id) => `${identificacoes.get(id)}${reservas.includes(id) ? ' (reserva)' : ''}`)
+        .join(', '),
+    [identificacoes],
+  )
   const navegar = useNavigate()
   const hoje = useHoje()
-  const [params] = useSearchParams()
+  const [params, setParams] = useSearchParams()
+  // Série de eventos ("Repetir em outras datas"), vinda do detalhe do evento
+  const grupo = params.get('grupo') ?? ''
+  const limparGrupo = () =>
+    setParams(
+      (p) => {
+        p.delete('grupo')
+        return p
+      },
+      { replace: true },
+    )
   const [status, setStatus] = useState<FiltroStatus>('todos')
   const [busca, setBusca] = useState('')
   const [periodoSel, setPeriodo] = useState<FiltroPeriodo>('todos')
@@ -72,6 +96,7 @@ export function Eventos() {
     const q = normalizar(busca)
     const iv = intervalo(periodoSel)
     return todos
+      .filter(({ evento: e }) => !grupo || e.grupoId === grupo)
       .filter(
         ({ evento: e, cliente }) =>
           !q ||
@@ -79,7 +104,12 @@ export function Eventos() {
             `${e.nome} ${codigoEvento(e.codigo)} ${cliente?.nome ?? ''} ${e.cidade || cliente?.cidade || ''} ${nomesMaquinas(e.maquinasIds)}`,
           ).includes(q),
       )
-      .filter(({ resumo: r }) => !iv || ((r.dataFim ?? '') >= iv[0] && (r.dataInicio ?? '') <= iv[1]))
+      .filter(({ resumo: r }) =>
+        // Passados: só os que já terminaram (o de hoje ainda está acontecendo)
+        periodoSel === 'passados'
+          ? !!r.dataFim && r.dataFim < hoje
+          : !iv || ((r.dataFim ?? '') >= iv[0] && (r.dataInicio ?? '') <= iv[1]),
+      )
       .filter(({ resumo: r }) => pagamento === 'todos' || (pagamento === 'pagos' ? r.pago : !r.pago))
       .filter(({ evento: e, resumo: r }) =>
         programacao === 'todos'
@@ -88,7 +118,7 @@ export function Eventos() {
             ? e.status !== 'CANCELADO' && e.programacao !== 'CONCLUIDA' && (r.dataFim ?? '') >= hoje
             : e.programacao === programacao,
       )
-  }, [todos, busca, periodoSel, pagamento, programacao, hoje, nomesMaquinas])
+  }, [todos, grupo, busca, periodoSel, pagamento, programacao, hoje, nomesMaquinas])
 
   const contagem = useMemo(() => {
     const c: Record<string, number> = { todos: base.length }
@@ -98,10 +128,17 @@ export function Eventos() {
 
   const lista = useMemo(() => {
     const l = base.filter(({ evento }) => status === 'todos' || evento.status === status)
-    // Próximos e programação pendente: do mais próximo ao mais distante
-    if (periodoSel === 'proximos' || programacao === 'pendente') return [...l].sort((a, b) => -porDataDesc(a, b))
+    // Próximos, programação pendente e uma série: do mais próximo ao mais distante
+    if (grupo || periodoSel === 'proximos' || programacao === 'pendente') return [...l].sort((a, b) => -porDataDesc(a, b))
     return [...l].sort(porDataDesc)
-  }, [base, status, periodoSel, programacao])
+  }, [base, status, grupo, periodoSel, programacao])
+
+  // Nome da série no filtro: o do primeiro evento dela
+  const nomeSerie = useMemo(() => {
+    if (!grupo) return ''
+    const daSerie = todos.filter(({ evento }) => evento.grupoId === grupo).sort((a, b) => -porDataDesc(a, b))
+    return daSerie[0]?.evento.nome ?? ''
+  }, [todos, grupo])
 
   const totais = useMemo(
     () =>
@@ -129,6 +166,8 @@ export function Eventos() {
         'Início',
         'Fim',
         'Diárias',
+        'Reservas (máquina-dia)',
+        'Diárias de reserva usada',
         'Valor diárias',
         'Bobinas utilizadas',
         'Valor bobinas',
@@ -151,6 +190,8 @@ export function Eventos() {
           dataCurta(r.dataInicio),
           dataCurta(r.dataFim),
           r.totalDiarias,
+          r.reservas,
+          r.diariasReserva,
           r.valorDiarias,
           r.bobinasUtilizadas ?? '',
           r.valorBobinas,
@@ -159,13 +200,13 @@ export function Eventos() {
           FORMAS_PAGAMENTO[e.formaPagamento].label,
           STATUS_EVENTO[e.status].label,
           STATUS_PROGRAMACAO[e.programacao].label,
-          nomesMaquinas(e.maquinasIds),
+          maquinasEnviadas(e.maquinasIds, e.reservasIds ?? []),
           p && p.inicio !== p.fim ? `De ${dataCurta(p.inicio)} a ${dataCurta(p.fim)}` : '',
         ]
       }),
     )
 
-  const algumFiltro = busca || periodoSel !== 'todos' || pagamento !== 'todos' || programacao !== 'todos'
+  const algumFiltro = grupo || busca || periodoSel !== 'todos' || pagamento !== 'todos' || programacao !== 'todos'
 
   return (
     <>
@@ -230,9 +271,15 @@ export function Eventos() {
             <Select value={periodoSel} onChange={(e) => setPeriodo(e.target.value as FiltroPeriodo)} aria-label="Período">
               <option value="todos">Todo o período</option>
               <option value="proximos">Próximos (a partir de hoje)</option>
-              <option value="mes">Este mês</option>
-              <option value="mes-passado">Mês passado</option>
-              <option value="ano">Este ano</option>
+              <option value="passados">Passados</option>
+              <optgroup label="Mês">
+                <option value="mes">Este mês</option>
+                <option value="mes-passado">Mês passado</option>
+              </optgroup>
+              <optgroup label="Ano">
+                <option value="ano">Este ano</option>
+                <option value="ano-passado">Ano passado</option>
+              </optgroup>
             </Select>
             <Select value={pagamento} onChange={(e) => setPagamento(e.target.value as FiltroPagamento)} aria-label="Pagamento">
               <option value="todos">Qualquer pagamento</option>
@@ -257,6 +304,24 @@ export function Eventos() {
             </div>
           </div>
         </div>
+        {grupo && (
+          <div className="flex flex-wrap items-center gap-2 border-b border-line px-4 py-2.5">
+            <span className="inline-flex h-8 max-w-full items-center gap-2 rounded-full bg-brand-soft py-0 pr-1 pl-3 text-[13px] font-medium text-brand-ink">
+              <Repeat className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">Série: {nomeSerie || 'sem eventos'}</span>
+              <button
+                type="button"
+                onClick={limparGrupo}
+                aria-label="Limpar o filtro da série"
+                title="Mostrar todos os eventos"
+                className="flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-full transition-colors hover:bg-brand/15"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </span>
+            <span className="text-xs text-muted">Eventos criados juntos por “Repetir em outras datas”, em ordem de data.</span>
+          </div>
+        )}
         {lista.length === 0 ? (
           <EmptyState
             icone={<Ticket className="h-6 w-6" />}

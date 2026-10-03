@@ -12,9 +12,15 @@ export interface Bloqueio {
   motivo: MotivoBloqueio
   /** Outros eventos com a máquina em alguma das mesmas datas (só no motivo OCUPADA). */
   eventos: Evento[]
-  /** Motivo curto, para o balão do chip: "Em manutenção", "No evento #0012 Festa — Cliente, em 11/10". */
+  /**
+   * Motivo curto, para o balão do chip: "Em manutenção", "No evento #0012 Festa — Cliente, em 11/10"
+   * ou, quando ela vai como reserva no outro evento, "Como reserva no evento #0012 …".
+   */
   texto: string
 }
+
+/** A máquina vai como reserva no evento (locada, parada com o cliente se não for usada). */
+export const ehReserva = (e: Pick<Evento, 'reservasIds'>, maquinaId: string) => !!e.reservasIds?.includes(maquinaId)
 
 export { listaDatas } from '#shared/maquinas.ts'
 
@@ -67,20 +73,34 @@ export function bloqueiosMaquinas({
       mapa.set(m.id, { motivo: 'MANUTENCAO', eventos: [], texto: 'Em manutenção' })
     } else {
       const outros = ocupadas.get(m.id)
-      if (outros?.length) mapa.set(m.id, bloqueioOcupada(outros, datas, porId))
+      if (outros?.length) mapa.set(m.id, bloqueioOcupada(m.id, outros, datas, porId))
     }
   }
   return mapa
 }
 
-/** Bloqueio por outros eventos, citando só as datas de `datas` que cada um ocupa. */
-function bloqueioOcupada(outros: Evento[], datas: Set<string>, clientes: Map<string, Pick<Cliente, 'nome'>>): Bloqueio {
-  const partes = outros.map((e) => `${nomeEvento(e, clientes)}, em ${listaDatas(datasEmComum(e, datas))}`)
-  return {
-    motivo: 'OCUPADA',
-    eventos: outros,
-    texto: `${outros.length > 1 ? 'Nos eventos' : 'No evento'} ${partes.join('; ')}`,
+/**
+ * Bloqueio por outros eventos, citando só as datas de `datas` que cada um ocupa. A reserva também
+ * prende a máquina (está com o cliente), mas o texto diz que ela foi como reserva: "Como reserva no
+ * evento #0012 …" (com vários eventos, "(como reserva)" depois do evento em que ela é reserva).
+ */
+function bloqueioOcupada(
+  maquinaId: string,
+  outros: Evento[],
+  datas: Set<string>,
+  clientes: Map<string, Pick<Cliente, 'nome'>>,
+): Bloqueio {
+  const datasDe = (e: Evento) => `em ${listaDatas(datasEmComum(e, datas))}`
+  if (outros.length === 1) {
+    const [e] = outros
+    return {
+      motivo: 'OCUPADA',
+      eventos: outros,
+      texto: `${ehReserva(e, maquinaId) ? 'Como reserva no evento' : 'No evento'} ${nomeEvento(e, clientes)}, ${datasDe(e)}`,
+    }
   }
+  const partes = outros.map((e) => `${nomeEvento(e, clientes)}${ehReserva(e, maquinaId) ? ' (como reserva)' : ''}, ${datasDe(e)}`)
+  return { motivo: 'OCUPADA', eventos: outros, texto: `Nos eventos ${partes.join('; ')}` }
 }
 
 /**
@@ -151,7 +171,7 @@ export function trocasMaquinas({
       // lado do outro evento também valem os dias ocupados: com período corrido, os do meio também
       const alvo = nova ? datas : diasNovos
       const outros = (ocupadas.get(id) ?? []).filter((e) => datasEmComum(e, alvo).length > 0)
-      if (outros.length) mapa.set(id, bloqueioOcupada(outros, alvo, porId))
+      if (outros.length) mapa.set(id, bloqueioOcupada(id, outros, alvo, porId))
     }
   }
   return mapa
@@ -196,7 +216,10 @@ export function agruparTrocas(itens: Array<{ identificacao: string; bloqueio: Bl
   })
 }
 
-/** Frase para avisos: "P-03 já está no evento #0012 Festa — Cliente, em 11/10". */
+/**
+ * Frase para avisos: "P-03 já está no evento #0012 Festa — Cliente, em 11/10" (ou "já está como
+ * reserva no evento …", como diz o servidor).
+ */
 export function fraseBloqueio(identificacao: string, b: Bloqueio) {
   return `${identificacao} ${agruparTrocas([{ identificacao, bloqueio: b }])[0].frase}`
 }
@@ -213,6 +236,8 @@ export interface GrupoBloqueio {
   titulo: string
   motivo: Exclude<MotivoBloqueio, 'DESATIVADA'>
   maquinas: Maquina[]
+  /** Ids das máquinas do grupo que estão como reserva no outro evento. */
+  reservas: string[]
 }
 
 /**
@@ -245,12 +270,15 @@ export function agruparBloqueios(
         titulo: `${nomeEvento(e, porId)}, em ${listaDatas(datasEmComum(e, datas))}`,
         motivo: 'OCUPADA' as const,
         maquinas: [],
+        reservas: [],
       }
       g.maquinas.push(m)
+      if (ehReserva(e, m.id)) g.reservas.push(m.id)
       grupos.set(e.id, g)
     }
   }
   const lista = [...grupos.values()]
-  if (manutencao.length) lista.push({ chave: 'manutencao', titulo: 'Em manutenção', motivo: 'MANUTENCAO', maquinas: manutencao })
+  if (manutencao.length)
+    lista.push({ chave: 'manutencao', titulo: 'Em manutenção', motivo: 'MANUTENCAO', maquinas: manutencao, reservas: [] })
   return lista
 }

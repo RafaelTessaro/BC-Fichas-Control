@@ -3,6 +3,7 @@ import type { Evento, Maquina, OrdemServico, Reclamacao } from '#shared/tipos.ts
 import {
   adicionarServico,
   avisoLocacoes,
+  DICA_RESERVA,
   eventoSugerido,
   eventosDaMaquina,
   formatarServico,
@@ -20,6 +21,7 @@ import {
   resumoMaquina,
   sugestaoMaquina,
   sugestaoMarcada,
+  usoDaReserva,
   usoDosServicos,
 } from './manutencao'
 
@@ -169,6 +171,8 @@ describe('resumo da máquina', () => {
       ultimaReclamacao: '2026-08-15',
       eventos: 2,
       diarias: 2, // o dia de e2 ainda não chegou
+      diasReserva: 0,
+      diasReservaUsada: 0,
       agendados: 1,
     })
     expect(resumoMaquina('G-02', ordens, eventos, reclamacoes, HOJE)).toMatchObject({ reclamacoes: 0, ultimaReclamacao: null })
@@ -224,6 +228,87 @@ describe('resumo da máquina', () => {
       HOJE,
     )
     expect(itens.map((i) => i.id)).toEqual(['os9', 'rb', 'ra', 'e9'])
+  })
+})
+
+describe('máquina reserva', () => {
+  /** Dias com titulares, reservas e reservas usadas: [data, maquinas, reservas, usadas]. */
+  const dias = (id: string, lista: Array<[string, number, number, number]>) =>
+    lista.map(([data, maquinas, reservas, reservasUsadas], i) => ({ id: `${id}${i}`, data, maquinas, reservas, reservasUsadas }))
+  // P-03 foi como reserva: no primeiro dia o cliente usou (a única reserva), no segundo ficou parada
+  const e1 = ev('e1', [], ['P-01', 'P-03'], {
+    reservasIds: ['P-03'],
+    dias: dias('e1', [
+      ['2026-09-05', 1, 1, 1],
+      ['2026-09-06', 1, 1, 0],
+    ]),
+  })
+  // Duas reservas e só uma usada: não dá para saber qual (não conta como usada)
+  const e2 = ev('e2', [], ['P-01', 'P-03', 'P-04'], {
+    reservasIds: ['P-03', 'P-04'],
+    dias: dias('e2', [['2026-09-12', 1, 2, 1]]),
+  })
+  // Período corrido: só os dias de uso contam; o de hoje em diante ainda não
+  const e3 = ev('e3', [], ['P-03'], {
+    reservasIds: ['P-03'],
+    periodoCorrido: true,
+    dias: dias('e3', [
+      ['2026-09-26', 2, 1, 1],
+      ['2026-10-03', 2, 1, 0],
+    ]),
+  })
+  const eventos = [e1, e2, e3]
+
+  it('conta os dias como reserva separados das diárias (titular)', () => {
+    expect(resumoMaquina('P-03', [], eventos, [], HOJE)).toMatchObject({
+      eventos: 3,
+      diarias: 0,
+      diasReserva: 4, // 2 de e1, 1 de e2 e só o primeiro de e3 (o outro ainda não chegou)
+      diasReservaUsada: 2, // e1 no primeiro dia e e3 em 26/09; em e2 não dá para saber qual foi usada
+    })
+    expect(resumoMaquina('P-01', [], eventos, [], HOJE)).toMatchObject({ diarias: 3, diasReserva: 0, diasReservaUsada: 0 })
+  })
+
+  it('cancelado não conta', () => {
+    const cancelado = { ...e1, status: 'CANCELADO' as const }
+    expect(resumoMaquina('P-03', [], [cancelado], [], HOJE)).toMatchObject({ eventos: 0, diasReserva: 0 })
+  })
+
+  it('marca as locações como reserva, com os dias em que ela foi usada', () => {
+    const itens = historicoMaquina('P-03', [], eventos, [], HOJE)
+    const locacoes = itens.flatMap((i) => (i.tipo === 'locacao' ? [[i.id, i.reserva, i.diasUsada]] : []))
+    expect(locacoes).toEqual([
+      ['e3', true, 1],
+      ['e2', true, 0],
+      ['e1', true, 1],
+    ])
+    const titular = historicoMaquina('P-01', [], eventos, [], HOJE).find((i) => i.id === 'e1')
+    expect(titular?.tipo === 'locacao' && [titular.reserva, titular.diasUsada]).toEqual([false, 0])
+  })
+
+  it('marca as locações de hoje em diante e as já começadas como reserva', () => {
+    expect(locacoesDeHojeEmDiante('P-03', eventos, '2026-09-30').map((l) => [l.evento.id, l.reserva])).toEqual([['e3', true]])
+    expect(locacoesDeHojeEmDiante('P-01', eventos, '2026-09-01').every((l) => !l.reserva)).toBe(true)
+    expect(eventosDaMaquina('P-03', eventos, HOJE).map((l) => l.reserva)).toEqual([true, true, true])
+  })
+
+  it('diz se a reserva está parada, foi usada ou se o cliente usou só parte das reservas', () => {
+    expect(usoDaReserva(e1, '2026-09-05')).toBe('USADA')
+    expect(usoDaReserva(e1, '2026-09-06')).toBe('PARADA')
+    expect(usoDaReserva(e1, '2026-09-07')).toBe('PARADA') // fora do evento
+    expect(usoDaReserva(e2, '2026-09-12')).toBe('PARTE')
+    // Período corrido: no meio da semana a reserva fica parada com o cliente
+    expect(usoDaReserva(e3, '2026-09-30')).toBe('PARADA')
+    expect(usoDaReserva(e3, '2026-09-26')).toBe('USADA')
+    // Uma reserva no dia, mas duas marcadas: não dá para saber qual foi usada
+    const duasMarcadas = { ...e1, reservasIds: ['P-01', 'P-03'] }
+    expect(usoDaReserva(duasMarcadas, '2026-09-05')).toBe('PARTE')
+    expect(DICA_RESERVA.PARADA).toBe('Está com o cliente como reserva (sem uso, a não ser que ele use).')
+  })
+
+  it('avisa quando a máquina vai como reserva nos eventos de hoje em diante', () => {
+    const aviso = avisoLocacoes(locacoesDeHojeEmDiante('P-03', eventos, HOJE))
+    expect(aviso).toContain('Evento e3 (26/09 a 03/10/2026, como reserva)')
   })
 })
 

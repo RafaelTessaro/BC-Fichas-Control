@@ -1,6 +1,8 @@
 import {
   ArrowLeft,
+  CalendarClock,
   CalendarPlus,
+  ChevronRight,
   CircleDollarSign,
   Clock,
   Mail,
@@ -8,6 +10,7 @@ import {
   Pencil,
   Phone,
   RefreshCw,
+  Repeat,
   Ticket,
   Trash2,
   TriangleAlert,
@@ -16,15 +19,19 @@ import {
 } from 'lucide-react'
 import { useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { StatusBadge } from '../components/Badges'
 import { ClienteFormModal } from '../components/ClienteFormModal'
 import { EventosTabela } from '../components/EventosTabela'
+import { IconeMaquinaFichas } from '../components/IconeMaquinaFichas'
 import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { confirmar } from '../components/ui/Feedback'
 import { Modal } from '../components/ui/Modal'
 import { Avatar, EmptyState, PageHeader, StatCard } from '../components/ui/Misc'
+import { STATUS_EVENTO } from '#shared/calc.ts'
 import { cnpjValido } from '#shared/documentos.ts'
+import { quantidadeCurta, quantidadePorExtenso, reservasDia } from '#shared/maquinas.ts'
 import type { Cliente, ClienteInput } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
 import {
@@ -37,8 +44,10 @@ import {
   tomSituacao,
   type DadosCnpj,
 } from '../lib/consultas'
-import { dataCurta, enderecoCompleto, moeda, numero } from '../lib/format'
-import { porDataDesc, useEventosCompletos } from '../lib/hooks'
+import { codigoEvento, dataCurta, dataExtensa, enderecoCompleto, moeda, numero, periodo } from '../lib/format'
+import { useHoje } from '../lib/hoje'
+import { porDataDesc, useEventosCompletos, type EventoCompleto } from '../lib/hooks'
+import { DIAS_DA_SEMANA, diaDaSemana } from '../lib/repeticao'
 import { useDados } from '../store/dados'
 import { avisarErro, toast } from '../store/ui'
 import { hojeLocalIso } from '#shared/dominio.ts'
@@ -54,6 +63,15 @@ export function ClienteDetalhe() {
   const [atualizacao, setAtualizacao] = useState<DadosCnpj | null>(null)
 
   const eventos = useMemo(() => todos.filter((e) => e.evento.clienteId === id).sort(porDataDesc), [todos, id])
+  const hoje = useHoje()
+  // Aluguéis marcados de hoje em diante (o cliente que já passa as datas do ano inteiro)
+  const proximos = useMemo(
+    () =>
+      eventos
+        .filter(({ evento: e, resumo: r }) => e.status !== 'CANCELADO' && (r.dataFim ?? '') >= hoje)
+        .sort((a, b) => -porDataDesc(a, b)),
+    [eventos, hoje],
+  )
   const t = useMemo(
     () =>
       eventos.reduce(
@@ -231,6 +249,8 @@ export function ClienteDetalhe() {
           </dl>
         </Card>
 
+        {eventos.length > 0 && <ProximasDatas itens={proximos} />}
+
         <Card className="overflow-hidden">
           <CardHeader
             titulo="Histórico de eventos"
@@ -271,6 +291,82 @@ export function ClienteDetalhe() {
         {atualizacao && <ConferenciaReceita cliente={cliente} dados={atualizacao} aoFechar={() => setAtualizacao(null)} />}
       </Modal>
     </>
+  )
+}
+
+/** Eventos do cliente de hoje em diante: data, nome, status e máquinas ("4+1"). */
+function ProximasDatas({ itens }: { itens: EventoCompleto[] }) {
+  return (
+    <Card className="overflow-hidden">
+      <CardHeader
+        icone={<CalendarClock className="h-4 w-4" />}
+        titulo="Próximas datas"
+        descricao={
+          itens.length
+            ? `${itens.length} ${itens.length === 1 ? 'aluguel marcado' : 'aluguéis marcados'} de hoje em diante`
+            : 'Nenhum aluguel marcado de hoje em diante'
+        }
+      />
+      {itens.length ? (
+        <ul className="scroll-fino max-h-[420px] divide-y divide-line overflow-y-auto border-t border-line">
+          {itens.map(({ evento: e, resumo: r }) => {
+            // Máquinas do dia de mais máquinas: titulares + reservas
+            const titulares = Math.max(0, ...e.dias.map((d) => Number(d.maquinas) || 0))
+            const reservas = Math.max(0, ...e.dias.map(reservasDia))
+            const inicio = r.dataInicio ?? ''
+            return (
+              <li key={e.id}>
+                <Link
+                  to={`/eventos/${e.id}`}
+                  className="flex items-center gap-3 px-5 py-3 transition-colors hover:bg-surface-2/70"
+                >
+                  {inicio && (
+                    <div className="flex h-11 w-11 shrink-0 flex-col items-center justify-center rounded-lg bg-surface-2 leading-none">
+                      <span className="text-[10px] font-semibold text-muted uppercase">{dataExtensa(inicio, 'MMM')}</span>
+                      <span className="tnum mt-0.5 text-base font-semibold text-ink">{dataExtensa(inicio, 'dd')}</span>
+                    </div>
+                  )}
+                  <div className="min-w-0 flex-1">
+                    <p className="flex min-w-0 items-center gap-1.5 text-sm font-medium text-ink">
+                      <span className="truncate">{e.nome}</span>
+                      {e.grupoId && (
+                        <span title="Faz parte de uma série de datas" className="shrink-0 text-muted">
+                          <Repeat className="h-3.5 w-3.5" />
+                        </span>
+                      )}
+                    </p>
+                    <p className="tnum truncate text-xs text-muted">
+                      {inicio && `${DIAS_DA_SEMANA[diaDaSemana(inicio)].curto} `}
+                      {periodo(r.dataInicio, r.dataFim)}
+                      {/* No celular o status vem no lugar do código (o selo ao lado não cabe) */}
+                      <span className="max-sm:hidden"> · {codigoEvento(e.codigo)}</span>
+                      <span className="sm:hidden"> · {STATUS_EVENTO[e.status].label}</span>
+                    </p>
+                  </div>
+                  <span
+                    title={quantidadePorExtenso(titulares, reservas)}
+                    aria-label={quantidadePorExtenso(titulares, reservas)}
+                    className="tnum inline-flex shrink-0 items-center gap-1 rounded-lg bg-brand-soft px-2 py-1 text-xs font-semibold text-brand-ink"
+                  >
+                    <IconeMaquinaFichas className="h-3.5 w-3.5" />
+                    {quantidadeCurta(titulares, reservas)}
+                  </span>
+                  <span className="max-sm:hidden">
+                    <StatusBadge status={e.status} />
+                  </span>
+                  <ChevronRight className="h-4 w-4 shrink-0 text-muted" />
+                </Link>
+              </li>
+            )
+          })}
+        </ul>
+      ) : (
+        <p className="px-5 pb-5 text-[13px] text-muted">
+          Para o cliente que já passa as datas do ano, cadastre o primeiro evento e use “Repetir em outras datas”, no menu “…” do
+          evento, para marcar as outras de uma vez.
+        </p>
+      )}
+    </Card>
   )
 }
 

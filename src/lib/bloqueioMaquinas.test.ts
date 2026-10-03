@@ -217,6 +217,72 @@ describe('máquinas bloqueadas no evento', () => {
   })
 })
 
+// A reserva também prende a máquina (está com o cliente); o texto diz que ela foi como reserva,
+// como o servidor ("A máquina P-01 já está como reserva no evento …")
+describe('máquina que está como reserva no outro evento', () => {
+  const comReserva = (extra: Partial<Evento> = {}) =>
+    ev('a', 12, ['2026-10-11'], ['P-01', 'P-02'], { reservasIds: ['P-02'], ...extra })
+
+  it('bloqueia a reserva como a titular, dizendo que ela está como reserva', () => {
+    const b = bloqueiosMaquinas({ maquinas, eventos: [comReserva()], clientes, dias: dias('2026-10-11'), hoje: HOJE })
+    expect(b.get('P-01')?.texto).toBe('No evento #0012 Festa a — Clube Primavera, em 11/10')
+    expect(b.get('P-02')).toMatchObject({
+      motivo: 'OCUPADA',
+      texto: 'Como reserva no evento #0012 Festa a — Clube Primavera, em 11/10',
+    })
+    expect(fraseBloqueio('P-02', b.get('P-02')!)).toBe(
+      'P-02 já está como reserva no evento #0012 Festa a — Clube Primavera, em 11/10',
+    )
+  })
+
+  it('no resumo da troca, a reserva fica separada da titular do mesmo evento', () => {
+    const trocas = trocasMaquinas({
+      selecionadas: ['P-01', 'P-02'],
+      maquinas,
+      eventos: [comReserva()],
+      clientes,
+      dias: dias('2026-10-11'),
+      eventoId: 'e',
+      hoje: HOJE,
+    })
+    const itens = ['P-01', 'P-02'].map((x) => ({ identificacao: x, bloqueio: trocas.get(x)! }))
+    expect(resumoTrocas(itens)).toBe(
+      'P-01 já está no evento #0012 Festa a — Clube Primavera, em 11/10; P-02 já está como reserva no evento #0012 Festa a — Clube Primavera, em 11/10',
+    )
+  })
+
+  it('em vários eventos, marca em qual deles ela é reserva', () => {
+    const outro = ev('x', 15, ['2026-10-11'], ['P-02'])
+    const b = bloqueiosMaquinas({
+      maquinas,
+      eventos: [comReserva(), outro],
+      clientes,
+      dias: dias('2026-10-11'),
+      hoje: HOJE,
+    })
+    expect(b.get('P-02')?.texto).toBe(
+      'Nos eventos #0012 Festa a — Clube Primavera (como reserva), em 11/10; #0015 Festa x — Clube Primavera, em 11/10',
+    )
+    expect(fraseBloqueio('P-02', b.get('P-02')!)).toMatch(
+      /^P-02 já está nos eventos #0012 Festa a — Clube Primavera \(como reserva\)/,
+    )
+  })
+
+  it('o agrupamento das indisponíveis diz quais são reserva no outro evento', () => {
+    const d = dias('2026-10-11')
+    const b = bloqueiosMaquinas({ maquinas, eventos: [comReserva()], clientes, dias: d, hoje: HOJE })
+    const [grupo] = agruparBloqueios(maquinas, b, clientes, d)
+    expect(grupo.maquinas.map((m) => m.identificacao)).toEqual(['P-01', 'P-02'])
+    expect(grupo.reservas).toEqual(['P-02'])
+  })
+
+  it('evento antigo sem reservasIds continua funcionando', () => {
+    const antigo = { ...ev('a', 12, ['2026-10-11'], ['P-01']), reservasIds: undefined } as unknown as Evento
+    const b = bloqueiosMaquinas({ maquinas, eventos: [antigo], clientes, dias: dias('2026-10-11'), hoje: HOJE })
+    expect(b.get('P-01')?.texto).toBe('No evento #0012 Festa a — Clube Primavera, em 11/10')
+  })
+})
+
 // As mesmas situações de server/novidades23.test.ts ("com período corrido, a máquina fica presa
 // também nos dias do meio"), para a tela recusar exatamente o que o servidor recusa.
 describe('período corrido (as máquinas ficam com o cliente entre os dias de uso)', () => {
