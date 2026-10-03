@@ -387,9 +387,12 @@ export function EnviarDocumentoModal({ aberto, aoFechar, evento, cliente, canal:
                     type="tel"
                     inputMode="tel"
                     value={telefone}
-                    onChange={(e) =>
-                      setTelefone(e.target.value.startsWith('+') ? e.target.value : mascaraTelefone(e.target.value))
-                    }
+                    onChange={(e) => {
+                      // Com + ou com DDI (55...) a máscara cortaria o número: fica só com os dígitos
+                      const v = e.target.value
+                      const digitos = v.replace(/\D/g, '')
+                      setTelefone(v.startsWith('+') ? v : digitos.length > 11 ? digitos : mascaraTelefone(v))
+                    }}
                     placeholder="(19) 99999-9999"
                     className="tnum"
                   />

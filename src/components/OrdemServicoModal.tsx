@@ -277,6 +277,12 @@ function FormularioOS({
   const enviar = async (e: FormEvent) => {
     e.preventDefault()
     setTentou(true)
+    // Serviço digitado e não cadastrado ficaria de fora sem ninguém perceber
+    if (novoServico.trim()) {
+      const aviso = 'Clique em Cadastrar para incluir este serviço ou apague o texto.'
+      setErroNovo(aviso)
+      return void toast.erro('Serviço não incluído', aviso)
+    }
     if (erros.length) return void toast.erro('Confira a manutenção', erros[0])
     setSalvando(true)
     try {
@@ -455,6 +461,7 @@ function FormularioOS({
             icone={<Plus className="h-4 w-4" />}
             onClick={() => void cadastrarServico()}
             disabled={!novoServico.trim() || cadastrando}
+            aria-label={cadastrando ? 'Cadastrando serviço' : 'Cadastrar serviço'}
           >
             <span className="max-sm:hidden">{cadastrando ? 'Cadastrando…' : 'Cadastrar'}</span>
           </Button>

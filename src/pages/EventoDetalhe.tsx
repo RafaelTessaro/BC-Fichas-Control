@@ -28,8 +28,8 @@ import {
   Wallet,
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
-import { useMemo, useState, type ReactNode } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { AnexosEvento } from '../components/AnexosEvento'
 import { ConferenciaBadge, PagamentoBadge } from '../components/Badges'
 import { EnviarDocumentoModal, type CanalEnvio } from '../components/EnviarDocumentoModal'
@@ -76,6 +76,7 @@ const FAIXA = {
 export function EventoDetalhe() {
   const { id } = useParams()
   const navegar = useNavigate()
+  const local = useLocation()
   const evento = useDados((s) => s.eventos.find((e) => e.id === id))
   const cliente = useDados((s) => s.clientes.find((c) => c.id === evento?.clienteId))
   const alterarEvento = useDados((s) => s.alterarEvento)
@@ -87,8 +88,13 @@ export function EventoDetalhe() {
   // Janelas que guardam o último conteúdo enquanto fecham (sem trocar o título na animação de saída)
   const [envio, setEnvio] = useState<{ aberto: boolean; canal: CanalEnvio }>({ aberto: false, canal: 'whatsapp' })
   const [reclamacao, setReclamacao] = useState<{ aberto: boolean; editar?: Reclamacao }>({ aberto: false })
-  // Logo depois de finalizar por aqui: sugere registrar o que o cliente reclamou das máquinas
-  const [sugerirReclamacao, setSugerirReclamacao] = useState(false)
+  // Logo depois de finalizar (aqui ou no formulário): sugere registrar o que o cliente reclamou das máquinas
+  const veioFinalizado = (local.state as { sugerirReclamacao?: boolean } | null)?.sugerirReclamacao === true
+  const [sugerirReclamacao, setSugerirReclamacao] = useState(veioFinalizado)
+  // A sugestão vale uma vez: recarregar a página ou voltar para ela não mostra de novo
+  useEffect(() => {
+    if (veioFinalizado) navegar(local.pathname, { replace: true, state: null })
+  }, [veioFinalizado, local.pathname, navegar])
   const [salvandoProgramacao, setSalvandoProgramacao] = useState(false)
 
   if (!evento) {

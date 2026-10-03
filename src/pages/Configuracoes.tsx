@@ -690,6 +690,9 @@ const MODELOS_EMAIL = [
 
 type ModeloEmail = (typeof MODELOS_EMAIL)[number]['id']
 
+/** Porta padrão de cada segurança (a de "Nenhuma" é a mesma do STARTTLS). */
+const PORTA_PADRAO: Record<Seguranca, string> = { SSL: '465', STARTTLS: '587', NENHUMA: '587' }
+
 const SEGURANCAS: Array<{ valor: Seguranca; label: string }> = [
   { valor: 'SSL', label: 'SSL (porta 465)' },
   { valor: 'STARTTLS', label: 'STARTTLS (porta 587)' },
@@ -748,6 +751,15 @@ function EmailConfig({ id }: { id: string }) {
 
   const set = <K extends keyof FormEmail>(k: K, v: FormEmail[K]) => {
     setF((x) => ({ ...x, [k]: v }))
+    setResultadoTeste(null)
+  }
+
+  // Trocou a segurança: a porta acompanha, a não ser que tenha sido digitada uma diferente
+  const mudarSeguranca = (seguranca: Seguranca) => {
+    setF((x) => {
+      const padrao = !x.porta || Object.values(PORTA_PADRAO).includes(x.porta)
+      return { ...x, seguranca, porta: padrao ? PORTA_PADRAO[seguranca] : x.porta }
+    })
     setResultadoTeste(null)
   }
 
@@ -934,7 +946,7 @@ function EmailConfig({ id }: { id: string }) {
                 />
               </Field>
               <Field label="Segurança" htmlFor="cfg-seguranca" className="@xl:col-span-2">
-                <Select id="cfg-seguranca" value={f.seguranca} onChange={(e) => set('seguranca', e.target.value as Seguranca)}>
+                <Select id="cfg-seguranca" value={f.seguranca} onChange={(e) => mudarSeguranca(e.target.value as Seguranca)}>
                   {SEGURANCAS.map((s) => (
                     <option key={s.valor} value={s.valor}>
                       {s.label}

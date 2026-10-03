@@ -121,6 +121,14 @@ export function AnexosEvento({ eventoId, pendentes = [], aoMudarPendentes, id }:
   // Envia os da fila, até dois ao mesmo tempo (cada um mostra o próprio progresso)
   const esperando = useRef<Envio[]>([])
   const ativos = useRef(0)
+  // Saiu da tela no meio do envio: o erro não teria onde aparecer, então vira aviso
+  const montado = useRef(true)
+  useEffect(() => {
+    montado.current = true
+    return () => {
+      montado.current = false
+    }
+  }, [])
   const atualizar = (chave: number, mudanca: Partial<Envio>) =>
     setEnvios((l) => l.map((e) => (e.chave === chave ? { ...e, ...mudanca } : e)))
   const iniciarProximos = () => {
@@ -130,7 +138,10 @@ export function AnexosEvento({ eventoId, pendentes = [], aoMudarPendentes, id }:
       atualizar(envio.chave, { estado: 'enviando', progresso: 0 })
       enviarAnexo(envio.eventoId, envio.arquivo, envio.arquivo.name, (p) => atualizar(envio.chave, { progresso: p }))
         .then(() => setEnvios((l) => l.filter((e) => e.chave !== envio.chave)))
-        .catch((e: Error) => atualizar(envio.chave, { estado: 'erro', erro: e.message }))
+        .catch((e: Error) => {
+          if (!montado.current) avisarErro(`Não foi possível enviar “${envio.arquivo.name}”`, e)
+          atualizar(envio.chave, { estado: 'erro', erro: e.message })
+        })
         .finally(() => {
           ativos.current--
           iniciarProximos()
@@ -178,6 +189,10 @@ export function AnexosEvento({ eventoId, pendentes = [], aoMudarPendentes, id }:
       const arquivos = [...(e.clipboardData?.files ?? [])]
       // Com uma janela aberta (ex.: reclamação), o colar é dela
       if (!arquivos.length || document.querySelector('[role="dialog"]')) return
+      // Colando num campo de texto algo que também tem texto (ex.: células do Excel): fica o texto
+      const alvo = e.target as HTMLElement | null
+      const editavel = !!alvo && (alvo.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(alvo.tagName))
+      if (editavel && e.clipboardData?.types.includes('text/plain')) return
       e.preventDefault()
       adicionarRef.current(arquivos.map(nomeDoColado))
       document.getElementById(id ?? '')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })

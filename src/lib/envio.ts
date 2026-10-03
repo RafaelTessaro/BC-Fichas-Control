@@ -87,9 +87,18 @@ const capitalizar = (p: string) =>
 export function primeiroNome(cliente: Cliente | undefined): string {
   if (!cliente) return ''
   const nome = cliente.responsavel.trim() || (cliente.tipo === 'PF' ? cliente.nome.trim() : '')
-  const primeiro = nome.split(/\s+/)[0] ?? ''
-  return /\p{L}/u.test(primeiro) ? capitalizar(primeiro) : ''
+  const [primeiro = '', segundo = ''] = nome.split(/\s+/)
+  if (!/\p{L}/u.test(primeiro)) return ''
+  // "Pe. Antônio", "Dona Maria": o tratamento sozinho ("Olá, Pe.!") não chama ninguém
+  if (TRATAMENTOS.has(primeiro.toLowerCase().replace(/\.$/, '')) && /\p{L}/u.test(segundo))
+    return `${capitalizar(primeiro)} ${capitalizar(segundo)}`
+  return capitalizar(primeiro)
 }
+
+/** Tratamentos que vêm antes do nome (com ou sem ponto). */
+const TRATAMENTOS = new Set(
+  'pe padre dr dra sr sra srta prof profa pr pra pastor pastora frei ir irmã irmão dom dona seu me mestre'.split(' '),
+)
 
 /**
  * Datas do evento numa linha, sem a preposição do recibo: "11/10/2026", "11 a 13/10/2026",

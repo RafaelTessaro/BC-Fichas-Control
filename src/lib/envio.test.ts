@@ -126,6 +126,17 @@ describe('textos prontos', () => {
     expect(primeiroNome(undefined)).toBe('')
   })
 
+  it('mantém o tratamento junto com o nome ("Pe. Antônio", "Dona Maria")', () => {
+    expect(primeiroNome(cliente({ tipo: 'PJ', nome: 'Paróquia São José', responsavel: 'Pe. Antônio Carlos' }))).toBe(
+      'Pe. Antônio',
+    )
+    expect(primeiroNome(cliente({ nome: 'dona maria aparecida' }))).toBe('Dona Maria')
+    expect(primeiroNome(cliente({ nome: 'DRA. ANA LÚCIA' }))).toBe('Dra. Ana')
+    expect(primeiroNome(cliente({ tipo: 'PJ', nome: 'Escola', responsavel: 'Prof Marcos' }))).toBe('Prof Marcos')
+    expect(primeiroNome(cliente({ tipo: 'PJ', nome: 'Escola', responsavel: 'Padre' }))).toBe('Padre')
+    expect(primeiroNome(cliente({ nome: 'Doralice Souza' }))).toBe('Doralice')
+  })
+
   it('escreve as datas sem a preposição do recibo', () => {
     expect(datasDoEvento(['2026-10-11'])).toBe('11/10/2026')
     expect(datasDoEvento(['2026-10-11', '2026-10-12', '2026-10-13'])).toBe('11 a 13/10/2026')

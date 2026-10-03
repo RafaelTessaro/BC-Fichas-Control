@@ -4,6 +4,8 @@
 //   PORTA        porta HTTP (padrão 3000)
 //   HOST         interface de rede (padrão 0.0.0.0 = acessível pela rede local)
 //   PASTA_DADOS  onde ficam o banco e os backups (padrão ./dados)
+//   HOSTS_PERMITIDOS  nomes extras para acessar o servidor, separados por vírgula
+//                (IPs, localhost e o nome do computador sempre funcionam)
 
 import { existsSync, writeSync } from 'node:fs'
 import { networkInterfaces } from 'node:os'

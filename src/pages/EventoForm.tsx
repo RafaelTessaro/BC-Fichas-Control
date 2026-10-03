@@ -67,6 +67,14 @@ export function EventoForm() {
   const navegar = useNavigate()
   const { eventos, clientes, maquinas, config, salvarEvento, enviarAnexo } = useDados()
   const existente = id ? eventos.find((e) => e.id === id) : undefined
+  // Saiu da tela enquanto salvava (ex.: enviando arquivos): não puxa a pessoa de volta para o evento
+  const montado = useRef(true)
+  useEffect(() => {
+    montado.current = true
+    return () => {
+      montado.current = false
+    }
+  }, [])
 
   const [f, setF] = useState<EventoInput>(() => {
     if (existente) {
@@ -151,7 +159,8 @@ export function EventoForm() {
   // A cidade não é mais preenchida: vale a do cadastro do cliente (eventos antigos mantêm a sua)
   const salvarCliente = useDados((s) => s.salvarCliente)
   const selecionarCliente = (c: { id: string }) => {
-    setF((s) => ({ ...s, clienteId: c.id }))
+    // Trocou o cliente: a cidade antiga (de eventos da versão anterior) era do outro cliente
+    setF((s) => ({ ...s, clienteId: c.id, cidade: s.clienteId === c.id ? s.cidade : '' }))
     setErros((e) => ({ ...e, cliente: undefined }))
   }
   // Trava contra duplo clique (ou Enter seguido de clique): cada execução criaria outro avulso
@@ -321,6 +330,7 @@ export function EventoForm() {
       maquinasIds,
       dataPagamento: f.formaPagamento === 'NAO_PAGO' ? '' : f.dataPagamento || hojeISO(),
     }
+    const statusAntes = existente?.status
     setSalvando('evento')
     try {
       const salvo = await salvarEvento(dados, id && versaoBase !== undefined ? { id, versao: versaoBase } : undefined)
@@ -339,7 +349,10 @@ export function EventoForm() {
           toast.sucesso(pendentes.length === 1 ? '1 arquivo anexado' : `${pendentes.length} arquivos anexados`)
         }
       }
-      navegar(`/eventos/${salvo.id}`, { replace: !!id })
+      // Finalizado agora, com máquinas: o detalhe sugere registrar reclamação do cliente
+      const finalizou = salvo.status === 'FINALIZADO' && statusAntes !== 'FINALIZADO' && salvo.maquinasIds.length > 0
+      if (montado.current)
+        navegar(`/eventos/${salvo.id}`, { replace: !!id, state: finalizou ? { sugerirReclamacao: true } : undefined })
     } catch (err) {
       if (err instanceof ErroApi && err.status === 409 && !err.dados.atual) {
         // Recusa do servidor (ex.: máquina já em outro evento): mostra a mensagem e mantém o que foi digitado

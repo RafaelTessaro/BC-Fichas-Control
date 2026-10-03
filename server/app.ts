@@ -2,6 +2,8 @@ import fastifyStatic from '@fastify/static'
 import Fastify, { type FastifyError } from 'fastify'
 import { createHash } from 'node:crypto'
 import { existsSync, readFileSync } from 'node:fs'
+import { isIP } from 'node:net'
+import { hostname } from 'node:os'
 import { join, resolve } from 'node:path'
 import { BackupsAutomaticos } from './backup.ts'
 import type { Contexto } from './contexto.ts'
@@ -21,6 +23,38 @@ export const VERSAO_APP: string = JSON.parse(readFileSync(new URL('../package.js
 /** Cabeçalho exigido em toda gravação: bloqueia que sites externos alterem dados pela rede local (CSRF). */
 export const CABECALHO_APP = 'x-bc-fichas'
 
+/**
+ * Nomes pelos quais o servidor pode ser acessado. Endereços IP, "localhost" e o nome do computador
+ * sempre valem; outros nomes (ex.: um apelido no roteador) vão em HOSTS_PERMITIDOS, separados por vírgula.
+ * Bloqueia o "DNS rebinding": um site de fora que aponta o próprio nome para o IP do servidor
+ * para ler os dados pelo navegador de quem está na rede.
+ */
+export function hostPermitido(host: string | undefined, extras: ReadonlySet<string>, maquina = hostname()): boolean {
+  if (!host) return false
+  let nome: string
+  try {
+    nome = new URL(`http://${host}`).hostname.toLowerCase().replace(/\.$/, '')
+  } catch {
+    return false
+  }
+  if (nome.startsWith('[') && nome.endsWith(']')) nome = nome.slice(1, -1)
+  if (isIP(nome)) return true
+  if (nome === 'localhost' || nome.endsWith('.localhost')) return true
+  const computador = maquina.toLowerCase()
+  if (computador && (nome === computador || nome.startsWith(computador + '.'))) return true
+  return extras.has(nome)
+}
+
+/** Lê HOSTS_PERMITIDOS ("bcfichas, servidor.local") como conjunto de nomes em minúsculas. */
+export function lerHostsPermitidos(texto = process.env.HOSTS_PERMITIDOS ?? '') {
+  return new Set(
+    texto
+      .split(',')
+      .map((h) => h.trim().toLowerCase().replace(/\.$/, ''))
+      .filter(Boolean),
+  )
+}
+
 export interface OpcoesApp {
   /** Pasta de dados (banco, backups, credenciais). */
   pastaDados: string
@@ -33,6 +67,8 @@ export interface OpcoesApp {
   transporteEmail?: CriarTransporte
   /** Ativa backups diários e o sincronizador do Google (desligado em testes). */
   tarefasEmSegundoPlano?: boolean
+  /** Nomes extras aceitos no cabeçalho Host; padrão: HOSTS_PERMITIDOS do ambiente. */
+  hostsPermitidos?: string
 }
 
 export async function criarApp(opcoes: OpcoesApp) {
@@ -53,7 +89,16 @@ export async function criarApp(opcoes: OpcoesApp) {
   repo.registrarExtensao(google.extensao)
 
   // ---- Segurança básica para uso em rede local ----
+  const hostsExtras = lerHostsPermitidos(opcoes.hostsPermitidos)
   app.addHook('onRequest', async (req, reply) => {
+    // Vale também para leituras: um site de fora com o nome apontado para este servidor não lê nada
+    if (!hostPermitido(req.headers.host, hostsExtras)) {
+      const aviso =
+        `Acesso pelo nome "${String(req.headers.host ?? '').slice(0, 100)}" bloqueado. ` +
+        'Use o endereço IP do servidor, ou inclua esse nome em HOSTS_PERMITIDOS no arquivo .env e reinicie o servidor.'
+      if (req.url.startsWith('/api/')) throw new ErroApi(403, aviso)
+      return reply.code(403).type('text/plain; charset=utf-8').send(aviso)
+    }
     reply.header('X-Content-Type-Options', 'nosniff')
     reply.header('X-Frame-Options', 'SAMEORIGIN')
     reply.header('Referrer-Policy', 'same-origin')

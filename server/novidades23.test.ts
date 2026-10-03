@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import nodemailer from 'nodemailer'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import type { Anexo, Backup, Cliente, DadosCompletos, Evento, Maquina, Reclamacao } from '#shared/tipos.ts'
-import { criarApp } from './app.ts'
+import { criarApp, hostPermitido, lerHostsPermitidos } from './app.ts'
 import { mensagemErroEmail, type CriarTransporte } from './email.ts'
 
 const H = { 'x-bc-fichas': '1' }
@@ -254,7 +254,8 @@ describe('arquivos anexados ao evento', () => {
     await req('DELETE', `/api/eventos/${b.id}`, undefined, 204)
     expect(existsSync(join(pasta, 'anexos', b.id))).toBe(false)
     expect((await dados()).anexos.map((x) => x.eventoId)).toEqual([a.id])
-    const guardados = () => readdirSync(join(pasta, 'anexos-removidos')).flatMap((d) => readdirSync(join(pasta, 'anexos-removidos', d)))
+    const guardados = () =>
+      readdirSync(join(pasta, 'anexos-removidos')).flatMap((d) => readdirSync(join(pasta, 'anexos-removidos', d)))
     expect(guardados()).toEqual([b.id])
 
     // Backup sem o evento a: o registro sai e o arquivo vai para anexos-removidos
@@ -286,7 +287,6 @@ describe('arquivos anexados ao evento', () => {
     expect(ver.rawPayload.equals(png)).toBe(true)
     expect(existsSync(join(pasta, 'anexos', e.id, anexo.id))).toBe(true)
   })
-
 })
 
 describe('envio de e-mail', () => {
@@ -314,7 +314,12 @@ describe('envio de e-mail', () => {
     expect(semSenha.json).toMatchObject({ remetenteNome: 'Recibos', senhaDefinida: true })
     // Trocar servidor, porta, usuário ou tirar a segurança exige a senha de novo (senão alguém da
     // rede apontaria o envio para um servidor dele e receberia a senha gravada)
-    for (const troca of [{ servidor: 'smtp.atacante.com' }, { porta: 2525 }, { usuario: 'outro@x.com' }, { seguranca: 'NENHUMA' }]) {
+    for (const troca of [
+      { servidor: 'smtp.atacante.com' },
+      { porta: 2525 },
+      { usuario: 'outro@x.com' },
+      { seguranca: 'NENHUMA' },
+    ]) {
       const r = await req<{ erro: string }>('PUT', '/api/email/config', { ...config, ...troca, senha: '' })
       expect(r.status, JSON.stringify(troca)).toBe(400)
       expect(r.json.erro).toMatch(/digite a senha de novo/)
@@ -387,5 +392,60 @@ describe('envio de e-mail', () => {
     const r = await req<{ erro: string }>('POST', '/api/email/enviar', { para: 'a@b.com', assunto: 'mais um' })
     expect(r.status).toBe(429)
     expect(r.json.erro).toMatch(/30 e-mails por hora/)
+  })
+})
+
+describe('nome usado para abrir o servidor (DNS rebinding)', () => {
+  it('IP, localhost e nome do computador valem; outro nome só se estiver em HOSTS_PERMITIDOS', () => {
+    const extras = lerHostsPermitidos(' BCFichas , servidor.empresa.local. ,')
+    expect([...extras]).toEqual(['bcfichas', 'servidor.empresa.local'])
+    for (const host of [
+      'localhost:3000',
+      '127.0.0.1:3000',
+      '192.168.0.10',
+      '[::1]:3000',
+      'app.localhost',
+      'SERVIDOR:3000',
+      'servidor.lan',
+    ])
+      expect(hostPermitido(host, extras, 'servidor'), host).toBe(true)
+    expect(hostPermitido('bcfichas:3000', extras, 'servidor')).toBe(true)
+    expect(hostPermitido('servidor.empresa.local.', extras, 'servidor')).toBe(true)
+    for (const host of [undefined, '', 'ataque.com', 'ataque.com:3000', 'servidor-falso.com', 'localhost.ataque.com', 'a b'])
+      expect(hostPermitido(host, extras, 'servidor'), String(host)).toBe(false)
+  })
+
+  it('bloqueia leitura e gravação por um nome de fora, com explicação', async () => {
+    const api = await app.inject({ method: 'GET', url: '/api/dados', headers: { host: 'ataque.com:3000' } })
+    expect(api.statusCode).toBe(403)
+    expect(api.json().erro).toContain('HOSTS_PERMITIDOS')
+    const pagina = await app.inject({ method: 'GET', url: '/', headers: { host: 'ataque.com' } })
+    expect(pagina.statusCode).toBe(403)
+    expect(pagina.headers['content-type']).toContain('text/plain')
+    const gravar = await app.inject({
+      method: 'POST',
+      url: '/api/clientes',
+      headers: { ...H, host: 'ataque.com' },
+      payload: { tipo: 'AVULSO', nome: 'X' },
+    })
+    expect(gravar.statusCode).toBe(403)
+    expect((await app.inject({ method: 'GET', url: '/api/saude', headers: { host: '192.168.1.5:3000' } })).statusCode).toBe(200)
+  })
+
+  it('aceita o nome configurado', async () => {
+    const outro = await criarApp({
+      pastaDados: pasta,
+      arquivoBanco: ':memory:',
+      pastaEstatica: null,
+      hostsPermitidos: 'bcfichas',
+    })
+    try {
+      expect((await outro.app.inject({ method: 'GET', url: '/api/saude', headers: { host: 'bcfichas:3000' } })).statusCode).toBe(
+        200,
+      )
+      expect((await outro.app.inject({ method: 'GET', url: '/api/saude', headers: { host: 'outro:3000' } })).statusCode).toBe(403)
+    } finally {
+      await outro.app.close()
+    }
   })
 })

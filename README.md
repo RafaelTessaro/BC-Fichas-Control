@@ -153,6 +153,12 @@ Copie `.env.exemplo` para `.env` para mudar a porta (`PORTA`), a interface de re
 ou a pasta dos dados (`PASTA_DADOS`) e reinicie o servidor. No Windows, para mudar a porta
 use `instalar-servico.ps1 -Porta N`, que também ajusta o Firewall.
 
+Por segurança, o servidor só responde quando é aberto pelo **endereço IP**, por `localhost` ou
+pelo **nome do computador** (ex.: `http://SERVIDOR:3000`). Se a empresa criou outro nome no
+roteador ou no DNS (ex.: `http://bcfichas:3000`), coloque-o em `HOSTS_PERMITIDOS` no `.env`
+(vários separados por vírgula) e reinicie o servidor. Isso impede que um site malicioso aberto
+num computador da rede consiga ler os dados do sistema.
+
 ## Dados e backups
 
 - Tudo fica no banco `dados/bc-fichas.db` (SQLite) no servidor.
@@ -163,6 +169,9 @@ use `instalar-servico.ps1 -Porta N`, que também ajusta o Firewall.
 - Recomendado: copiar a pasta `dados/backups` para um pendrive, HD externo ou nuvem uma vez por semana.
 - Os **arquivos anexados** aos eventos ficam em `dados/anexos` e não vão no backup `.json` (que
   seria grande demais): para guardá-los, copie a pasta `dados` inteira.
+- Os arquivos de eventos excluídos (ou que saíram numa restauração/limpeza) não são apagados:
+  vão para `dados/anexos-removidos` e voltam sozinhos se o evento voltar (ex.: ao restaurar uma
+  cópia). Essa pasta pode ser apagada à mão quando não precisar mais deles.
 - **Apagar todos os dados** fica separado, no fim de Configurações, na **Zona de perigo**: pede para
   digitar `APAGAR` e o servidor guarda uma cópia automática antes. As configurações continuam.
 - Para voltar uma cópia `.db`, use o `restaurar-copia.ps1` (tabela acima). **Não** copie o arquivo
