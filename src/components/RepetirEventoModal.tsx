@@ -119,11 +119,18 @@ export function RepetirEventoModal({ aberto, aoFechar, evento }: { aberto: boole
     [regra, baseTodoMes, meses, bloqueada],
   )
 
-  const total = capacidade(maquinas, config).total
+  // Máquinas disponíveis em cada data, como na agenda e no formulário: de hoje em diante, sem as
+  // que estão em manutenção
+  const capac = useMemo(() => capacidade(maquinas, config), [maquinas, config])
+  const capacidadeEm = useCallback((data: string) => (data >= hoje ? capac.total - capac.manutencao : capac.total), [capac, hoje])
   const copiaEm = useCallback(
     (data: string) => ({ dias: diasDaCopia(evento.dias, data), periodoCorrido: evento.periodoCorrido }),
     [evento.dias, evento.periodoCorrido],
   )
+  // Data que passou a ter evento da série enquanto a janela estava aberta (outra pessoa criou) sai
+  useEffect(() => {
+    setDatas((l) => (l.some(bloqueada) ? l.filter((d) => !bloqueada(d)) : l))
+  }, [bloqueada])
   const copias = useMemo(() => datas.map((data) => ({ data, ...copiaEm(data) })), [datas, copiaEm])
   // Ocupação de cada dia com as cópias escolhidas (elas também disputam as máquinas entre si)
   // (fechada, a janela continua montada no detalhe do evento: não calcula nada)
@@ -139,10 +146,10 @@ export function RepetirEventoModal({ aberto, aoFechar, evento }: { aberto: boole
           ...c,
           usos: ocupados.filter((d) => d.uso).length,
           ocupados: ocupados.length,
-          faltas: faltasDaCopia(c, ocupacao, total, true),
+          faltas: faltasDaCopia(c, ocupacao, capacidadeEm, true),
         }
       }),
-    [copias, ocupacao, total],
+    [copias, ocupacao, capacidadeEm],
   )
   // Dias de uso das cópias escolhidas (além do início), para mostrar o desenho no calendário
   const diasDasCopias = useMemo(() => new Set(copias.flatMap((c) => c.dias.map((d) => d.data))), [copias])
@@ -153,10 +160,10 @@ export function RepetirEventoModal({ aberto, aoFechar, evento }: { aberto: boole
     const s = new Set<string>()
     if (!aberto) return s
     for (const data of casas) {
-      if (data && !datas.includes(data) && faltasDaCopia(copiaEm(data), ocupacao, total).length) s.add(data)
+      if (data && !datas.includes(data) && faltasDaCopia(copiaEm(data), ocupacao, capacidadeEm).length) s.add(data)
     }
     return s
-  }, [aberto, casas, datas, copiaEm, ocupacao, total])
+  }, [aberto, casas, datas, copiaEm, ocupacao, capacidadeEm])
 
   const irPara = (m: Mes) => {
     if (m.ano === mes.ano && m.mes === mes.mes) return
@@ -165,7 +172,8 @@ export function RepetirEventoModal({ aberto, aoFechar, evento }: { aberto: boole
   }
 
   const alternar = (data: string) => {
-    if (bloqueada(data) || criando) return
+    // Data bloqueada não entra, mas uma já escolhida sempre pode sair
+    if (criando || (bloqueada(data) && !datas.includes(data))) return
     setDatas((l) => (l.includes(data) ? l.filter((d) => d !== data) : [...l, data].sort()))
   }
 

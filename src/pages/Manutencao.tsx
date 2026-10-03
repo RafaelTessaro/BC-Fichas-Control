@@ -28,6 +28,7 @@ import {
   TIPO_OS,
   type EstadoMaquina,
   type SituacaoMaquina,
+  vaiComoReserva,
 } from '#shared/maquinas.ts'
 import type { Maquina, OrdemServico, TipoMaquina } from '#shared/tipos.ts'
 import { IconeMaquinaFichas } from '../components/IconeMaquinaFichas'
@@ -40,7 +41,6 @@ import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { Select } from '../components/ui/Form'
 import { EmptyState, PageHeader, SearchInput, Segmented, StatCard } from '../components/ui/Misc'
-import { ehReserva } from '../lib/bloqueioMaquinas'
 import { cn } from '../lib/cn'
 import { dataCurta, numero, periodo } from '../lib/format'
 import {
@@ -575,7 +575,7 @@ function OndeEsta({ maquinaId, situacao, hoje }: { maquinaId: string; situacao: 
       <LinhaInfo icone={<CalendarClock className="h-3.5 w-3.5" />} tom={estado === 'MANUTENCAO' ? 'text-warning' : undefined}>
         Próxima locação: {dataProxima ? dataCurta(dataProxima).slice(0, 5) : '—'} ·{' '}
         <LinkEvento id={proxima.id}>{localDaLocacao(proxima)}</LinkEvento>
-        {ehReserva(proxima, maquinaId) && ' (como reserva)'}
+        {vaiComoReserva(proxima, maquinaId) && ' (como reserva)'}
       </LinhaInfo>
     )
   }

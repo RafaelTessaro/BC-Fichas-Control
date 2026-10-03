@@ -702,15 +702,18 @@ function DiasDeUtilizacao({ evento, resumo }: { evento: Evento; resumo: ResumoEv
         { ...dados, dias: evento.dias.map((d) => (d.id === dia.id ? { ...d, reservasUsadas: usadas } : d)) },
         { id, versao },
       )
+      // O aviso diz como o dia ficou e quanto o total mudou (para mais ou para menos)
       const quando = dataCurtinha(dia.data)
-      const cobrado = moeda(usadas * evento.valorDiaria)
+      const diferenca = (usadas - reservasUsadasDia(dia)) * evento.valorDiaria
+      const mudanca = diferenca > 0 ? `+ ${moeda(diferenca)}` : diferenca < 0 ? `− ${moeda(-diferenca)}` : ''
+      const total = `Total do evento: ${moeda(calcularEvento(salvo).total)}.`
       toast.sucesso(
         usadas === 0
           ? `${reservasDia(dia) === 1 ? 'Reserva' : 'Reservas'} de ${quando} sem cobrança`
-          : usadas === 1
-            ? `Reserva de ${quando} cobrada: + ${cobrado}`
-            : `${usadas} reservas de ${quando} cobradas: + ${cobrado}`,
-        `Total do evento: ${moeda(calcularEvento(salvo).total)}.`,
+          : reservasDia(dia) === 1
+            ? `Reserva de ${quando} cobrada`
+            : `${usadas} de ${reservasDia(dia)} reservas de ${quando} cobradas`,
+        mudanca ? `${mudanca} · ${total}` : total,
       )
     } catch (e) {
       avisarErro('Não foi possível salvar o uso da reserva', e)
@@ -822,7 +825,7 @@ function UsoDaReserva({
     >
       <label htmlFor={id} className="min-w-0 cursor-pointer">
         <span className="block text-[13px] font-medium text-ink">{reservas === 1 ? 'Usou a reserva' : 'Reservas usadas'}</span>
-        <span className="tnum block text-xs text-muted">
+        <span id={`${id}-desc`} className="tnum block text-xs text-muted">
           {usadas > 0
             ? `${usadas === 1 ? 'Cobrada' : 'Cobradas'} como diária: + ${moeda(usadas * valorDiaria)}`
             : reservas === 1
@@ -831,7 +834,14 @@ function UsoDaReserva({
         </span>
       </label>
       {reservas === 1 ? (
-        <Interruptor id={id} ligado={usadas > 0} aoMudar={(v) => aoMudar(v ? 1 : 0)} disabled={gravando} />
+        <Interruptor
+          id={id}
+          ligado={usadas > 0}
+          aoMudar={(v) => aoMudar(v ? 1 : 0)}
+          disabled={gravando}
+          rotulo={`Usou a reserva em ${dataCurtinha(dia.data)}`}
+          descricao={`${id}-desc`}
+        />
       ) : (
         <select
           id={id}
@@ -858,11 +868,17 @@ function Interruptor({
   ligado,
   aoMudar,
   disabled,
+  rotulo,
+  descricao,
 }: {
   id: string
   ligado: boolean
   aoMudar: (v: boolean) => void
   disabled?: boolean
+  /** Nome para o leitor de tela (ex.: com a data do dia), começando pelo texto visível. */
+  rotulo?: string
+  /** Id do texto que explica o estado. */
+  descricao?: string
 }) {
   return (
     <button
@@ -870,6 +886,8 @@ function Interruptor({
       type="button"
       role="switch"
       aria-checked={ligado}
+      aria-label={rotulo}
+      aria-describedby={descricao}
       disabled={disabled}
       onClick={() => aoMudar(!ligado)}
       className={cn(

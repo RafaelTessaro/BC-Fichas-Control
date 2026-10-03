@@ -104,6 +104,11 @@ describe('cópias', () => {
     // 6 + 5 = 11 no sábado; 8 + 2 = 10 no domingo (cabe certinho)
     expect(faltasDaCopia(copia, ocupacao, 10)).toEqual([{ data: '2026-11-14', faltam: 1 }])
     expect(faltasDaCopia(copia, ocupacao, 12)).toEqual([])
+    // Capacidade por data (ex.: 1 máquina em manutenção de hoje em diante): o domingo também falta
+    expect(faltasDaCopia(copia, ocupacao, (data) => (data >= '2026-11-15' ? 9 : 10))).toEqual([
+      { data: '2026-11-14', faltam: 1 },
+      { data: '2026-11-15', faltam: 1 },
+    ])
     // Com a cópia já somada à ocupação
     const comCopia = somarOcupacao(ocupacao, [copia])
     expect(comCopia.get('2026-11-13')).toBe(4)

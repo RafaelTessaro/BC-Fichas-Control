@@ -720,7 +720,8 @@ export function EventoForm() {
                           <div className="order-5 col-span-2 flex min-w-0 items-center gap-2 text-xs md:order-none md:col-span-1">
                             {d.data && (
                               <>
-                                <span className="min-w-0 truncate text-muted">{dataExtensa(d.data, 'EEE, d MMM')}</span>
+                                {/* "Dom, 15 nov": curto para caber ao lado das livres */}
+                                <span className="min-w-0 truncate text-muted">{dataExtensa(d.data, 'EEEEEE, d MMM')}</span>
                                 <span className="text-line-strong">•</span>
                                 {repetida ? (
                                   <span className="shrink-0 font-medium whitespace-nowrap text-danger">Data repetida</span>
@@ -758,6 +759,7 @@ export function EventoForm() {
                           {reservas > 0 && (
                             <div className="order-4 col-span-2 min-w-0 md:order-none md:col-span-3 md:col-start-3">
                               <UsoReserva
+                                data={d.data}
                                 reservas={reservas}
                                 usadas={reservasUsadasDia(d)}
                                 aoMudar={(n) => atualizarDia(d.id, { reservasUsadas: n })}
@@ -1191,7 +1193,19 @@ function Linha({ rotulo, valor, sub, discreta }: { rotulo: string; valor: string
  * Uso da reserva no dia: com 1 reserva, um botão "Usou a reserva" (liga/desliga); com mais, quantas
  * foram usadas. A usada é cobrada pelo mesmo valor da diária; a parada não custa nada.
  */
-function UsoReserva({ reservas, usadas, aoMudar }: { reservas: number; usadas: number; aoMudar: (n: number) => void }) {
+function UsoReserva({
+  data,
+  reservas,
+  usadas,
+  aoMudar,
+}: {
+  data: string
+  reservas: number
+  usadas: number
+  aoMudar: (n: number) => void
+}) {
+  // O nome para o leitor de tela começa pelo texto visível e diz o dia
+  const dia = data ? ` em ${data.slice(8, 10)}/${data.slice(5, 7)}` : ''
   const cobradas = Math.min(usadas, reservas)
   const nota = cobradas
     ? `+${cobradas} ${cobradas === 1 ? 'diária cobrada' : 'diárias cobradas'}`
@@ -1205,7 +1219,7 @@ function UsoReserva({ reservas, usadas, aoMudar }: { reservas: number; usadas: n
         <button
           type="button"
           aria-pressed={cobradas > 0}
-          aria-label="Cobrar a reserva usada neste dia"
+          aria-label={`Usou a reserva${dia}`}
           onClick={() => aoMudar(cobradas ? 0 : 1)}
           className={cn(
             'inline-flex h-8 cursor-pointer items-center gap-2 rounded-lg border px-2.5 text-[13px] font-medium whitespace-nowrap transition-colors duration-150',
@@ -1234,7 +1248,7 @@ function UsoReserva({ reservas, usadas, aoMudar }: { reservas: number; usadas: n
             min={0}
             max={reservas}
             aoMudar={(v) => aoMudar(v ?? 0)}
-            aria-label="Reservas usadas"
+            aria-label={`Reservas usadas${dia}`}
             className={cn('h-8! w-[104px]', cobradas > 0 && 'border-warning-dot!')}
           />
           <span className="tnum font-normal text-muted">de {reservas}</span>

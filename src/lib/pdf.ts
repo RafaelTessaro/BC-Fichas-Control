@@ -1,7 +1,14 @@
 import { jsPDF } from 'jspdf'
 import timbradoUrl from '../assets/timbrado.jpg'
 import { calcularEvento, FORMAS_PAGAMENTO } from '#shared/calc.ts'
-import { datasOcupadas, ordenarMaquinas, quantidadePorExtenso, reservasDia, reservasUsadasDia } from '#shared/maquinas.ts'
+import {
+  datasOcupadas,
+  ordenarMaquinas,
+  quantidadeCurta,
+  quantidadePorExtenso,
+  reservasDia,
+  reservasUsadasDia,
+} from '#shared/maquinas.ts'
 import { parseISO } from 'date-fns'
 import { codigoEvento, dataCurta, hojeISO, moeda, numero, periodo } from './format'
 import { nomeArquivoSeguro } from './storage'
@@ -160,20 +167,24 @@ export async function gerarResumoPDF(
   garantirEspaco(4 + 9)
   doc.text('DATAS DE UTILIZAÇÃO', L, y)
   y += 4
-  // Com máquina reserva o texto do dia é mais longo: duas colunas em vez de três
+  // Com máquina reserva, o dia sai curto ("Sáb • 3+1"): a nota abaixo explica o "+1"; assim
+  // continuam três colunas e o resumo cabe na mesma página
   const comReserva = evento.dias.some((d) => reservasDia(d) > 0)
-  const colunas = comReserva ? 2 : 3
+  const colunas = 3
   const larguraCol = W / colunas
   const textoDia = (d: (typeof evento.dias)[number]) => {
+    const semana = DIAS_SEMANA[parseISO(d.data).getDay()]
+    const reservas = reservasDia(d)
+    if (!comReserva) return txt(`${semana} • ${quantidadePorExtenso(d.maquinas)}`)
     const usadas = reservasUsadasDia(d)
     const uso = !usadas
       ? ''
-      : usadas === reservasDia(d)
+      : usadas === reservas
         ? usadas === 1
-          ? ' (usada)'
-          : ' (usadas)'
+          ? ' usada'
+          : ' usadas'
         : ` (${usadas} usada${usadas > 1 ? 's' : ''})`
-    return txt(`${DIAS_SEMANA[parseISO(d.data).getDay()]} • ${quantidadePorExtenso(d.maquinas, reservasDia(d))}${uso}`)
+    return txt(`${semana} • ${quantidadeCurta(d.maquinas, reservas)}${uso}`)
   }
   // Mesmo tamanho de letra em todas as caixinhas: reduz para todas se alguma não couber ao lado da data
   doc.setFont('helvetica', 'bold').setFontSize(9)
@@ -203,17 +214,22 @@ export async function gerarResumoPDF(
   if (evento.dias.length) y += 9
   if (comReserva) {
     // O cliente precisa entender por que a reserva aparece e quando ela é cobrada
+    // (o exemplo é um dia do próprio evento: "4+1 = 4 máquinas + 1 reserva")
+    const exemplo = evento.dias.find((d) => reservasDia(d) > 0)!
     doc
       .setFont('helvetica', 'normal')
-      .setFontSize(8.5)
+      .setFontSize(8)
       .setTextColor(...SECUNDARIO)
     const nota = doc.splitTextToSize(
-      txt('Máquina reserva: fica com o cliente sem custo e é cobrada pelo valor da diária somente nos dias em que for usada.'),
+      txt(
+        `${quantidadeCurta(exemplo.maquinas, reservasDia(exemplo))} = ${quantidadePorExtenso(exemplo.maquinas, reservasDia(exemplo))}. ` +
+          'A reserva fica com o cliente sem custo e só é cobrada (pelo valor da diária) no dia em que for usada.',
+      ),
       W,
     ) as string[]
-    garantirEspaco(2 + nota.length * 3.8)
-    nota.forEach((linha, i) => doc.text(linha, L, y + 1.5 + i * 3.8))
-    y += 2 + nota.length * 3.8
+    garantirEspaco(1 + nota.length * 3.5)
+    nota.forEach((linha, i) => doc.text(linha, L, y + 1.2 + i * 3.5))
+    y += 1 + nota.length * 3.5
   }
 
   // Resumo financeiro (mantido inteiro na mesma página, junto com o total)

@@ -156,7 +156,12 @@ export function Agenda() {
     const busca = p.toString()
     return { pathname: location.pathname, search: busca ? `?${busca}` : '' }
   }
-  const ir = (mudancas: Record<string, string | null>, opcoes?: NavigateOptions) => navegar(endereco(mudancas), opcoes)
+  const ir = (mudancas: Record<string, string | null>, opcoes?: NavigateOptions) => {
+    const destino = endereco(mudancas)
+    // Mesmo endereço (ex.: "Hoje" já no mês atual): não empilha um passo igual no "voltar"
+    if (destino.search === location.search) return
+    navegar(destino, opcoes)
+  }
 
   // Mês para onde a agenda já foi mandada: com a tecla segura, as setas chegam antes de a tela
   // atualizar, e cada uma precisa andar um mês a partir da anterior
@@ -356,6 +361,7 @@ export function Agenda() {
                   ano={ano}
                   porDia={porDia}
                   frota={total}
+                  capacidadeDoDia={capacidadeDoDia}
                   hoje={hojeIso}
                   resumos={meses}
                   anteriores={mesesAnteriores}

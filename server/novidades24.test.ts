@@ -228,3 +228,33 @@ describe('repetir em outras datas', () => {
     expect(todos[0].grupoId).toBe('')
   })
 })
+
+describe('séries: proteção contra duplicar e contra perder o grupo', () => {
+  it('não repete numa data em que a série já tem evento (a não ser que ele esteja cancelado)', async () => {
+    const cli = await criarCliente()
+    const e = (await req<Evento>('POST', '/api/eventos', evento(cli.id), 201)).json
+    const r = (await req<{ criados: Evento[] }>('POST', `/api/eventos/${e.id}/repetir`, { datas: ['2099-07-10'] }, 201)).json
+    const outra = await req<{ erro: string }>('POST', `/api/eventos/${e.id}/repetir`, { datas: ['2099-08-14', '2099-07-10'] })
+    expect(outra.status).toBe(409)
+    expect(outra.json.erro).toBe('10/07 já tem um evento desta série.')
+    // A partir da cópia, também não dá para repetir na data do original
+    const daCopia = await req<{ erro: string }>('POST', `/api/eventos/${r.criados[0].id}/repetir`, { datas: ['2099-06-12'] })
+    expect(daCopia.json.erro).toBe('12/06 já tem um evento desta série.')
+    expect((await dados()).eventos).toHaveLength(2)
+    // Cancelada a data, pode criar de novo
+    await req('PATCH', `/api/eventos/${r.criados[0].id}`, { status: 'CANCELADO' }, 200)
+    await req('POST', `/api/eventos/${e.id}/repetir`, { datas: ['2099-07-10'] }, 201)
+  })
+
+  it('salvar o evento inteiro (ex.: formulário aberto antes da repetição) não tira o evento da série', async () => {
+    const cli = await criarCliente()
+    const e = (await req<Evento>('POST', '/api/eventos', evento(cli.id), 201)).json
+    const { original } = (await req<{ original: Evento }>('POST', `/api/eventos/${e.id}/repetir`, { datas: ['2099-07-10'] }, 201))
+      .json
+    const salvo = (
+      await req<Evento>('PUT', `/api/eventos/${e.id}`, { ...e, versao: original.versao, grupoId: '', rodape: 'OBRIGADO' }, 200)
+    ).json
+    expect(salvo.grupoId).toBe(original.grupoId)
+    expect(salvo.rodape).toBe('OBRIGADO')
+  })
+})

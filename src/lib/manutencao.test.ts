@@ -269,6 +269,18 @@ describe('máquina reserva', () => {
     expect(resumoMaquina('P-01', [], eventos, [], HOJE)).toMatchObject({ diarias: 3, diasReserva: 0, diasReservaUsada: 0 })
   })
 
+  it('num dia sem reserva, a máquina marcada como reserva trabalha como titular (conta diária)', () => {
+    // Sábado 2 titulares e nenhuma reserva; domingo 1 + 1 reserva
+    const e = ev('e4', [], ['P-01', 'P-05'], {
+      reservasIds: ['P-05'],
+      dias: dias('e4', [
+        ['2026-09-19', 2, 0, 0],
+        ['2026-09-20', 1, 1, 0],
+      ]),
+    })
+    expect(resumoMaquina('P-05', [], [e], [], HOJE)).toMatchObject({ diarias: 1, diasReserva: 1, diasReservaUsada: 0 })
+  })
+
   it('cancelado não conta', () => {
     const cancelado = { ...e1, status: 'CANCELADO' as const }
     expect(resumoMaquina('P-03', [], [cancelado], [], HOJE)).toMatchObject({ eventos: 0, diasReserva: 0 })

@@ -16,11 +16,11 @@ import {
   type EstadoMaquina,
   type PlanoAjuste,
   type SituacaoMaquina,
+  vaiComoReserva,
 } from '#shared/maquinas.ts'
 import type { Maquina, TipoMaquina } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
 import { dataCurta, numero } from '../lib/format'
-import { ehReserva } from '../lib/bloqueioMaquinas'
 import { USO_RESERVA_CURTO, usoDaReserva } from '../lib/manutencao'
 import { useDados } from '../store/dados'
 import { toast } from '../store/ui'
@@ -116,7 +116,7 @@ function tituloChip(m: Maquina, s: SituacaoMaquina, hoje: string) {
   }
   if (s.proxima && s.dataProxima) {
     texto += ` · Próximo evento: ${s.proxima.nome}, ${dataCurta(s.dataProxima)}`
-    if (ehReserva(s.proxima, m.id)) texto += ' (como reserva)'
+    if (vaiComoReserva(s.proxima, m.id)) texto += ' (como reserva)'
   }
   return texto
 }

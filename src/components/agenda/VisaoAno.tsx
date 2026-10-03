@@ -61,6 +61,7 @@ export function VisaoAno({
   ano,
   porDia,
   frota,
+  capacidadeDoDia,
   hoje,
   resumos,
   anteriores,
@@ -70,6 +71,8 @@ export function VisaoAno({
   ano: number
   porDia: PorDia<EventoCompleto>
   frota: number
+  /** Máquinas disponíveis no dia (de hoje em diante, sem as em manutenção), como no mês e no resumo. */
+  capacidadeDoDia: (data: string) => number
   hoje: string
   /** Resumo de cada mês do ano (janeiro primeiro). */
   resumos: ResumoPeriodo[]
@@ -140,7 +143,10 @@ export function VisaoAno({
                 {diasDoMes(mes).map((data) => {
                   const lista = porDia.get(data)
                   const fora = foraNoDia(lista)
-                  const faixa = faixaOcupacao(fora, frota)
+                  // As faixas seguem a frota (como na legenda); o "acima" considera a manutenção,
+                  // como a visão do mês e o resumo
+                  const acima = fora > capacidadeDoDia(data)
+                  const faixa = acima ? 5 : faixaOcupacao(fora, frota)
                   const ehHoje = data === hoje
                   return (
                     <button
@@ -151,7 +157,7 @@ export function VisaoAno({
                       onPointerLeave={() => esconderDica(data)}
                       onFocus={(e) => mostrarDica(data, e.currentTarget)}
                       onBlur={() => esconderDica(data)}
-                      aria-label={`${dicaDia(data, lista)}${fora ? ` (${fora} de ${frota} máquinas fora)` : ''}${ehHoje ? ', hoje' : ''}`}
+                      aria-label={`${dicaDia(data, lista)}${fora ? ` (${fora} de ${frota} máquinas fora${acima ? ', acima das máquinas disponíveis' : ''})` : ''}${ehHoje ? ', hoje' : ''}`}
                       className={cn(
                         'tnum relative flex aspect-[5/4] cursor-pointer items-center justify-center rounded-[5px] text-[11px] font-medium transition-[filter,box-shadow] duration-100 hover:brightness-110 sm:aspect-square dark:hover:brightness-125',
                         COR_FAIXA[faixa],
@@ -173,7 +179,9 @@ export function VisaoAno({
 
       {createPortal(
         <AnimatePresence>
-          {dica && <DicaDia key="dica" dica={dica} lista={porDia.get(dica.data)} frota={frota} />}
+          {dica && (
+            <DicaDia key="dica" dica={dica} lista={porDia.get(dica.data)} frota={frota} capacidade={capacidadeDoDia(dica.data)} />
+          )}
         </AnimatePresence>,
         document.body,
       )}
@@ -211,7 +219,18 @@ function ComparacaoMes({ atual, anterior, rotulo }: { atual: ResumoPeriodo; ante
 }
 
 /** Dica flutuante do dia: o número de máquinas na frente, o nome do evento depois. */
-function DicaDia({ dica, lista, frota }: { dica: Dica; lista: Array<Ocorrencia<EventoCompleto>> | undefined; frota: number }) {
+function DicaDia({
+  dica,
+  lista,
+  frota,
+  capacidade,
+}: {
+  dica: Dica
+  lista: Array<Ocorrencia<EventoCompleto>> | undefined
+  frota: number
+  /** Máquinas disponíveis no dia (sem as em manutenção, de hoje em diante). */
+  capacidade: number
+}) {
   const ativos = (lista ?? []).filter((o) => o.item.evento.status !== 'CANCELADO')
   const fora = foraNoDia(lista)
   // Fica dentro da tela mesmo nos dias da borda
@@ -253,9 +272,10 @@ function DicaDia({ dica, lista, frota }: { dica: Dica; lista: Array<Ocorrencia<E
           {ativos.length > 6 && <li className="text-muted">+{ativos.length - 6} mais</li>}
         </ul>
       )}
-      {fora > frota && (
+      {fora > capacidade && (
         <p className="mt-1.5 flex items-center gap-1 font-medium text-danger">
-          <TriangleAlert className="h-3.5 w-3.5 shrink-0" /> Acima da frota
+          <TriangleAlert className="h-3.5 w-3.5 shrink-0" />{' '}
+          {capacidade < frota ? `Acima das disponíveis (${frota - capacidade} em manutenção)` : 'Acima da frota'}
         </p>
       )}
     </motion.div>

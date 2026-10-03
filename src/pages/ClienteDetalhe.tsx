@@ -31,7 +31,7 @@ import { Modal } from '../components/ui/Modal'
 import { Avatar, EmptyState, PageHeader, StatCard } from '../components/ui/Misc'
 import { STATUS_EVENTO } from '#shared/calc.ts'
 import { cnpjValido } from '#shared/documentos.ts'
-import { quantidadeCurta, quantidadePorExtenso, reservasDia } from '#shared/maquinas.ts'
+import { necessidadeMaquinas, quantidadeCurta, quantidadePorExtenso } from '#shared/maquinas.ts'
 import type { Cliente, ClienteInput } from '#shared/tipos.ts'
 import { cn } from '../lib/cn'
 import {
@@ -310,9 +310,8 @@ function ProximasDatas({ itens }: { itens: EventoCompleto[] }) {
       {itens.length ? (
         <ul className="scroll-fino max-h-[420px] divide-y divide-line overflow-y-auto border-t border-line">
           {itens.map(({ evento: e, resumo: r }) => {
-            // Máquinas do dia de mais máquinas: titulares + reservas
-            const titulares = Math.max(0, ...e.dias.map((d) => Number(d.maquinas) || 0))
-            const reservas = Math.max(0, ...e.dias.map(reservasDia))
+            // O que o evento precisa (como na escolha das máquinas): nunca passa do pico da agenda
+            const { titulares, reservas } = necessidadeMaquinas(e.dias)
             const inicio = r.dataInicio ?? ''
             return (
               <li key={e.id}>

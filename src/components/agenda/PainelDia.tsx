@@ -138,7 +138,7 @@ export function PainelDia({
                           </a>
                         )}
                       </p>
-                      <ReservasMarcadas ids={p.maquinasIds} paradas={p.paradas} porId={porId} />
+                      <ReservasMarcadas ids={p.maquinasIds} paradas={p.paradas} porId={porId} avisarVazio={avisarVazio} />
                     </li>
                   )
                 })}
@@ -285,13 +285,29 @@ function MaquinasDoEvento({
   )
 }
 
-/** As máquinas marcadas como reserva no evento; avisa quando falta marcar. */
-function ReservasMarcadas({ ids, paradas, porId }: { ids: string[]; paradas: number; porId: Map<string, Maquina> }) {
+/**
+ * As máquinas marcadas como reserva no evento; avisa quando falta marcar (só com máquinas
+ * cadastradas: sem elas não há o que marcar). O uso é anotado sem dizer qual máquina: com mais
+ * reservas marcadas do que paradas, diz "uma de" em vez de afirmar que todas estão sem uso.
+ */
+function ReservasMarcadas({
+  ids,
+  paradas,
+  porId,
+  avisarVazio,
+}: {
+  ids: string[]
+  paradas: number
+  porId: Map<string, Maquina>
+  avisarVazio: boolean
+}) {
   const lista = ordenarMaquinas(ids.map((id) => porId.get(id)).filter((m): m is Maquina => !!m))
-  const faltam = Math.max(0, paradas - lista.length)
+  const faltam = avisarVazio ? Math.max(0, paradas - lista.length) : 0
+  if (!lista.length && !faltam) return null
   return (
     <div className="mt-1.5 flex flex-wrap items-center gap-1">
       <span className="sr-only">Máquinas reserva:</span>
+      {lista.length > paradas && <span className="text-xs text-muted">{paradas === 1 ? 'Uma de' : `${paradas} de`}</span>}
       {lista.map((m) => (
         <EtiquetaMaquina key={m.id} m={m} reserva />
       ))}

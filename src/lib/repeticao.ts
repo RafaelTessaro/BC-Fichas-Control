@@ -156,13 +156,15 @@ export interface FaltaMaquinas {
 export function faltasDaCopia(
   copia: EventoOcupacao,
   ocupacao: Map<string, number>,
-  capacidade: number,
+  /** Máquinas disponíveis: um número, ou por data (como na agenda, sem as em manutenção de hoje em diante). */
+  capacidade: number | ((data: string) => number),
   jaContada = false,
 ): FaltaMaquinas[] {
   const faltas: FaltaMaquinas[] = []
   for (const d of diasOcupados(copia)) {
+    const limite = typeof capacidade === 'function' ? capacidade(d.data) : capacidade
     const total = (ocupacao.get(d.data) ?? 0) + (jaContada ? 0 : totalDia(d))
-    if (total > capacidade) faltas.push({ data: d.data, faltam: total - capacidade })
+    if (total > limite) faltas.push({ data: d.data, faltam: total - limite })
   }
   return faltas
 }

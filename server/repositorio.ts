@@ -272,7 +272,15 @@ export class Repositorio {
       this.exigirCliente(dados.clienteId)
       this.exigirMaquinas(dados.maquinasIds)
       this.verificarMaquinasLivres({ ...dados, id }, anterior)
-      const evento: Evento = { ...anterior, ...dados, versao: anterior.versao + 1, atualizadoEm: agora() }
+      // A série (grupoId) só muda por "Repetir em outras datas": um formulário aberto antes da
+      // repetição não pode tirar o evento dela
+      const evento: Evento = {
+        ...anterior,
+        ...dados,
+        grupoId: anterior.grupoId ?? '',
+        versao: anterior.versao + 1,
+        atualizadoEm: agora(),
+      }
       this.gravarEvento(evento, false)
       return { evento, anterior, rev: this.incrementarRevisao() }
     })
@@ -337,6 +345,16 @@ export class Repositorio {
       const inicio = periodoEvento(origem)?.inicio
       if (!inicio) throw new ErroApi(400, 'O evento não tem dias de utilização.')
       if (datas.includes(inicio)) throw new ErroApi(400, `${dataCurtinha(inicio)} já é a data deste evento.`)
+      // Nem numa data em que a série já tem evento (ex.: duas pessoas repetindo ao mesmo tempo)
+      if (origem.grupoId) {
+        const daSerie = new Set(
+          this.listarEventosBrutos()
+            .filter((e) => e.grupoId === origem.grupoId && e.status !== 'CANCELADO')
+            .map((e) => periodoEvento(e)?.inicio),
+        )
+        const repetida = [...datas].sort().find((d) => daSerie.has(d))
+        if (repetida) throw new ErroApi(409, `${dataCurtinha(repetida)} já tem um evento desta série.`)
+      }
       const grupoId = origem.grupoId || novoId()
       const criados: Array<{ evento: Evento; rev: number }> = []
       let anterior: Evento | undefined

@@ -224,6 +224,28 @@ export function quantidadePorExtenso(maquinas: number, reservas = 0) {
   return reservas > 0 ? `${titulares} + ${reservas} ${reservas === 1 ? 'reserva' : 'reservas'}` : titulares
 }
 
+/**
+ * Quantas máquinas o evento precisa: o maior total de um dia (titulares + reservas), das quais
+ * as reservas do dia com mais reservas (nunca mais que o total). É o "precisa de 4+1" da escolha
+ * das máquinas e o número curto das listas — nunca passa do pico que a agenda mostra.
+ */
+export function necessidadeMaquinas(dias: Array<Partial<Pick<DiaEvento, 'maquinas' | 'reservas'>>>) {
+  const total = Math.max(0, ...dias.map(totalDia))
+  const reservas = Math.min(total, Math.max(0, ...dias.map(reservasDia)))
+  return { total, reservas, titulares: total - reservas }
+}
+
+/**
+ * A máquina vai como reserva no evento: está marcada como reserva e algum dia tem reserva. Num
+ * dia sem reserva (ex.: 5 titulares no sábado e 2+1 no domingo), a marcada trabalha como titular.
+ */
+export const vaiComoReserva = (evento: EventoOcupacao & Pick<Evento, 'reservasIds'>, maquinaId: string) =>
+  !!evento.reservasIds?.includes(maquinaId) && diasOcupados(evento).some((d) => d.reservas > 0)
+
+/** A máquina está como reserva no dia ocupado `dia` do evento (marcada e o dia tem reserva). */
+export const reservaNoDia = (evento: Pick<Evento, 'reservasIds'>, maquinaId: string, dia: Pick<DiaOcupado, 'reservas'>) =>
+  !!evento.reservasIds?.includes(maquinaId) && dia.reservas > 0
+
 /** Uma reserva parada (com o cliente, sem uso) num dia: onde dá para buscar uma máquina se faltar. */
 export interface ReservaParada {
   evento: Evento
@@ -299,21 +321,24 @@ export interface SituacaoMaquina {
 export function situacaoMaquina(maquina: Pick<Maquina, 'id' | 'status'>, eventos: Evento[], hoje: string): SituacaoMaquina {
   if (maquina.status === 'DESATIVADA') return { estado: 'DESATIVADA' }
   let evento: Evento | undefined
+  let diaHoje: DiaOcupado | undefined
   let inicioEvento = ''
   let proxima: Evento | undefined
   let dataProxima = ''
   for (const e of eventos) {
     if (e.status === 'CANCELADO' || !e.maquinasIds.includes(maquina.id)) continue
-    const datas = datasOcupadas(e)
-    if (datas.includes(hoje)) {
-      if (!evento || datas[0] < inicioEvento) [evento, inicioEvento] = [e, datas[0]]
+    const dias = diasOcupados(e)
+    const hojeNoEvento = dias.find((d) => d.data === hoje)
+    if (hojeNoEvento) {
+      if (!evento || dias[0].data < inicioEvento) [evento, diaHoje, inicioEvento] = [e, hojeNoEvento, dias[0].data]
       continue
     }
-    const seguinte = datas.find((d) => d > hoje)
+    const seguinte = dias.find((d) => d.data > hoje)?.data
     if (seguinte && (!dataProxima || seguinte < dataProxima)) [proxima, dataProxima] = [e, seguinte]
   }
   const futuro = proxima ? { proxima, dataProxima } : {}
-  const reserva = evento?.reservasIds?.includes(maquina.id) ? { reserva: true } : {}
+  // Reserva só nos dias que têm reserva: num dia sem reserva, a marcada trabalha como titular
+  const reserva = evento && diaHoje && reservaNoDia(evento, maquina.id, diaHoje) ? { reserva: true } : {}
   if (maquina.status === 'MANUTENCAO') return { estado: 'MANUTENCAO', evento, ...reserva, ...futuro }
   return evento ? { estado: 'LOCADA', evento, ...reserva, ...futuro } : { estado: 'DISPONIVEL', ...futuro }
 }

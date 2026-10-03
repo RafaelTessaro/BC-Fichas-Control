@@ -434,7 +434,7 @@ function SituacaoMaquinas({ cap, semNumero, paradas }: { cap: Capacidade; semNum
             </>
           )}
         </div>
-        {cap.cadastradas && <ReservasParadasHoje paradas={paradas} />}
+        {(cap.cadastradas || paradas.length > 0) && <ReservasParadasHoje paradas={paradas} comMaquinas={cap.cadastradas} />}
       </Card>
     </motion.div>
   )
@@ -444,7 +444,7 @@ function SituacaoMaquinas({ cap, semNumero, paradas }: { cap: Capacidade; semNum
  * Indicador "Reservas paradas hoje": as máquinas reserva que estão com clientes sem uso, com o
  * evento, o cliente e os números das máquinas (para saber onde buscar uma se faltar).
  */
-function ReservasParadasHoje({ paradas }: { paradas: ReservaParada[] }) {
+function ReservasParadasHoje({ paradas, comMaquinas }: { paradas: ReservaParada[]; comMaquinas: boolean }) {
   const maquinas = useDados((s) => s.maquinas)
   const clientes = useDados((s) => s.clientes)
   const porId = useMemo(() => new Map(maquinas.map((m) => [m.id, m])), [maquinas])
@@ -473,7 +473,8 @@ function ReservasParadasHoje({ paradas }: { paradas: ReservaParada[] }) {
         <ul className="mt-2 flex flex-wrap gap-x-7 gap-y-0.5 px-2">
           {paradas.map((p) => {
             const ids = ordenarMaquinas(p.maquinasIds.map((id) => porId.get(id)).filter((m): m is Maquina => !!m))
-            const faltam = Math.max(0, p.paradas - ids.length)
+            // Sem máquinas cadastradas não há o que marcar
+            const faltam = comMaquinas ? Math.max(0, p.paradas - ids.length) : 0
             return (
               <li key={p.evento.id} className="max-w-full min-w-0">
                 <Link
@@ -482,10 +483,16 @@ function ReservasParadasHoje({ paradas }: { paradas: ReservaParada[] }) {
                 >
                   <span className="min-w-0">
                     <span className="block truncate text-sm font-medium text-ink">{p.evento.nome}</span>
-                    <span className="block truncate text-xs text-muted">{nomes.get(p.evento.clienteId) ?? '—'}</span>
+                    <span className="block truncate text-xs text-muted">
+                      {nomes.get(p.evento.clienteId) ?? '—'} · {p.paradas} {p.paradas === 1 ? 'parada' : 'paradas'}
+                    </span>
                   </span>
-                  <span className="flex shrink-0 flex-wrap gap-1">
+                  <span className="flex shrink-0 flex-wrap items-center gap-1">
                     <span className="sr-only">Máquinas reserva:</span>
+                    {/* O uso é anotado sem dizer qual máquina: com mais marcadas que paradas, "uma de" */}
+                    {ids.length > p.paradas && (
+                      <span className="text-xs text-muted">{p.paradas === 1 ? 'uma de' : `${p.paradas} de`}</span>
+                    )}
                     {/* Mesmo visual da reserva no resto do sistema: tracejado âmbar e o selinho "R" */}
                     {ids.map((m) => (
                       <span

@@ -87,7 +87,7 @@ export function Layout({ children }: { children: ReactNode }) {
           </Button>
         </header>
 
-        <main id="conteudo" className="scroll-fino flex-1 overflow-y-auto">
+        <main id="conteudo" className="scroll-fino relative flex-1 overflow-y-auto">
           <AnimatePresence mode="wait" initial={false}>
             <motion.div
               key={location.pathname}

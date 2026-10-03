@@ -2,7 +2,7 @@ import { ChevronDown, ChevronLeft, ChevronRight } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
-import { ANO_MAX, ANO_MIN, MESES, chaveMes, nomeMes } from '../../lib/agenda'
+import { ANO_MAX, ANO_MIN, MESES, chaveMes, mesCurto, nomeMes } from '../../lib/agenda'
 import { cn } from '../../lib/cn'
 
 const LARGURA = 296
@@ -67,7 +67,8 @@ export function SeletorPeriodo({
       const alvo =
         painel.current?.querySelector<HTMLButtonElement>('[data-selecionado="true"]') ??
         painel.current?.querySelector<HTMLButtonElement>('[data-celula]')
-      alvo?.focus()
+      // Sem rolar a página: a rolagem fecharia o painel
+      alvo?.focus({ preventScroll: true })
     })
     return () => cancelAnimationFrame(id)
   }, [aberto])
@@ -84,12 +85,19 @@ export function SeletorPeriodo({
       fechar()
     }
     const sumir = () => setPos(null)
+    // A posição é calculada na abertura: rolando a página (a <main> rola, não o documento), o
+    // painel ficaria solto longe do título
+    const rolar = (e: Event) => {
+      if (!painel.current?.contains(e.target as Node)) setPos(null)
+    }
     document.addEventListener('mousedown', fora)
     document.addEventListener('keydown', esc)
+    document.addEventListener('scroll', rolar, true)
     window.addEventListener('resize', sumir)
     return () => {
       document.removeEventListener('mousedown', fora)
       document.removeEventListener('keydown', esc)
+      document.removeEventListener('scroll', rolar, true)
       window.removeEventListener('resize', sumir)
     }
   }, [aberto])
@@ -110,10 +118,9 @@ export function SeletorPeriodo({
   }
 
   const titulo = visao === 'ano' ? String(ano) : nomeMes(mes)
-  const paginaAnos = Array.from({ length: ANOS_POR_PAGINA }, (_, i) => anoVisto + i)
+  const paginaAnos = Array.from({ length: ANOS_POR_PAGINA }, (_, i) => anoVisto + i).filter((a) => a >= ANO_MIN && a <= ANO_MAX)
   const podeVoltar = anoVisto > ANO_MIN
   const podeAvancar = visao === 'ano' ? anoVisto + ANOS_POR_PAGINA - 1 < ANO_MAX : anoVisto < ANO_MAX
-  const passoPagina = visao === 'ano' ? ANOS_POR_PAGINA : 1
   const anoAtual = Number(mesAtual.slice(0, 4))
 
   return (
@@ -132,7 +139,12 @@ export function SeletorPeriodo({
           aberto && 'bg-surface-2',
         )}
       >
-        <span className="tnum truncate">{titulo}</span>
+        {/* No celular estreito, o mês curto ("set/2026") para o ano nunca ser cortado */}
+        <span className="tnum truncate max-[400px]:hidden">{titulo}</span>
+        <span className="tnum truncate min-[401px]:hidden" aria-hidden>
+          {visao === 'ano' ? titulo : mesCurto(mes)}
+        </span>
+        <span className="sr-only min-[401px]:hidden">{titulo}</span>
         <ChevronDown
           className={cn('h-4 w-4 shrink-0 text-muted transition-transform group-hover:text-ink-2', aberto && 'rotate-180')}
         />
@@ -171,7 +183,9 @@ export function SeletorPeriodo({
               <div className="mb-2 flex items-center justify-between gap-2">
                 <button
                   type="button"
-                  onClick={() => setAnoVisto((a) => a - passoPagina)}
+                  onClick={() =>
+                    setAnoVisto((a) => (visao === 'ano' ? Math.max(ANO_MIN, a - ANOS_POR_PAGINA) : Math.max(ANO_MIN, a - 1)))
+                  }
                   disabled={!podeVoltar}
                   aria-label={visao === 'ano' ? 'Anos anteriores' : 'Ano anterior'}
                   className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"
@@ -183,7 +197,11 @@ export function SeletorPeriodo({
                 </span>
                 <button
                   type="button"
-                  onClick={() => setAnoVisto((a) => a + passoPagina)}
+                  onClick={() =>
+                    setAnoVisto((a) =>
+                      visao === 'ano' ? Math.min(ANO_MAX - ANOS_POR_PAGINA + 1, a + ANOS_POR_PAGINA) : Math.min(ANO_MAX, a + 1),
+                    )
+                  }
                   disabled={!podeAvancar}
                   aria-label={visao === 'ano' ? 'Próximos anos' : 'Próximo ano'}
                   className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-ink-2 transition-colors hover:bg-surface-2 hover:text-ink disabled:cursor-not-allowed disabled:opacity-40"

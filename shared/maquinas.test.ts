@@ -14,10 +14,12 @@ import {
   ordenarMaquinas,
   planoAjuste,
   proximasIdentificacoes,
+  necessidadeMaquinas,
   quantidadeCurta,
   quantidadePorExtenso,
   reservasParadas,
   situacaoMaquina,
+  vaiComoReserva,
 } from './maquinas.ts'
 import { calcularEvento } from './calc.ts'
 import type { Evento, Maquina, OrdemServico } from './tipos.ts'
@@ -329,10 +331,38 @@ describe('máquina reserva', () => {
     ])
   })
 
-  it('a situação da máquina diz quando ela está locada como reserva', () => {
-    const e = ev('a', ['2026-10-10'], ['P-01', 'P-02'], { reservasIds: ['P-02'] })
-    expect(situacaoMaquina(maq('P-02'), [e], '2026-10-10')).toMatchObject({ estado: 'LOCADA', reserva: true })
-    expect(situacaoMaquina(maq('P-01'), [e], '2026-10-10').reserva).toBeUndefined()
+  it('a situação da máquina diz quando ela está locada como reserva — só nos dias com reserva', () => {
+    // Sábado 2 titulares (a marcada como reserva trabalha); domingo 1 + 1 reserva
+    const e = comReserva(
+      'a',
+      [
+        ['2026-10-10', 2, 0],
+        ['2026-10-11', 1, 1],
+      ],
+      { maquinasIds: ['P-01', 'P-02'], reservasIds: ['P-02'] },
+    )
+    expect(situacaoMaquina(maq('P-02'), [e], '2026-10-11')).toMatchObject({ estado: 'LOCADA', reserva: true })
+    expect(situacaoMaquina(maq('P-02'), [e], '2026-10-10')).toMatchObject({ estado: 'LOCADA' })
+    expect(situacaoMaquina(maq('P-02'), [e], '2026-10-10').reserva).toBeUndefined()
+    expect(situacaoMaquina(maq('P-01'), [e], '2026-10-11').reserva).toBeUndefined()
+    expect(vaiComoReserva(e, 'P-02')).toBe(true)
+    // Marcada, mas nenhum dia com reserva: não vai como reserva
+    expect(vaiComoReserva({ ...e, dias: e.dias.map((d) => ({ ...d, reservas: 0 })) }, 'P-02')).toBe(false)
+  })
+
+  it('o que o evento precisa: o maior total do dia, sem somar máximos de dias diferentes', () => {
+    expect(
+      necessidadeMaquinas([
+        { maquinas: 5, reservas: 0 },
+        { maquinas: 2, reservas: 2 },
+      ]),
+    ).toEqual({
+      total: 5,
+      reservas: 2,
+      titulares: 3,
+    })
+    expect(necessidadeMaquinas([{ maquinas: 3, reservas: 1 }])).toEqual({ total: 4, reservas: 1, titulares: 3 })
+    expect(necessidadeMaquinas([])).toEqual({ total: 0, reservas: 0, titulares: 0 })
   })
 
   it('textos: "4+1" na agenda e "4 máquinas + 1 reserva" por extenso', () => {

@@ -103,7 +103,9 @@ function Numero({
           </span>
           <span aria-hidden>
             {rotuloAnterior}: <span className="text-ink-2">{anterior ?? numero(v.anterior)}</span>{' '}
-            <span className={cn('font-semibold', comCor ? COR_DIRECAO[v.direcao] : 'text-ink-2')}>{textoVariacao(v)}</span>
+            <span className={cn('font-semibold whitespace-nowrap', comCor ? COR_DIRECAO[v.direcao] : 'text-ink-2')}>
+              {textoVariacao(v)}
+            </span>
           </span>
         </dd>
       )}
