@@ -62,6 +62,8 @@ interface DadosState {
   salvarEvento: (dados: EventoInput, alvo?: Alvo) => Promise<Evento>
   alterarEvento: (id: string, patch: EventoPatch) => Promise<Evento>
   duplicarEvento: (id: string) => Promise<Evento>
+  /** "Repetir em outras datas": uma cópia do evento para cada data de início; devolve as cópias. */
+  repetirEvento: (id: string, datas: string[]) => Promise<Evento[]>
   excluirEvento: (id: string) => Promise<void>
   salvarMaquina: (dados: MaquinaInput, alvo?: Alvo) => Promise<Maquina>
   excluirMaquina: (id: string) => Promise<void>
@@ -296,6 +298,12 @@ export const useDados = create<DadosState>()((set, get) => {
       const novo = await api.duplicarEvento(id)
       set((s) => ({ eventos: mesclar(s.eventos, novo) }))
       return novo
+    },
+
+    async repetirEvento(id, datas) {
+      const { original, criados } = await api.repetirEvento(id, datas)
+      set((s) => ({ eventos: [original, ...criados].reduce(mesclar, s.eventos) }))
+      return criados
     },
 
     async excluirEvento(id) {

@@ -3,7 +3,7 @@ import { calcularEvento, conferenciaBobinas, ocupacaoPorDia } from './calc.ts'
 import type { Evento } from './tipos.ts'
 
 const base = {
-  dias: [{ id: 'd1', data: '2026-08-01', maquinas: 2 }],
+  dias: [{ id: 'd1', data: '2026-08-01', maquinas: 2, reservas: 0, reservasUsadas: 0 }],
   valorDiaria: 80,
   valorBobina: 6,
   bobinasConsignadas: 0,
@@ -28,9 +28,9 @@ describe('calcularEvento — mesmas regras da planilha', () => {
     const r = calcularEvento({
       ...base,
       dias: [
-        { id: 'a', data: '2026-08-03', maquinas: 3 },
-        { id: 'b', data: '2026-08-01', maquinas: 2 },
-        { id: 'c', data: '2026-08-02', maquinas: 4 },
+        { id: 'a', data: '2026-08-03', maquinas: 3, reservas: 0, reservasUsadas: 0 },
+        { id: 'b', data: '2026-08-01', maquinas: 2, reservas: 0, reservasUsadas: 0 },
+        { id: 'c', data: '2026-08-02', maquinas: 4, reservas: 0, reservasUsadas: 0 },
       ],
     })
     expect(r.totalDiarias).toBe(9)
@@ -72,7 +72,11 @@ describe('calcularEvento — mesmas regras da planilha', () => {
   })
 
   it('evita erros de ponto flutuante em centavos', () => {
-    const r = calcularEvento({ ...base, valorDiaria: 0.1, dias: [{ id: 'x', data: '2026-01-01', maquinas: 3 }] })
+    const r = calcularEvento({
+      ...base,
+      valorDiaria: 0.1,
+      dias: [{ id: 'x', data: '2026-01-01', maquinas: 3, reservas: 0, reservasUsadas: 0 }],
+    })
     expect(r.valorDiarias).toBe(0.3)
   })
 })
@@ -83,9 +87,9 @@ describe('ocupacaoPorDia', () => {
   it('soma máquinas por data e ignora cancelados e o próprio evento', () => {
     const mapa = ocupacaoPorDia(
       [
-        ev('1', 'EM_ABERTO', [{ id: 'a', data: '2026-08-01', maquinas: 2 }]),
-        ev('2', 'FINALIZADO', [{ id: 'b', data: '2026-08-01', maquinas: 3 }]),
-        ev('3', 'CANCELADO', [{ id: 'c', data: '2026-08-01', maquinas: 9 }]),
+        ev('1', 'EM_ABERTO', [{ id: 'a', data: '2026-08-01', maquinas: 2, reservas: 0, reservasUsadas: 0 }]),
+        ev('2', 'FINALIZADO', [{ id: 'b', data: '2026-08-01', maquinas: 3, reservas: 0, reservasUsadas: 0 }]),
+        ev('3', 'CANCELADO', [{ id: 'c', data: '2026-08-01', maquinas: 9, reservas: 0, reservasUsadas: 0 }]),
       ],
       '2',
     )

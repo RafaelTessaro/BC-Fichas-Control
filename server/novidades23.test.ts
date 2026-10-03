@@ -109,13 +109,13 @@ describe('reclamações de clientes', () => {
     await req('DELETE', `/api/maquinas/${p1.id}`, undefined, 204)
   })
 
-  it('vão no backup (versão 4), voltam na restauração e na mesclagem', async () => {
+  it('vão no backup (versão 4 em diante), voltam na restauração e na mesclagem', async () => {
     const cli = await criarCliente()
     const p1 = await criarMaquina('P-01')
     const e = (await req<Evento>('POST', '/api/eventos', eventoCom(cli.id, ['2026-09-01'], [p1.id]), 201)).json
     await req('POST', '/api/reclamacoes', { maquinaId: p1.id, eventoId: e.id, descricao: 'Impressão fraca' }, 201)
     const backup = (await req<Backup>('GET', '/api/backup')).json
-    expect(backup.versao).toBe(4)
+    expect(backup.versao).toBe(5)
     expect(backup.reclamacoes).toHaveLength(1)
 
     await req('POST', '/api/limpar', { confirmacao: 'APAGAR' }, 200)

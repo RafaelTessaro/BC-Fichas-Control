@@ -1,10 +1,12 @@
-import type { Evento, FormaPagamento, StatusEvento } from './tipos.ts'
-import { diasOcupados } from './maquinas.ts'
+import type { DiaEvento, Evento, FormaPagamento, StatusEvento } from './tipos.ts'
+import { diasOcupados, reservasDia, reservasUsadasDia, totalDia } from './maquinas.ts'
 
 /**
  * Regras de cálculo herdadas da planilha "Controle Interno de Locação":
  *
  *   TOTAL DE DIÁRIAS     = soma da quantidade de máquinas de cada data utilizada
+ *                          (+ as máquinas reserva que o cliente acabou usando; a reserva
+ *                           parada não é cobrada)
  *   VALOR DAS DIÁRIAS    = valor da diária × total de diárias
  *   BOBINAS UTILIZADAS   = bobinas consignadas − bobinas devolvidas
  *                          (vazio enquanto as devolvidas não forem informadas
@@ -19,7 +21,12 @@ import { diasOcupados } from './maquinas.ts'
 export type StatusConferencia = 'PREENCHER' | 'INVALIDO' | 'CONFERIDO'
 
 export interface ResumoEvento {
+  /** Diárias cobradas: as das máquinas titulares mais as das reservas usadas. */
   totalDiarias: number
+  /** Quantas das diárias cobradas são de máquina reserva usada. */
+  diariasReserva: number
+  /** Reservas com o cliente somando todos os dias de uso (usadas ou não). */
+  reservas: number
   valorDiarias: number
   conferencia: StatusConferencia
   bobinasUtilizadas: number | null
@@ -34,8 +41,11 @@ export interface ResumoEvento {
 
 type EntradaCalculo = Pick<
   Evento,
-  'dias' | 'valorDiaria' | 'valorBobina' | 'bobinasConsignadas' | 'bobinasDevolvidas' | 'desconto' | 'formaPagamento'
->
+  'valorDiaria' | 'valorBobina' | 'bobinasConsignadas' | 'bobinasDevolvidas' | 'desconto' | 'formaPagamento'
+> & {
+  /** As reservas são opcionais (dias gravados antes da máquina reserva não têm). */
+  dias: Array<Pick<DiaEvento, 'data' | 'maquinas'> & Partial<DiaEvento>>
+}
 
 const arred = (n: number) => Math.round(n * 100) / 100
 
@@ -46,7 +56,10 @@ export function conferenciaBobinas(consignadas: number, devolvidas: number | nul
 }
 
 export function calcularEvento(e: EntradaCalculo): ResumoEvento {
-  const totalDiarias = e.dias.reduce((s, d) => s + (Number(d.maquinas) || 0), 0)
+  // A reserva só é cobrada quando usada, pelo mesmo valor da diária
+  const diariasReserva = e.dias.reduce((s, d) => s + reservasUsadasDia(d), 0)
+  const reservas = e.dias.reduce((s, d) => s + reservasDia(d), 0)
+  const totalDiarias = e.dias.reduce((s, d) => s + (Number(d.maquinas) || 0), 0) + diariasReserva
   const valorDiarias = arred((e.valorDiaria || 0) * totalDiarias)
 
   const consignadas = e.bobinasConsignadas || 0
@@ -65,6 +78,8 @@ export function calcularEvento(e: EntradaCalculo): ResumoEvento {
 
   return {
     totalDiarias,
+    diariasReserva,
+    reservas,
     valorDiarias,
     conferencia,
     bobinasUtilizadas,
@@ -103,15 +118,15 @@ export const CONFERENCIA: Record<StatusConferencia, { label: string; tone: Tone 
 export type Tone = 'neutral' | 'info' | 'success' | 'warning' | 'danger' | 'brand'
 
 /**
- * Soma de máquinas fora da empresa por data, considerando eventos não cancelados. Usa os dias
- * ocupados de cada evento: com período corrido, também os dias em que as máquinas só ficam com o
- * cliente (ver `diasOcupados`).
+ * Soma de máquinas fora da empresa por data (titulares e reservas), considerando eventos não
+ * cancelados. Usa os dias ocupados de cada evento: com período corrido, também os dias em que as
+ * máquinas só ficam com o cliente (ver `diasOcupados`).
  */
 export function ocupacaoPorDia(eventos: Evento[], ignorarId?: string): Map<string, number> {
   const mapa = new Map<string, number>()
   for (const ev of eventos) {
     if (ev.status === 'CANCELADO' || ev.id === ignorarId) continue
-    for (const d of diasOcupados(ev)) mapa.set(d.data, (mapa.get(d.data) ?? 0) + d.maquinas)
+    for (const d of diasOcupados(ev)) mapa.set(d.data, (mapa.get(d.data) ?? 0) + totalDia(d))
   }
   return mapa
 }

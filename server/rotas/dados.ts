@@ -33,6 +33,9 @@ export async function rotasDados(app: FastifyInstance, { repo, tempoReal, backup
   app.put('/api/eventos/:id', async (req: ComId) => repo.atualizarEvento(req.params.id, req.body, versaoDo(req.body)))
   app.patch('/api/eventos/:id', async (req: ComId) => repo.alterarEvento(req.params.id, req.body))
   app.post('/api/eventos/:id/duplicar', async (req: ComId, reply) => reply.code(201).send(repo.duplicarEvento(req.params.id)))
+  app.post('/api/eventos/:id/repetir', async (req: ComId, reply) =>
+    reply.code(201).send(repo.repetirEvento(req.params.id, req.body)),
+  )
   app.delete('/api/eventos/:id', async (req: ComId, reply) => {
     repo.excluirEvento(req.params.id)
     return reply.code(204).send()

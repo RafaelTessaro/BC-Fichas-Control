@@ -127,47 +127,122 @@ type EventoPeriodo = Pick<Evento, 'dias'>
 /** Um dia em que as máquinas do evento estão fora da empresa. */
 export interface DiaOcupado {
   data: string
+  /** Máquinas titulares. */
   maquinas: number
+  /** Máquinas reserva com o cliente (também estão fora da empresa). */
+  reservas: number
+  /** Quantas reservas foram usadas (e cobradas) no dia; 0 nos dias sem uso. */
+  reservasUsadas: number
   /** `true` nos dias de uso (contam diária); `false` nos dias em que só ficam com o cliente. */
   uso: boolean
 }
 
-/** O mínimo de um evento para calcular os dias ocupados (a quantidade de máquinas é opcional). */
+type QuantidadesDia = Pick<DiaEvento, 'maquinas' | 'reservas' | 'reservasUsadas'>
+
+/** O mínimo de um evento para calcular os dias ocupados (as quantidades são opcionais). */
 export type EventoOcupacao = {
-  dias: Array<Pick<DiaEvento, 'data'> & Partial<Pick<DiaEvento, 'maquinas'>>>
+  dias: Array<Pick<DiaEvento, 'data'> & Partial<QuantidadesDia>>
   periodoCorrido?: boolean
 }
 
-const somaDia = (d: Partial<Pick<DiaEvento, 'maquinas'>>) => Number(d.maquinas) || 0
+const qtd = (n: unknown) => (typeof n === 'number' && Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0)
 
-/** Dia seguinte (`yyyy-MM-dd`), sem depender do fuso. */
-function diaSeguinte(data: string) {
+/** Máquinas fora da empresa no dia: titulares + reservas. */
+export const totalDia = (d: Partial<Pick<DiaEvento, 'maquinas' | 'reservas'>>) => qtd(d.maquinas) + qtd(d.reservas)
+
+/** Reservas do dia (0 em dias gravados antes da máquina reserva). */
+export const reservasDia = (d: Partial<Pick<DiaEvento, 'reservas'>>) => qtd(d.reservas)
+
+/** Reservas usadas (cobradas) no dia, nunca mais que as reservas. */
+export const reservasUsadasDia = (d: Partial<Pick<DiaEvento, 'reservas' | 'reservasUsadas'>>) =>
+  Math.min(qtd(d.reservasUsadas), qtd(d.reservas))
+
+/** Data `yyyy-MM-dd` somada de `n` dias (pode ser negativo), sem depender do fuso. */
+export function somarDias(data: string, n: number) {
   const [a, m, d] = data.split('-').map(Number)
-  const dt = new Date(Date.UTC(a, m - 1, d + 1))
-  return dt.toISOString().slice(0, 10)
+  return new Date(Date.UTC(a, m - 1, d + n)).toISOString().slice(0, 10)
 }
 
+/** Dias de `de` até `ate` (`yyyy-MM-dd`; negativo se `ate` vem antes). */
+export function diasEntre(de: string, ate: string) {
+  const utc = (s: string) => {
+    const [a, m, d] = s.split('-').map(Number)
+    return Date.UTC(a, m - 1, d)
+  }
+  return Math.round((utc(ate) - utc(de)) / 86_400_000)
+}
+
+/** Dia seguinte (`yyyy-MM-dd`), sem depender do fuso. */
+const diaSeguinte = (data: string) => somarDias(data, 1)
+
 /**
- * Dias em que as máquinas do evento ficam fora da empresa. Normalmente, só os dias de uso, com a
- * quantidade de cada um. Com `periodoCorrido` (as máquinas ficam com o cliente entre um uso e
- * outro), todos os dias do primeiro ao último, sempre com a maior quantidade do evento: o cliente
- * fica com todas as máquinas o período inteiro. Base da agenda, da disponibilidade e dos conflitos.
+ * Dias em que as máquinas do evento ficam fora da empresa (titulares e reservas). Normalmente,
+ * só os dias de uso, com a quantidade de cada um. Com `periodoCorrido` (as máquinas ficam com o
+ * cliente entre um uso e outro), todos os dias do primeiro ao último, sempre com as maiores
+ * quantidades do evento: o cliente fica com todas as máquinas o período inteiro. Base da agenda,
+ * da disponibilidade e dos conflitos.
  */
 export function diasOcupados(e: EventoOcupacao): DiaOcupado[] {
-  const uso = new Map<string, number>()
-  for (const d of e.dias) if (d.data) uso.set(d.data, (uso.get(d.data) ?? 0) + somaDia(d))
+  const uso = new Map<string, QuantidadesDia>()
+  for (const d of e.dias) {
+    if (!d.data) continue
+    const atual = uso.get(d.data) ?? { maquinas: 0, reservas: 0, reservasUsadas: 0 }
+    uso.set(d.data, {
+      maquinas: atual.maquinas + qtd(d.maquinas),
+      reservas: atual.reservas + reservasDia(d),
+      reservasUsadas: atual.reservasUsadas + reservasUsadasDia(d),
+    })
+  }
   const datas = [...uso.keys()].sort()
-  if (!e.periodoCorrido || datas.length < 2) return datas.map((data) => ({ data, maquinas: uso.get(data)!, uso: true }))
-  const maior = Math.max(...uso.values())
+  if (!e.periodoCorrido || datas.length < 2) return datas.map((data) => ({ data, ...uso.get(data)!, uso: true }))
+  // O cliente fica com todas: as titulares do dia de mais titulares, e as reservas que completam o
+  // dia de mais máquinas no total
+  const valores = [...uso.values()]
+  const maquinas = Math.max(...valores.map((v) => v.maquinas))
+  const reservas = Math.max(...valores.map((v) => v.maquinas + v.reservas)) - maquinas
+  const dia = (data: string): DiaOcupado => {
+    const usadas = uso.get(data)?.reservasUsadas ?? 0
+    return { data, maquinas, reservas, reservasUsadas: Math.min(usadas, reservas), uso: uso.has(data) }
+  }
   const lista: DiaOcupado[] = []
   // Limite de segurança: um período corrido de no máximo ~2 anos
   for (let data = datas[0], n = 0; data <= datas[datas.length - 1] && n < 800; data = diaSeguinte(data), n++) {
-    lista.push({ data, maquinas: maior, uso: uso.has(data) })
+    lista.push(dia(data))
   }
   // Período absurdo (mais de 800 dias): os dias de uso depois do limite continuam contando
   const ultimo = lista[lista.length - 1].data
-  for (const data of datas) if (data > ultimo) lista.push({ data, maquinas: maior, uso: true })
+  for (const data of datas) if (data > ultimo) lista.push(dia(data))
   return lista
+}
+
+/** "4+1" (titulares + reservas) ou só "4" sem reserva — como a agenda mostra. */
+export const quantidadeCurta = (maquinas: number, reservas = 0) => (reservas > 0 ? `${maquinas}+${reservas}` : String(maquinas))
+
+/** "4 máquinas + 1 reserva", "1 máquina", "3 máquinas + 2 reservas". */
+export function quantidadePorExtenso(maquinas: number, reservas = 0) {
+  const titulares = `${maquinas} ${maquinas === 1 ? 'máquina' : 'máquinas'}`
+  return reservas > 0 ? `${titulares} + ${reservas} ${reservas === 1 ? 'reserva' : 'reservas'}` : titulares
+}
+
+/** Uma reserva parada (com o cliente, sem uso) num dia: onde dá para buscar uma máquina se faltar. */
+export interface ReservaParada {
+  evento: Evento
+  /** Quantas reservas do evento estão paradas no dia. */
+  paradas: number
+  /** As máquinas marcadas como reserva no evento (podem ser menos que `paradas`, se faltar marcar). */
+  maquinasIds: string[]
+}
+
+/** Eventos (não cancelados) com máquina reserva parada em `data`, do que tem mais para o que tem menos. */
+export function reservasParadas(eventos: Evento[], data: string): ReservaParada[] {
+  const lista: ReservaParada[] = []
+  for (const evento of eventos) {
+    if (evento.status === 'CANCELADO') continue
+    const dia = diasOcupados(evento).find((d) => d.data === data)
+    const paradas = dia ? dia.reservas - dia.reservasUsadas : 0
+    if (paradas > 0) lista.push({ evento, paradas, maquinasIds: evento.reservasIds ?? [] })
+  }
+  return lista.sort((a, b) => b.paradas - a.paradas || a.evento.nome.localeCompare(b.evento.nome, 'pt-BR'))
 }
 
 /** "11/10" a partir de "2026-10-11". */
@@ -207,6 +282,8 @@ export interface SituacaoMaquina {
   estado: EstadoMaquina
   /** Evento com esta máquina que tem hoje entre os seus dias. */
   evento?: Evento
+  /** A máquina está em `evento` como reserva (locada, mas parada com o cliente se não for usada). */
+  reserva?: boolean
   /** Próximo evento com esta máquina (o de próximo dia de uso depois de hoje). */
   proxima?: Evento
   /** Próximo dia de uso (`yyyy-MM-dd`) em `proxima`. */
@@ -236,8 +313,9 @@ export function situacaoMaquina(maquina: Pick<Maquina, 'id' | 'status'>, eventos
     if (seguinte && (!dataProxima || seguinte < dataProxima)) [proxima, dataProxima] = [e, seguinte]
   }
   const futuro = proxima ? { proxima, dataProxima } : {}
-  if (maquina.status === 'MANUTENCAO') return { estado: 'MANUTENCAO', evento, ...futuro }
-  return evento ? { estado: 'LOCADA', evento, ...futuro } : { estado: 'DISPONIVEL', ...futuro }
+  const reserva = evento?.reservasIds?.includes(maquina.id) ? { reserva: true } : {}
+  if (maquina.status === 'MANUTENCAO') return { estado: 'MANUTENCAO', evento, ...reserva, ...futuro }
+  return evento ? { estado: 'LOCADA', evento, ...reserva, ...futuro } : { estado: 'DISPONIVEL', ...futuro }
 }
 
 /**

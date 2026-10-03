@@ -25,11 +25,13 @@ const evento = (extra: Partial<Evento> = {}): Evento => ({
   periodoCorrido: false,
   programacao: 'NAO_INICIADA',
   dias: [
-    { id: 'd3', data: '2026-08-05', maquinas: 4 },
-    { id: 'd1', data: '2026-08-01', maquinas: 2 },
-    { id: 'd2', data: '2026-08-02', maquinas: 3 },
+    { id: 'd3', data: '2026-08-05', maquinas: 4, reservas: 0, reservasUsadas: 0 },
+    { id: 'd1', data: '2026-08-01', maquinas: 2, reservas: 0, reservasUsadas: 0 },
+    { id: 'd2', data: '2026-08-02', maquinas: 3, reservas: 0, reservasUsadas: 0 },
   ],
   maquinasIds: [],
+  reservasIds: [],
+  grupoId: '',
   valorDiaria: 80,
   valorBobina: 6,
   bobinasConsignadas: 50,
@@ -56,18 +58,18 @@ describe('blocos de datas', () => {
 
   it('atravessa virada de mês e de ano e soma datas repetidas', () => {
     const blocos = blocosDeDatas([
-      { id: 'a', data: '2026-12-31', maquinas: 1 },
-      { id: 'b', data: '2027-01-01', maquinas: 2 },
-      { id: 'c', data: '2027-01-01', maquinas: 1 },
-      { id: 'd', data: '', maquinas: 5 },
+      { id: 'a', data: '2026-12-31', maquinas: 1, reservas: 0, reservasUsadas: 0 },
+      { id: 'b', data: '2027-01-01', maquinas: 2, reservas: 0, reservasUsadas: 0 },
+      { id: 'c', data: '2027-01-01', maquinas: 1, reservas: 0, reservasUsadas: 0 },
+      { id: 'd', data: '', maquinas: 5, reservas: 0, reservasUsadas: 0 },
     ])
     expect(blocos).toEqual([
       {
         inicio: '2026-12-31',
         fim: '2027-01-01',
         dias: [
-          { data: '2026-12-31', maquinas: 1 },
-          { data: '2027-01-01', maquinas: 3 },
+          { data: '2026-12-31', maquinas: 1, reservas: 0, reservasUsadas: 0 },
+          { data: '2027-01-01', maquinas: 3, reservas: 0, reservasUsadas: 0 },
         ],
       },
     ])
@@ -209,12 +211,37 @@ describe('impressão digital de cada evento do Google (bcHash)', () => {
     const base = montar()[0].extendedProperties.private.bcHash
     const variantes = [
       montar({ nome: 'Outro' }),
-      montar({ dias: [{ id: 'd1', data: '2026-08-10', maquinas: 2 }] }),
+      montar({ dias: [{ id: 'd1', data: '2026-08-10', maquinas: 2, reservas: 0, reservasUsadas: 0 }] }),
       montar({ status: 'FINALIZADO' }),
       montar({ periodoCorrido: true }),
       montarEventosGoogle(evento(), { ...cliente, nome: 'Padaria Nova' }, { incluirValores: false }),
       montar({}, true),
     ]
     for (const v of variantes) expect(v[0].extendedProperties.private.bcHash).not.toBe(base)
+  })
+})
+
+describe('máquina reserva no Google Agenda', () => {
+  it('título com "+ 1 reserva", dias com reserva (e se foi usada) e a máquina reserva marcada', () => {
+    const maquinas = new Map([
+      ['m1', 'P-01'],
+      ['m2', 'P-02'],
+    ])
+    const [b] = montarEventosGoogle(
+      evento({
+        dias: [
+          { id: 'a', data: '2026-08-01', maquinas: 1, reservas: 1, reservasUsadas: 0 },
+          { id: 'b', data: '2026-08-02', maquinas: 1, reservas: 1, reservasUsadas: 1 },
+        ],
+        maquinasIds: ['m1', 'm2'],
+        reservasIds: ['m2'],
+      }),
+      cliente,
+      { incluirValores: false, maquinas },
+    )
+    expect(b.summary).toMatch(/\(1 máquina \+ 1 reserva\)$/)
+    expect(b.description).toContain('Máquinas enviadas: P-01, P-02 (reserva)')
+    expect(b.description).toContain('• 01/08/2026 (sáb): 1 máquina + 1 reserva\n')
+    expect(b.description).toContain('• 02/08/2026 (dom): 1 máquina + 1 reserva (usada)')
   })
 })

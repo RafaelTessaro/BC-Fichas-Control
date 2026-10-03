@@ -119,13 +119,14 @@ export function montarRecibo(
     `(${valorPorExtenso(r.total)}), referente à locação de máquinas de fichas para o evento “${evento.nome.trim()}”` +
     `${periodo ? `, ${periodo}` : ''}${cidade ? `, em ${cidade}` : ''}.`
 
+  // A máquina reserva usada é cobrada pela mesma diária, mas aparece numa linha própria
+  const diarias = r.totalDiarias - r.diariasReserva
+  const valorReserva = Math.round(evento.valorDiaria * r.diariasReserva * 100) / 100
+  const conta = (n: number) => `${numero(n)} ${n === 1 ? 'diária' : 'diárias'} × ${reais(evento.valorDiaria)}`
   const detalhes: LinhaDetalhe[] = [
-    {
-      rotulo: 'Diárias',
-      conta: `${numero(r.totalDiarias)} ${r.totalDiarias === 1 ? 'diária' : 'diárias'} × ${reais(evento.valorDiaria)}`,
-      valor: reais(r.valorDiarias),
-    },
+    { rotulo: 'Diárias', conta: conta(diarias), valor: reais(Math.round((r.valorDiarias - valorReserva) * 100) / 100) },
   ]
+  if (r.diariasReserva > 0) detalhes.push({ rotulo: 'Reserva usada', conta: conta(r.diariasReserva), valor: reais(valorReserva) })
   if (r.bobinasUtilizadas) {
     detalhes.push({
       rotulo: 'Bobinas',

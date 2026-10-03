@@ -88,8 +88,10 @@ export function EventoForm() {
       cabecalho: '',
       periodoCorrido: false,
       programacao: 'NAO_INICIADA',
-      dias: [{ id: novoId(), data: params.get('data') ?? hojeISO(), maquinas: 1 }],
+      dias: [{ id: novoId(), data: params.get('data') ?? hojeISO(), maquinas: 1, reservas: 0, reservasUsadas: 0 }],
       maquinasIds: [],
+      reservasIds: [],
+      grupoId: '',
       valorDiaria: config.valorDiariaPadrao,
       valorBobina: config.valorBobinaPadrao,
       bobinasConsignadas: 0,
@@ -244,7 +246,11 @@ export function EventoForm() {
     const ordenados = [...f.dias].filter((d) => d.data).sort((a, b) => a.data.localeCompare(b.data))
     const ultimo = ordenados[ordenados.length - 1]
     const data = ultimo ? format(addDays(parseISO(ultimo.data), 1), 'yyyy-MM-dd') : hojeISO()
-    set('dias', [...f.dias, { id: novoId(), data, maquinas: ultimo?.maquinas ?? 1 }])
+    // A reserva continua no dia seguinte; o uso dela, não
+    set('dias', [
+      ...f.dias,
+      { id: novoId(), data, maquinas: ultimo?.maquinas ?? 1, reservas: ultimo?.reservas ?? 0, reservasUsadas: 0 },
+    ])
   }
 
   const adicionarPeriodo = (de: string, ate: string, maquinas: number) => {
@@ -253,7 +259,7 @@ export function EventoForm() {
     const novos: DiaEvento[] = []
     for (let i = 0; i <= n; i++) {
       const data = format(addDays(parseISO(de), i), 'yyyy-MM-dd')
-      if (!existentes.has(data)) novos.push({ id: novoId(), data, maquinas })
+      if (!existentes.has(data)) novos.push({ id: novoId(), data, maquinas, reservas: 0, reservasUsadas: 0 })
     }
     // Remove a linha inicial "vazia" (padrão de hoje com 1 máquina) se o usuário ainda não mexeu nela
     const base =

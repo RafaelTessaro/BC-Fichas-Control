@@ -1,6 +1,7 @@
 import {
   atualizarEventoAntigo,
   CONFIG_PADRAO,
+  dataIsoValida,
   hojeLocalIso,
   LIMITES,
   listaServicos,
@@ -13,15 +14,20 @@ import {
   normalizarPatch,
   normalizarReclamacao,
   validarBackup,
+  VERSAO_BACKUP,
 } from '#shared/dominio.ts'
 import { novoId } from '#shared/id.ts'
 import {
   chaveIdentificacao,
   conflitosMaquinas,
+  dataCurtinha,
   datasOcupadas,
+  diasEntre,
   listaDatas,
   ordenarMaquinas,
+  periodoEvento,
   planoAjuste,
+  somarDias,
   STATUS_MAQUINA_LISTA,
   TIPOS_MAQUINA,
 } from '#shared/maquinas.ts'
@@ -294,9 +300,12 @@ export class Repositorio {
     return this.criarEvento({
       ...origem,
       nome: `${origem.nome} (cópia)`,
-      dias: origem.dias.map((d) => ({ ...d, id: novoId() })),
+      // O uso das reservas é do evento original
+      dias: origem.dias.map((d) => ({ ...d, id: novoId(), reservasUsadas: 0 })),
       // As máquinas são escolhidas de novo (a cópia costuma ser para outra data)
       maquinasIds: [],
+      reservasIds: [],
+      grupoId: '',
       bobinasDevolvidas: null,
       formaPagamento: 'NAO_PAGO',
       dataPagamento: '',
@@ -305,6 +314,68 @@ export class Repositorio {
       // A cópia é um evento novo: vale a cidade do cliente (o formulário não tem mais o campo)
       cidade: '',
     })
+  }
+
+  /**
+   * "Repetir em outras datas": cria uma cópia do evento para cada data de início informada (ex.:
+   * as festas do ano que o cliente já passou). Os dias seguem o mesmo desenho do original (um
+   * evento de sexta a domingo vira outro de sexta a domingo a partir da data escolhida). Cada
+   * cópia é um evento independente — com pagamento, recibo e status próprios —, sem as máquinas
+   * (escolhidas perto da data); todos ficam no mesmo grupo do original. Tudo ou nada.
+   */
+  repetirEvento(id: string, entrada: unknown): { original: Evento; criados: Evento[] } {
+    const bruto = (entrada && typeof entrada === 'object' ? (entrada as { datas?: unknown }).datas : undefined) ?? []
+    const datas = (Array.isArray(bruto) ? bruto : []).map((d) => (typeof d === 'string' ? d : ''))
+    if (!datas.length) throw new ErroApi(400, 'Escolha pelo menos uma data.')
+    if (datas.length > LIMITES.repeticoes)
+      throw new ErroApi(400, `Dá para repetir em no máximo ${LIMITES.repeticoes} datas de uma vez.`)
+    if (datas.some((d) => !dataIsoValida(d))) throw new ErroApi(400, 'Uma das datas escolhidas é inválida.')
+    if (new Set(datas).size !== datas.length) throw new ErroApi(400, 'Existem datas repetidas.')
+    const resultado = transacao(this.db, () => {
+      const origem = this.obterEventoBruto(id)
+      if (!origem) throw naoEncontrado('Evento')
+      const inicio = periodoEvento(origem)?.inicio
+      if (!inicio) throw new ErroApi(400, 'O evento não tem dias de utilização.')
+      if (datas.includes(inicio)) throw new ErroApi(400, `${dataCurtinha(inicio)} já é a data deste evento.`)
+      const grupoId = origem.grupoId || novoId()
+      const criados: Array<{ evento: Evento; rev: number }> = []
+      let anterior: Evento | undefined
+      let atualizado: Evento | undefined
+      if (!origem.grupoId) {
+        // O original entra no grupo junto com as cópias
+        anterior = origem
+        atualizado = { ...origem, grupoId, versao: origem.versao + 1, atualizadoEm: agora() }
+        this.gravarEvento(atualizado, false)
+      }
+      const revOrigem = atualizado ? this.incrementarRevisao() : 0
+      for (const data of [...datas].sort()) {
+        const desloca = diasEntre(inicio, data)
+        const dados = validar(
+          normalizarEvento({
+            ...origem,
+            dias: origem.dias.map((d) => ({ ...d, id: novoId(), data: somarDias(d.data, desloca), reservasUsadas: 0 })),
+            maquinasIds: [],
+            reservasIds: [],
+            grupoId,
+            bobinasDevolvidas: null,
+            formaPagamento: 'NAO_PAGO',
+            dataPagamento: '',
+            status: 'EM_ABERTO',
+            programacao: 'NAO_INICIADA',
+            cidade: '',
+          }),
+        )
+        const ts = agora()
+        const evento: Evento = { ...dados, id: novoId(), versao: 1, codigo: this.proximoCodigo(), criadoEm: ts, atualizadoEm: ts }
+        this.gravarEvento(evento, true)
+        criados.push({ evento, rev: this.incrementarRevisao() })
+      }
+      return { criados, atualizado, anterior, revOrigem, origem }
+    })
+    const original = resultado.atualizado
+      ? this.aposSalvarEvento(resultado.atualizado, resultado.anterior, resultado.revOrigem)
+      : this.decorar(resultado.origem)
+    return { original, criados: resultado.criados.map(({ evento, rev }) => this.aposSalvarEvento(evento, undefined, rev)) }
   }
 
   excluirEvento(id: string) {
@@ -582,7 +653,7 @@ export class Repositorio {
   exportar(): Backup {
     return {
       app: 'bc-fichas-control',
-      versao: 4,
+      versao: VERSAO_BACKUP,
       exportadoEm: agora(),
       clientes: this.listarClientes(),
       eventos: this.listarEventosBrutos(),
@@ -693,6 +764,7 @@ export class Repositorio {
           codigo,
           clienteId: mapaCliente.get(e.clienteId) ?? e.clienteId,
           maquinasIds: [...new Set(e.maquinasIds.map((id) => mapaMaquina.get(id) ?? id))],
+          reservasIds: [...new Set(e.reservasIds.map((id) => mapaMaquina.get(id) ?? id))],
         }
         this.gravarEvento(evento, true)
         codigos.add(codigo)
@@ -917,9 +989,10 @@ export class Repositorio {
     // Resumida como na tela ("07/11, 08/11, 09/11 e mais 20 dias"): com período corrido podem ser muitas
     const emComum = listaDatas(datasOcupadas(outro).filter((d) => datas.has(d)))
     const cliente = this.obterCliente(outro.clienteId)?.nome
+    const comoReserva = outro.reservasIds.includes(maquinaId) ? ' como reserva' : ''
     throw new ErroApi(
       409,
-      `A máquina ${maquinas.get(maquinaId)?.identificacao ?? ''} já está no evento #${String(outro.codigo).padStart(4, '0')} ${outro.nome}${cliente ? ` (${cliente})` : ''} em ${emComum}. ${saida}`,
+      `A máquina ${maquinas.get(maquinaId)?.identificacao ?? ''} já está${comoReserva} no evento #${String(outro.codigo).padStart(4, '0')} ${outro.nome}${cliente ? ` (${cliente})` : ''} em ${emComum}. ${saida}`,
       { conflitos: conflitos.map(([id, evs]) => ({ maquinaId: id, eventos: evs.map((e) => e.id) })) },
     )
   }

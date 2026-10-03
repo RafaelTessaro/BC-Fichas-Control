@@ -2,7 +2,7 @@ import { addDays, format, subMonths } from 'date-fns'
 import { CLIENTE_VAZIO, MAQUINA_VAZIA } from './dominio.ts'
 import { completarCnpj, completarCpf, mascaraCnpj, mascaraCpf } from './documentos.ts'
 import { novoId } from './id.ts'
-import { datasOcupadas, identificacaoPadrao } from './maquinas.ts'
+import { datasOcupadas, identificacaoPadrao, totalDia } from './maquinas.ts'
 import type {
   Cliente,
   Evento,
@@ -99,13 +99,17 @@ export function gerarDadosExemplo(hoje: Date) {
     if (futuro && dataBase > addDays(hoje, 45)) break
 
     const qtdDias = r() < 0.55 ? 1 : r() < 0.7 ? 2 : 3
+    // Alguns clientes levam uma máquina reserva; nos eventos que já passaram, às vezes ela foi usada
+    const comReserva = r() < 0.25
+    const finalizado = !futuro && r() < 0.85
     const dias = Array.from({ length: qtdDias }, (_, d) => ({
       id: novoId(),
       data: format(addDays(dataBase, d), 'yyyy-MM-dd'),
       maquinas: 1 + Math.floor(r() * 4),
+      reservas: comReserva ? 1 : 0,
+      reservasUsadas: comReserva && finalizado && r() < 0.3 ? 1 : 0,
     }))
     const consignadas = Math.round((10 + r() * 50) * qtdDias)
-    const finalizado = !futuro && r() < 0.85
     const devolvidas = futuro ? null : finalizado || r() < 0.5 ? Math.floor(consignadas * (0.15 + r() * 0.5)) : null
     const pago = finalizado && r() < 0.88
     const status: StatusEvento = futuro
@@ -135,6 +139,8 @@ export function gerarDadosExemplo(hoje: Date) {
       periodoCorrido: false,
       programacao,
       maquinasIds: [],
+      reservasIds: [],
+      grupoId: '',
       valorDiaria: 80,
       valorBobina: 6,
       bobinasConsignadas: consignadas,
@@ -160,10 +166,19 @@ export function gerarDadosExemplo(hoje: Date) {
     nome: 'Festa da Primavera',
     cidade: '',
     cabecalho: '',
-    dias: [-1, 0, 1].map((d) => ({ id: novoId(), data: format(addDays(hoje, d), 'yyyy-MM-dd'), maquinas: 4 })),
+    // 4 titulares e 1 reserva (no segundo dia, com muito movimento, a reserva foi usada)
+    dias: [-1, 0, 1].map((d) => ({
+      id: novoId(),
+      data: format(addDays(hoje, d), 'yyyy-MM-dd'),
+      maquinas: 4,
+      reservas: 1,
+      reservasUsadas: d === 0 ? 1 : 0,
+    })),
     periodoCorrido: false,
     programacao: 'CONCLUIDA',
     maquinasIds: [],
+    reservasIds: [],
+    grupoId: '',
     valorDiaria: 80,
     valorBobina: 6,
     bobinasConsignadas: 120,
@@ -192,10 +207,14 @@ export function gerarDadosExemplo(hoje: Date) {
       id: novoId(),
       data: format(addDays(primeiroSabado, d), 'yyyy-MM-dd'),
       maquinas: 3,
+      reservas: 1,
+      reservasUsadas: 0,
     })),
     periodoCorrido: true,
     programacao: 'EM_PROGRAMACAO',
     maquinasIds: [],
+    reservasIds: [],
+    grupoId: '',
     valorDiaria: 70,
     valorBobina: 6,
     bobinasConsignadas: 200,
@@ -209,6 +228,41 @@ export function gerarDadosExemplo(hoje: Date) {
     criadoEm: ts,
     atualizadoEm: ts,
   })
+
+  // Um cliente que já passou as datas dos próximos meses: um baile por mês, todos no mesmo grupo
+  const grupoBaile = novoId()
+  for (let mes = 1; mes <= 4; mes++) {
+    const primeiroDoMes = new Date(hoje.getFullYear(), hoje.getMonth() + mes, 1)
+    // Segundo sábado do mês
+    const sabado = addDays(primeiroDoMes, ((6 - primeiroDoMes.getDay() + 7) % 7) + 7)
+    eventos.push({
+      id: novoId(),
+      versao: 1,
+      codigo: codigo++,
+      clienteId: clientes[2].id,
+      nome: 'Baile da Terceira Idade',
+      cidade: '',
+      cabecalho: '',
+      dias: [{ id: novoId(), data: format(sabado, 'yyyy-MM-dd'), maquinas: 2, reservas: 0, reservasUsadas: 0 }],
+      periodoCorrido: false,
+      programacao: 'NAO_INICIADA',
+      maquinasIds: [],
+      reservasIds: [],
+      grupoId: grupoBaile,
+      valorDiaria: 80,
+      valorBobina: 6,
+      bobinasConsignadas: 40,
+      bobinasDevolvidas: null,
+      desconto: 0,
+      formaPagamento: 'NAO_PAGO',
+      dataPagamento: '',
+      status: 'EM_ABERTO',
+      rodape: 'AGRADECEMOS SUA PRESENÇA!',
+      observacoes: '',
+      criadoEm: ts,
+      atualizadoEm: ts,
+    })
+  }
 
   // Máquinas: 12 pequenas e 6 grandes, uma grande em manutenção e uma pequena antiga desativada
   const maquinas: Maquina[] = []
@@ -231,13 +285,18 @@ export function gerarDadosExemplo(hoje: Date) {
   const emUso = new Map<string, Set<string>>()
   const operantes = maquinas.filter((m) => m.status === 'DISPONIVEL')
   for (const e of eventos) {
-    const precisa = Math.max(...e.dias.map((d) => d.maquinas))
+    // Só os eventos que já passaram ou estão perto têm as máquinas escolhidas (as do baile, não)
+    if (e.grupoId) continue
+    const precisa = Math.max(...e.dias.map(totalDia))
+    const reservas = Math.max(...e.dias.map((d) => d.reservas))
     // Dias ocupados: com período corrido, também os do meio
     const datas = datasOcupadas(e)
     const ocupadas = new Set(datas.flatMap((d) => [...(emUso.get(d) ?? [])]))
     const livres = operantes.filter((m) => !ocupadas.has(m.id))
     const inicio = Math.floor(r() * livres.length)
     e.maquinasIds = Array.from({ length: Math.min(precisa, livres.length) }, (_, i) => livres[(inicio + i) % livres.length].id)
+    // As últimas vão como reserva
+    e.reservasIds = e.maquinasIds.length > reservas ? e.maquinasIds.slice(e.maquinasIds.length - reservas) : []
     for (const d of datas) emUso.set(d, new Set([...(emUso.get(d) ?? []), ...e.maquinasIds]))
   }
 

@@ -14,8 +14,12 @@ import {
   ordenarMaquinas,
   planoAjuste,
   proximasIdentificacoes,
+  quantidadeCurta,
+  quantidadePorExtenso,
+  reservasParadas,
   situacaoMaquina,
 } from './maquinas.ts'
+import { calcularEvento } from './calc.ts'
 import type { Evento, Maquina, OrdemServico } from './tipos.ts'
 
 const maq = (identificacao: string, extra: Partial<Maquina> = {}): Maquina => ({
@@ -43,8 +47,10 @@ const ev = (id: string, datas: string[], maquinasIds: string[], extra: Partial<E
   cabecalho: '',
   periodoCorrido: false,
   programacao: 'NAO_INICIADA',
-  dias: datas.map((data, i) => ({ id: `${id}${i}`, data, maquinas: 1 })),
+  dias: datas.map((data, i) => ({ id: `${id}${i}`, data, maquinas: 1, reservas: 0, reservasUsadas: 0 })),
   maquinasIds,
+  reservasIds: [],
+  grupoId: '',
   valorDiaria: 0,
   valorBobina: 0,
   bobinasConsignadas: 0,
@@ -200,12 +206,14 @@ describe('período corrido (as máquinas ficam com o cliente entre os dias de us
 
   it('sem período corrido, só os dias de uso; com, todos os dias do primeiro ao último com a maior quantidade', () => {
     const e = { dias: fds.map((data, i) => ({ data, maquinas: i === 1 ? 5 : 3 })) }
-    expect(diasOcupados(e)).toEqual(fds.map((data, i) => ({ data, maquinas: i === 1 ? 5 : 3, uso: true })))
+    expect(diasOcupados(e)).toEqual(
+      fds.map((data, i) => ({ data, maquinas: i === 1 ? 5 : 3, reservas: 0, reservasUsadas: 0, uso: true })),
+    )
     const corrido = diasOcupados({ ...e, periodoCorrido: true })
     expect(corrido).toHaveLength(9)
     expect(corrido.every((d) => d.maquinas === 5)).toBe(true)
     expect(corrido.filter((d) => d.uso).map((d) => d.data)).toEqual(fds)
-    expect(corrido[2]).toEqual({ data: '2026-10-05', maquinas: 5, uso: false })
+    expect(corrido[2]).toEqual({ data: '2026-10-05', maquinas: 5, reservas: 0, reservasUsadas: 0, uso: false })
     // Virada de mês e um só dia
     expect(datasOcupadas({ dias: [{ data: '2026-10-30' }, { data: '2026-11-02' }], periodoCorrido: true })).toEqual([
       '2026-10-30',
@@ -234,5 +242,104 @@ describe('período corrido (as máquinas ficam com o cliente entre os dias de us
     // Cancelado que ainda vai acontecer pode ser reativado: a programação continua por fazer
     expect(programacaoPadrao(ev('a', ['2026-11-01'], [], { status: 'CANCELADO' }), '2026-10-02')).toBe('NAO_INICIADA')
     expect(programacaoPadrao(ev('a', ['2026-09-01'], [], { status: 'CANCELADO' }), '2026-10-02')).toBe('CONCLUIDA')
+  })
+})
+
+describe('máquina reserva', () => {
+  const comReserva = (id: string, dias: Array<[string, number, number, number?]>, extra: Partial<Evento> = {}) =>
+    ev(id, [], [], {
+      dias: dias.map(([data, maquinas, reservas, reservasUsadas = 0]) => ({
+        id: data,
+        data,
+        maquinas,
+        reservas,
+        reservasUsadas,
+      })),
+      ...extra,
+    })
+
+  it('a reserva ocupa (agenda e disponibilidade), mas só é cobrada quando usada, pelo valor da diária', () => {
+    const e = comReserva(
+      'a',
+      [
+        ['2026-10-10', 3, 1],
+        ['2026-10-11', 3, 1, 1],
+        ['2026-10-12', 4, 0],
+      ],
+      { valorDiaria: 50 },
+    )
+    const r = calcularEvento(e)
+    expect(r).toMatchObject({ totalDiarias: 11, diariasReserva: 1, reservas: 2, valorDiarias: 550 })
+    expect(ocupacaoPorDia([e])).toEqual(
+      new Map([
+        ['2026-10-10', 4],
+        ['2026-10-11', 4],
+        ['2026-10-12', 4],
+      ]),
+    )
+    expect(diasOcupados(e)[1]).toEqual({ data: '2026-10-11', maquinas: 3, reservas: 1, reservasUsadas: 1, uso: true })
+  })
+
+  it('com período corrido, todos os dias com as titulares do maior dia e as reservas que completam o maior total', () => {
+    const e = comReserva(
+      'a',
+      [
+        ['2026-10-03', 3, 1],
+        ['2026-10-10', 4, 0, 0],
+        ['2026-10-11', 2, 3, 2],
+      ],
+      { periodoCorrido: true },
+    )
+    const dias = diasOcupados(e)
+    expect(dias).toHaveLength(9)
+    // Titulares: 4 (do dia 10); total máximo: 5 (dia 11) → 1 reserva em todos os dias
+    expect(dias.every((d) => d.maquinas === 4 && d.reservas === 1)).toBe(true)
+    expect(dias.find((d) => d.data === '2026-10-05')).toMatchObject({ uso: false, reservasUsadas: 0 })
+    // O uso registrado nunca passa das reservas do dia
+    expect(dias.find((d) => d.data === '2026-10-11')?.reservasUsadas).toBe(1)
+  })
+
+  it('dias gravados antes da reserva contam como sem reserva; o formulário limita as usadas às reservas', () => {
+    const antigo = ev('a', ['2026-10-10'], [])
+    // Sem os campos novos (como no banco de antes da 2.4)
+    antigo.dias = [{ id: 'x', data: '2026-10-10', maquinas: 2 } as Evento['dias'][number]]
+    expect(calcularEvento(antigo).totalDiarias).toBe(2)
+    expect(diasOcupados(antigo)[0]).toMatchObject({ maquinas: 2, reservas: 0, reservasUsadas: 0 })
+    const { valor } = normalizarEvento({
+      clienteId: 'c',
+      nome: 'X',
+      dias: [{ data: '2026-10-10', maquinas: 2, reservas: 2, reservasUsadas: 9 }],
+      maquinasIds: ['m1', 'm2'],
+      reservasIds: ['m2', 'm3'],
+    })
+    expect(valor.dias[0]).toMatchObject({ reservas: 2, reservasUsadas: 2 })
+    expect(valor.reservasIds).toEqual(['m2'])
+  })
+
+  it('reservas paradas no dia: onde buscar uma máquina se faltar', () => {
+    const a = comReserva('a', [['2026-10-10', 3, 1]], { reservasIds: ['P-04'], maquinasIds: ['P-01', 'P-02', 'P-03', 'P-04'] })
+    const usada = comReserva('b', [['2026-10-10', 2, 1, 1]])
+    const duas = comReserva('c', [['2026-10-10', 1, 2]])
+    const cancelado = comReserva('d', [['2026-10-10', 1, 1]], { status: 'CANCELADO' })
+    const outroDia = comReserva('e', [['2026-10-11', 1, 1]])
+    const lista = reservasParadas([a, usada, duas, cancelado, outroDia], '2026-10-10')
+    expect(lista.map((r) => [r.evento.id, r.paradas, r.maquinasIds])).toEqual([
+      ['c', 2, []],
+      ['a', 1, ['P-04']],
+    ])
+  })
+
+  it('a situação da máquina diz quando ela está locada como reserva', () => {
+    const e = ev('a', ['2026-10-10'], ['P-01', 'P-02'], { reservasIds: ['P-02'] })
+    expect(situacaoMaquina(maq('P-02'), [e], '2026-10-10')).toMatchObject({ estado: 'LOCADA', reserva: true })
+    expect(situacaoMaquina(maq('P-01'), [e], '2026-10-10').reserva).toBeUndefined()
+  })
+
+  it('textos: "4+1" na agenda e "4 máquinas + 1 reserva" por extenso', () => {
+    expect(quantidadeCurta(4)).toBe('4')
+    expect(quantidadeCurta(4, 1)).toBe('4+1')
+    expect(quantidadePorExtenso(1)).toBe('1 máquina')
+    expect(quantidadePorExtenso(4, 1)).toBe('4 máquinas + 1 reserva')
+    expect(quantidadePorExtenso(3, 2)).toBe('3 máquinas + 2 reservas')
   })
 })

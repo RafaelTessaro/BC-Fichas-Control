@@ -363,7 +363,7 @@ describe('backup com máquinas e O.S.', () => {
   it('exporta e restaura máquinas, O.S. e a numeração', async () => {
     await montarDados()
     const backup = (await req<Backup>('GET', '/api/backup')).json
-    expect(backup).toMatchObject({ versao: 4, proximaOS: 2 })
+    expect(backup).toMatchObject({ versao: 5, proximaOS: 2 })
     expect(backup.maquinas).toHaveLength(1)
     expect(backup.ordens).toHaveLength(1)
 

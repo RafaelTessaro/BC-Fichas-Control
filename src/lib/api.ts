@@ -116,6 +116,9 @@ export const api = {
     requisitar<Evento>('PUT', `/api/eventos/${encodeURIComponent(id)}`, { ...dados, versao }),
   alterarEvento: (id: string, patch: EventoPatch) => requisitar<Evento>('PATCH', `/api/eventos/${encodeURIComponent(id)}`, patch),
   duplicarEvento: (id: string) => requisitar<Evento>('POST', `/api/eventos/${encodeURIComponent(id)}/duplicar`),
+  /** Cria uma cópia do evento para cada data de início (ver Repositorio.repetirEvento). */
+  repetirEvento: (id: string, datas: string[]) =>
+    requisitar<{ original: Evento; criados: Evento[] }>('POST', `/api/eventos/${encodeURIComponent(id)}/repetir`, { datas }),
   excluirEvento: (id: string) => requisitar<void>('DELETE', `/api/eventos/${encodeURIComponent(id)}`),
 
   criarMaquina: (dados: MaquinaInput) => requisitar<Maquina>('POST', '/api/maquinas', dados),

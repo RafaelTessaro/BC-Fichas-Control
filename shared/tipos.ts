@@ -47,8 +47,15 @@ export interface DiaEvento {
   id: ID
   /** Data no formato ISO `yyyy-MM-dd`. */
   data: string
-  /** Quantidade de máquinas usadas no dia (cada máquina conta uma diária). */
+  /** Quantidade de máquinas titulares usadas no dia (cada uma conta uma diária). */
   maquinas: number
+  /**
+   * Máquinas reserva que ficam com o cliente no dia, além das titulares: estão locadas (contam na
+   * agenda e na disponibilidade), mas só são cobradas se forem usadas (ver `reservasUsadas`).
+   */
+  reservas: number
+  /** Quantas das reservas do dia o cliente acabou usando: cobradas pelo mesmo valor da diária. */
+  reservasUsadas: number
 }
 
 /** Situação da cópia do evento no Google Agenda (somente leitura, definida pelo servidor). */
@@ -82,8 +89,15 @@ export interface Evento {
   periodoCorrido: boolean
   /** Andamento da programação das máquinas para este evento. */
   programacao: StatusProgramacao
-  /** Máquinas enviadas para o evento (ids de `Maquina`). */
+  /** Máquinas enviadas para o evento (ids de `Maquina`), titulares e reservas. */
   maquinasIds: ID[]
+  /** Quais das máquinas enviadas vão como reserva (sempre contidas em `maquinasIds`). */
+  reservasIds: ID[]
+  /**
+   * Eventos criados juntos por "Repetir em outras datas" (ex.: as festas do ano de um cliente)
+   * têm o mesmo grupo; '' quando o evento não faz parte de uma série.
+   */
+  grupoId: ID
   valorDiaria: number
   valorBobina: number
   bobinasConsignadas: number

@@ -71,6 +71,9 @@ export const STATUS: StatusEvento[] = ['EM_ABERTO', 'PENDENTE', 'FINALIZADO', 'C
 export const FORMAS: FormaPagamento[] = ['NAO_PAGO', 'DINHEIRO', 'BOLETO', 'CREDITO', 'DEBITO', 'PIX']
 export const UFS = 'AC AL AP AM BA CE DF ES GO MA MT MS MG PA PB PR PE PI RJ RN RS RO RR SC SP SE TO'.split(' ')
 
+/** Versão do arquivo de backup: 4 trouxe as reclamações; 5, as máquinas reserva e as séries de eventos. */
+export const VERSAO_BACKUP = 5
+
 /** Limites de segurança contra dados corrompidos ou absurdos. */
 export const LIMITES = {
   texto: 300,
@@ -87,6 +90,8 @@ export const LIMITES = {
   catalogoServicos: 100,
   /** Cadastro de várias máquinas de uma vez. */
   lote: 200,
+  /** Cópias criadas de uma vez por "Repetir em outras datas". */
+  repeticoes: 60,
 }
 
 export interface Resultado<T> {
@@ -217,10 +222,14 @@ function normalizarDias(v: unknown, erros: string[]): DiaEvento[] {
   if (Array.isArray(v) && v.length > LIMITES.dias) erros.push(`Um evento pode ter no máximo ${LIMITES.dias} dias.`)
   const dias = lista.map((d, i) => {
     const r = obj(d)
+    const reservas = inteiro(r.reservas, LIMITES.maquinas, 0)
     return {
       id: texto(r.id, 100) || `dia-${i + 1}`,
       data: texto(r.data, 10),
       maquinas: inteiro(r.maquinas, LIMITES.maquinas, 0),
+      reservas,
+      // Não dá para usar mais reservas do que as que ficaram com o cliente
+      reservasUsadas: Math.min(inteiro(r.reservasUsadas, LIMITES.maquinas, 0), reservas),
     }
   })
   if (!dias.length) erros.push('Adicione pelo menos um dia de utilização.')
@@ -251,6 +260,7 @@ export function normalizarEvento(entrada: unknown): Resultado<EventoInput> {
     }
   }
 
+  const maquinasIds = ids(r.maquinasIds, LIMITES.maquinasEvento)
   const formaPagamento = umDe(r.formaPagamento, FORMAS, 'NAO_PAGO')
   let dataPagamento = texto(r.dataPagamento, 10)
   if (formaPagamento === 'NAO_PAGO') dataPagamento = ''
@@ -264,7 +274,10 @@ export function normalizarEvento(entrada: unknown): Resultado<EventoInput> {
       // O nome do evento é o topo das fichas: um cabeçalho que diga algo a mais vai para as observações
       cabecalho: '',
       dias,
-      maquinasIds: ids(r.maquinasIds, LIMITES.maquinasEvento),
+      maquinasIds,
+      // A reserva é uma das máquinas enviadas
+      reservasIds: ids(r.reservasIds, LIMITES.maquinasEvento).filter((id) => maquinasIds.includes(id)),
+      grupoId: texto(r.grupoId, 100),
       valorDiaria: dinheiro(r.valorDiaria),
       valorBobina: dinheiro(r.valorBobina),
       bobinasConsignadas,
@@ -343,9 +356,17 @@ export function programacaoPadrao(e: Pick<Evento, 'dias' | 'status'>, hoje = hoj
   return p && p.fim < hoje ? 'CONCLUIDA' : 'NAO_INICIADA'
 }
 
+/** Reservas de um dia gravado antes da máquina reserva (2.4): nenhuma. */
+function diaComReservas(d: DiaEvento): DiaEvento {
+  const reservas = Number.isInteger(d.reservas) && d.reservas > 0 ? d.reservas : 0
+  const usadas = Number.isInteger(d.reservasUsadas) && d.reservasUsadas > 0 ? Math.min(d.reservasUsadas, reservas) : 0
+  return d.reservas === reservas && d.reservasUsadas === usadas ? d : { ...d, reservas, reservasUsadas: usadas }
+}
+
 /**
  * Ajustes de leitura de um evento gravado por versões anteriores (no banco ou num backup):
- * "local" e "cabeçalho" antigos vão para as observações; programação ausente ganha o padrão.
+ * "local" e "cabeçalho" antigos vão para as observações; programação ausente ganha o padrão;
+ * sem reservas nem grupo quando ainda não existiam.
  */
 export function atualizarEventoAntigo<T extends Evento>(e: T, bruto: Record<string, unknown>): T {
   let observacoes = observacoesComLocalAntigo(bruto.local, e.observacoes)
@@ -354,7 +375,18 @@ export function atualizarEventoAntigo<T extends Evento>(e: T, bruto: Record<stri
   const programacao = STATUS_PROGRAMACAO_LISTA.includes(bruto.programacao as StatusProgramacao)
     ? (bruto.programacao as StatusProgramacao)
     : programacaoPadrao(e)
-  return { ...e, observacoes, cabecalho: '', programacao, periodoCorrido: bruto.periodoCorrido === true }
+  const maquinasIds = Array.isArray(e.maquinasIds) ? e.maquinasIds : []
+  return {
+    ...e,
+    observacoes,
+    cabecalho: '',
+    programacao,
+    periodoCorrido: bruto.periodoCorrido === true,
+    dias: (Array.isArray(e.dias) ? e.dias : []).map(diaComReservas),
+    maquinasIds,
+    reservasIds: (Array.isArray(e.reservasIds) ? e.reservasIds : []).filter((id) => maquinasIds.includes(id)),
+    grupoId: typeof e.grupoId === 'string' ? e.grupoId : '',
+  }
 }
 
 export function migrarEvento(entrada: unknown): Evento {
@@ -583,7 +615,10 @@ export function validarBackup(dados: unknown): Backup {
   if (new Set(eventos.map((e) => e.id)).size !== eventos.length) throw new Error('Backup inválido: eventos repetidos.')
   const orfaos = eventos.filter((e) => !idsClientes.has(e.clienteId))
   if (orfaos.length) throw new Error(`Backup inválido: ${orfaos.length} evento(s) sem cliente correspondente.`)
-  for (const e of eventos) e.maquinasIds = e.maquinasIds.filter((id) => idsMaquinas.has(id))
+  for (const e of eventos) {
+    e.maquinasIds = e.maquinasIds.filter((id) => idsMaquinas.has(id))
+    e.reservasIds = e.reservasIds.filter((id) => idsMaquinas.has(id))
+  }
 
   const ordens = (Array.isArray(b.ordens) ? b.ordens : []).map(migrarOS).filter((o) => o.id)
   if (new Set(ordens.map((o) => o.id)).size !== ordens.length) throw new Error('Backup inválido: manutenções repetidas.')
@@ -613,7 +648,7 @@ export function validarBackup(dados: unknown): Backup {
 
   return {
     app: 'bc-fichas-control',
-    versao: 4,
+    versao: VERSAO_BACKUP,
     exportadoEm: texto(b.exportadoEm, 40),
     clientes,
     eventos,

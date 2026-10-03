@@ -37,10 +37,12 @@ const evento = (extra: Partial<Evento> = {}): Evento => ({
   periodoCorrido: false,
   programacao: 'CONCLUIDA',
   dias: [
-    { id: 'd1', data: '2026-10-11', maquinas: 3 },
-    { id: 'd2', data: '2026-10-12', maquinas: 3 },
+    { id: 'd1', data: '2026-10-11', maquinas: 3, reservas: 0, reservasUsadas: 0 },
+    { id: 'd2', data: '2026-10-12', maquinas: 3, reservas: 0, reservasUsadas: 0 },
   ],
   maquinasIds: [],
+  reservasIds: [],
+  grupoId: '',
   valorDiaria: 80,
   valorBobina: 6,
   bobinasConsignadas: 0,
@@ -161,7 +163,7 @@ describe('textos prontos', () => {
           formaPagamento: 'NAO_PAGO',
           dataPagamento: '',
           bobinasConsignadas: 40,
-          dias: [{ id: 'd1', data: '2026-10-11', maquinas: 2 }],
+          dias: [{ id: 'd1', data: '2026-10-11', maquinas: 2, reservas: 0, reservasUsadas: 0 }],
         }),
       }),
     ).toEqual([
@@ -175,7 +177,13 @@ describe('textos prontos', () => {
   it('com período corrido, diz até quando as máquinas ficam com o cliente', () => {
     const corrido = evento({
       periodoCorrido: true,
-      dias: ['2026-10-03', '2026-10-10', '2026-10-17'].map((data, i) => ({ id: `d${i}`, data, maquinas: 4 })),
+      dias: ['2026-10-03', '2026-10-10', '2026-10-17'].map((data, i) => ({
+        id: `d${i}`,
+        data,
+        maquinas: 4,
+        reservas: 0,
+        reservasUsadas: 0,
+      })),
     })
     expect(linhasResumo({ evento: corrido })).toContainEqual(['Máquinas com vocês', 'de 03/10/2026 a 17/10/2026'])
     // Sem período corrido, a linha não aparece

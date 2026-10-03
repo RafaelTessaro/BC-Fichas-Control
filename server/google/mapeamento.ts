@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { calcularEvento, FORMAS_PAGAMENTO, STATUS_EVENTO } from '#shared/calc.ts'
-import { datasOcupadas } from '#shared/maquinas.ts'
+import { datasOcupadas, reservasDia, reservasUsadasDia } from '#shared/maquinas.ts'
 import type { Cliente, Evento, StatusEvento } from '#shared/tipos.ts'
 
 /**
@@ -24,7 +24,8 @@ export interface BlocoDatas {
   inicio: string
   /** Último dia (inclusivo). */
   fim: string
-  dias: Array<{ data: string; maquinas: number }>
+  /** Titulares e reservas de cada dia (`reservasUsadas`: as que o cliente usou, cobradas). */
+  dias: Array<{ data: string; maquinas: number; reservas: number; reservasUsadas: number }>
 }
 
 export interface EventoGoogle {
@@ -57,16 +58,21 @@ export const diaSeguinte = (data: string) => deUTC(paraUTC(data) + DIA_MS)
 
 /** Agrupa os dias do evento em blocos de datas consecutivas, somando datas repetidas. */
 export function blocosDeDatas(dias: Evento['dias']): BlocoDatas[] {
-  const porData = new Map<string, number>()
+  const porData = new Map<string, { maquinas: number; reservas: number; reservasUsadas: number }>()
   for (const d of dias) {
     if (!d || !dataValida(d.data)) continue
-    porData.set(d.data, (porData.get(d.data) ?? 0) + (Number(d.maquinas) || 0))
+    const atual = porData.get(d.data) ?? { maquinas: 0, reservas: 0, reservasUsadas: 0 }
+    porData.set(d.data, {
+      maquinas: atual.maquinas + (Number(d.maquinas) || 0),
+      reservas: atual.reservas + reservasDia(d),
+      reservasUsadas: atual.reservasUsadas + reservasUsadasDia(d),
+    })
   }
   const ordenadas = [...porData.keys()].sort()
   const blocos: BlocoDatas[] = []
   for (const data of ordenadas) {
     const atual = blocos[blocos.length - 1]
-    const dia = { data, maquinas: porData.get(data) ?? 0 }
+    const dia = { data, ...porData.get(data)! }
     if (atual && paraUTC(data) - paraUTC(atual.fim) === DIA_MS) {
       atual.fim = data
       atual.dias.push(dia)
@@ -101,11 +107,26 @@ const plural = (n: number, um: string, varios: string) => `${inteiro.format(n)} 
 const dataBR = (iso: string) => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}`
 const codigo = (n: number) => `#${String(n).padStart(4, '0')}`
 
+/** "4 máquinas", "2–3 máquinas"; com reserva, "4 máquinas + 1 reserva" (sem reserva, o texto não muda). */
 function textoMaquinas(dias: BlocoDatas['dias']) {
   const qtds = dias.map((d) => d.maquinas)
   const min = Math.min(...qtds)
   const max = Math.max(...qtds)
-  return min === max ? plural(min, 'máquina', 'máquinas') : `${inteiro.format(min)}–${inteiro.format(max)} máquinas`
+  const titulares = min === max ? plural(min, 'máquina', 'máquinas') : `${inteiro.format(min)}–${inteiro.format(max)} máquinas`
+  const reservas = dias.map((d) => d.reservas)
+  const maxR = Math.max(...reservas)
+  if (!maxR) return titulares
+  const minR = Math.min(...reservas)
+  return `${titulares} + ${minR === maxR ? plural(maxR, 'reserva', 'reservas') : `até ${plural(maxR, 'reserva', 'reservas')}`}`
+}
+
+/** "4 máquinas", "4 máquinas + 1 reserva", "4 máquinas + 1 reserva (usada)". */
+function textoDia(d: BlocoDatas['dias'][number]) {
+  const titulares = plural(d.maquinas, 'máquina', 'máquinas')
+  if (!d.reservas) return titulares
+  const u = d.reservasUsadas
+  const usadas = !u ? '' : u === d.reservas ? (u === 1 ? ' (usada)' : ' (usadas)') : ` (${u} ${u === 1 ? 'usada' : 'usadas'})`
+  return `${titulares} + ${plural(d.reservas, 'reserva', 'reservas')}${usadas}`
 }
 
 export interface OpcoesMapeamento {
@@ -129,16 +150,20 @@ export function descricaoEvento(evento: Evento, cliente: Cliente | undefined, op
   if (cliente?.telefone) linhas.push(`Telefone: ${cliente.telefone}`)
   const cidade = cidadeDoEvento(evento, cliente)
   if (cidade) linhas.push(`Cidade: ${cidade}`)
-  const maquinas = evento.maquinasIds.map((id) => opcoes.maquinas?.get(id)).filter((m): m is string => !!m)
+  const reservasIds = new Set(evento.reservasIds ?? [])
+  const maquinas = evento.maquinasIds
+    .map((id) => {
+      const ident = opcoes.maquinas?.get(id)
+      return ident && reservasIds.has(id) ? `${ident} (reserva)` : ident
+    })
+    .filter((m): m is string => !!m)
   if (maquinas.length) linhas.push(`Máquinas enviadas: ${maquinas.join(', ')}`)
 
   const todos = blocosDeDatas(evento.dias).flatMap((b) => b.dias)
   if (todos.length) {
     linhas.push('', 'Dias:')
     for (const d of todos) {
-      linhas.push(
-        `• ${dataBR(d.data)} (${SEMANA[new Date(paraUTC(d.data)).getUTCDay()]}): ${plural(d.maquinas, 'máquina', 'máquinas')}`,
-      )
+      linhas.push(`• ${dataBR(d.data)} (${SEMANA[new Date(paraUTC(d.data)).getUTCDay()]}): ${textoDia(d)}`)
     }
   }
   // Período corrido: as máquinas não voltam entre os dias de uso (no Google aparecem só os dias de uso)

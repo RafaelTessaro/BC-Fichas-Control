@@ -1,7 +1,7 @@
 import { jsPDF } from 'jspdf'
 import timbradoUrl from '../assets/timbrado.jpg'
 import { calcularEvento, FORMAS_PAGAMENTO } from '#shared/calc.ts'
-import { datasOcupadas, ordenarMaquinas } from '#shared/maquinas.ts'
+import { datasOcupadas, ordenarMaquinas, quantidadePorExtenso, reservasDia, reservasUsadasDia } from '#shared/maquinas.ts'
 import { parseISO } from 'date-fns'
 import { codigoEvento, dataCurta, hojeISO, moeda, numero, periodo } from './format'
 import { nomeArquivoSeguro } from './storage'
@@ -29,7 +29,6 @@ export function carregarTimbrado() {
   return timbradoCache
 }
 
-/** Fontes padrão do PDF usam WinAnsi: normaliza espaços especiais do Intl. */
 const DIAS_SEMANA = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb']
 
 export async function gerarResumoPDF(
@@ -116,14 +115,24 @@ export async function gerarResumoPDF(
   const enviadas = ordenarMaquinas(evento.maquinasIds.map((id) => porId.get(id)).filter((m): m is Maquina => !!m))
   if (enviadas.length) {
     doc.setFont('helvetica', 'normal').setFontSize(11)
-    const total = `(${enviadas.length} ${enviadas.length === 1 ? 'máquina' : 'máquinas'})`
-    const ids = enviadas.map((m) => m.identificacao)
+    // As reservas vão separadas: "P-01, P-02, P-03 • Reserva: P-04 (3 máquinas + 1 reserva)"
+    const reservas = new Set(evento.reservasIds)
+    const titulares = enviadas.filter((m) => !reservas.has(m.id)).map((m) => m.identificacao)
+    const deReserva = enviadas.filter((m) => reservas.has(m.id)).map((m) => m.identificacao)
+    const total = `(${quantidadePorExtenso(titulares.length, deReserva.length)})`
+    const lista = (ids: string[], n: number) =>
+      n >= ids.length ? ids.join(', ') : `${ids.slice(0, n).join(', ')} e mais ${ids.length - n}`
+    const montar = (n: number) =>
+      [
+        titulares.length ? lista(titulares, n) : '',
+        deReserva.length ? `${deReserva.length === 1 ? 'Reserva' : 'Reservas'}: ${deReserva.join(', ')}` : '',
+      ]
+        .filter(Boolean)
+        .join(' • ') + ` ${total}`
     let linhas: string[] = []
-    for (let n = ids.length; n >= 1; n--) {
-      const texto =
-        n === ids.length ? `${ids.join(', ')} ${total}` : `${ids.slice(0, n).join(', ')} e mais ${ids.length - n} ${total}`
-      linhas = doc.splitTextToSize(txt(texto), W) as string[]
-      if (linhas.length <= 3) break
+    for (let n = titulares.length; n >= 1 || (n === 0 && !titulares.length); n--) {
+      linhas = doc.splitTextToSize(txt(montar(n)), W) as string[]
+      if (linhas.length <= 3 || n <= 1) break
     }
     linhas = linhas.slice(0, 3)
     const ENTRELINHA = 4.5
@@ -151,10 +160,21 @@ export async function gerarResumoPDF(
   garantirEspaco(4 + 9)
   doc.text('DATAS DE UTILIZAÇÃO', L, y)
   y += 4
-  const colunas = 3
+  // Com máquina reserva o texto do dia é mais longo: duas colunas em vez de três
+  const comReserva = evento.dias.some((d) => reservasDia(d) > 0)
+  const colunas = comReserva ? 2 : 3
   const larguraCol = W / colunas
-  const textoDia = (d: (typeof evento.dias)[number]) =>
-    txt(`${DIAS_SEMANA[parseISO(d.data).getDay()]} • ${d.maquinas} ${d.maquinas === 1 ? 'máquina' : 'máquinas'}`)
+  const textoDia = (d: (typeof evento.dias)[number]) => {
+    const usadas = reservasUsadasDia(d)
+    const uso = !usadas
+      ? ''
+      : usadas === reservasDia(d)
+        ? usadas === 1
+          ? ' (usada)'
+          : ' (usadas)'
+        : ` (${usadas} usada${usadas > 1 ? 's' : ''})`
+    return txt(`${DIAS_SEMANA[parseISO(d.data).getDay()]} • ${quantidadePorExtenso(d.maquinas, reservasDia(d))}${uso}`)
+  }
   // Mesmo tamanho de letra em todas as caixinhas: reduz para todas se alguma não couber ao lado da data
   doc.setFont('helvetica', 'bold').setFontSize(9)
   const larguraData = doc.getTextWidth('00/00/0000')
@@ -181,13 +201,34 @@ export async function gerarResumoPDF(
     doc.text(textoDia(d), cx + larguraCol - 6, cy + 4.7, { align: 'right' })
   })
   if (evento.dias.length) y += 9
+  if (comReserva) {
+    // O cliente precisa entender por que a reserva aparece e quando ela é cobrada
+    doc
+      .setFont('helvetica', 'normal')
+      .setFontSize(8.5)
+      .setTextColor(...SECUNDARIO)
+    const nota = doc.splitTextToSize(
+      txt('Máquina reserva: fica com o cliente sem custo e é cobrada pelo valor da diária somente nos dias em que for usada.'),
+      W,
+    ) as string[]
+    garantirEspaco(2 + nota.length * 3.8)
+    nota.forEach((linha, i) => doc.text(linha, L, y + 1.5 + i * 3.8))
+    y += 2 + nota.length * 3.8
+  }
 
   // Resumo financeiro (mantido inteiro na mesma página, junto com o total)
   const linhas: Array<[string, string]> = [
     ['Quantidade de diárias utilizadas', numero(r.totalDiarias)],
+    ...(r.diariasReserva > 0
+      ? [['Diárias de máquina reserva usada (incluídas acima)', numero(r.diariasReserva)] as [string, string]]
+      : []),
     ['Valor unitário da diária', moeda(evento.valorDiaria)],
     ['Valor total das diárias', moeda(r.valorDiarias)],
-    ['Quantidade de bobinas utilizadas', r.bobinasUtilizadas === null ? 'A conferir' : numero(r.bobinasUtilizadas)],
+    // Sem bobinas consignadas não há o que conferir
+    [
+      'Quantidade de bobinas utilizadas',
+      r.bobinasUtilizadas === null ? (evento.bobinasConsignadas > 0 ? 'A conferir' : '0') : numero(r.bobinasUtilizadas),
+    ],
     ['Valor unitário da bobina', moeda(evento.valorBobina)],
     ['Valor total das bobinas', moeda(r.valorBobinas)],
   ]

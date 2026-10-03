@@ -23,10 +23,12 @@ const evento = (extra: Partial<Evento> = {}): Evento => ({
   periodoCorrido: false,
   programacao: 'NAO_INICIADA',
   dias: [
-    { id: 'd1', data: '2026-10-11', maquinas: 3 },
-    { id: 'd2', data: '2026-10-12', maquinas: 3 },
+    { id: 'd1', data: '2026-10-11', maquinas: 3, reservas: 0, reservasUsadas: 0 },
+    { id: 'd2', data: '2026-10-12', maquinas: 3, reservas: 0, reservasUsadas: 0 },
   ],
   maquinasIds: [],
+  reservasIds: [],
+  grupoId: '',
   valorDiaria: 80,
   valorBobina: 6,
   bobinasConsignadas: 0,
@@ -95,7 +97,7 @@ describe('recibo', () => {
     const c = cliente({ tipo: 'PF', nome: 'Juliana Martins', documento: '123.456.789-09' })
     const r = montarRecibo(
       evento({
-        dias: [{ id: 'd1', data: '2026-10-11', maquinas: 2 }],
+        dias: [{ id: 'd1', data: '2026-10-11', maquinas: 2, reservas: 0, reservasUsadas: 0 }],
         valorDiaria: 80.5,
         bobinasConsignadas: 50,
         bobinasDevolvidas: 13,
@@ -177,5 +179,26 @@ describe('recibo', () => {
     expect(r.assinatura).toEqual(['Balanças.com'])
     expect(r.texto.startsWith('Recebemos de Bar: "Ponto/Final", a importância')).toBe(true)
     expect(r.nomeArquivo).toBe('Recibo_0031_Bar-_-Ponto-Final-.pdf')
+  })
+})
+
+describe('reserva usada no recibo', () => {
+  it('a reserva usada vai numa linha própria, pelo mesmo valor da diária; a parada não aparece', () => {
+    const r = montarRecibo(
+      evento({
+        valorDiaria: 50,
+        dias: [
+          { id: 'd1', data: '2026-10-11', maquinas: 3, reservas: 1, reservasUsadas: 0 },
+          { id: 'd2', data: '2026-10-12', maquinas: 3, reservas: 1, reservasUsadas: 1 },
+        ],
+      }),
+      cliente({}),
+      CONFIG_PADRAO,
+    )
+    expect(r.detalhes.map((d) => [d.rotulo, d.conta, d.valor])).toEqual([
+      ['Diárias', '6 diárias × R$ 50,00', 'R$ 300,00'],
+      ['Reserva usada', '1 diária × R$ 50,00', 'R$ 50,00'],
+    ])
+    expect(r.valor).toBe(350)
   })
 })
