@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { CLIENTE_VAZIO, CONFIG_PADRAO } from '#shared/dominio.ts'
 import type { Cliente, Evento } from '#shared/tipos.ts'
-import { dataPorExtenso, montarRecibo, periodoRecibo, podeGerarRecibo } from './recibo'
+import { cidadeDoEvento, dataPorExtenso, montarRecibo, periodoRecibo, podeGerarRecibo } from './recibo'
 
 const cliente = (extra: Partial<Cliente>): Cliente => ({
   ...CLIENTE_VAZIO,
@@ -85,7 +85,7 @@ describe('recibo', () => {
     expect(r.detalhes).toEqual([{ rotulo: 'Diárias', conta: '6 diárias × R$ 80,00', valor: 'R$ 480,00' }])
     expect(r.total).toBeNull()
     expect(r.pagamento).toBe('PIX, em 02/10/2026')
-    expect(r.fecho).toBe('Para maior clareza, firmamos o presente recibo.')
+    expect(r.fecho).toBe('Para maior clareza, firmamos o presente recibo, dando plena quitação do valor recebido.')
     expect(r.localData).toBe('Rio Claro - SP, 2 de outubro de 2026.')
     expect(r.assinatura).toEqual(['FABIO DE GODOY LIMA LTDA', 'Balanças.com', 'CNPJ 12.403.843/0001-18'])
     expect(r.nomeArquivo).toBe('Recibo_0031_Padaria_Ideal.pdf')
@@ -149,6 +149,26 @@ describe('recibo', () => {
       CONFIG_PADRAO,
     )
     expect(comCpf.texto.startsWith('Recebemos de ______________________________, CPF 123.456.789-09, a importância')).toBe(true)
+  })
+
+  it('sem cidade no evento, usa a do cadastro do cliente (com a UF)', () => {
+    const c = cliente({ tipo: 'PF', nome: 'Juliana Martins', cidade: 'Santa Gertrudes', uf: 'SP' })
+    const r = montarRecibo(evento({ cidade: '' }), c, CONFIG_PADRAO)
+    expect(r.texto.endsWith('para o evento “Baile da Cidade”, de 11 a 12/10/2026, em Santa Gertrudes - SP.')).toBe(true)
+    // A cidade própria do evento (eventos antigos) continua valendo
+    expect(montarRecibo(evento(), c, CONFIG_PADRAO).texto.endsWith(', em Rio Claro.')).toBe(true)
+    // Sem cidade em nenhum dos dois, o texto termina nas datas
+    expect(montarRecibo(evento({ cidade: '' }), cliente({ uf: 'SP' }), CONFIG_PADRAO).texto.endsWith('de 11 a 12/10/2026.')).toBe(
+      true,
+    )
+  })
+
+  it('cidade do evento: a própria, a do cliente ou nenhuma', () => {
+    expect(cidadeDoEvento({ cidade: ' Ipeúna ' }, { cidade: 'Rio Claro', uf: 'SP' })).toBe('Ipeúna')
+    expect(cidadeDoEvento({ cidade: '' }, { cidade: 'Rio Claro', uf: 'SP' })).toBe('Rio Claro - SP')
+    expect(cidadeDoEvento({ cidade: '' }, { cidade: 'Rio Claro', uf: '' })).toBe('Rio Claro')
+    expect(cidadeDoEvento({ cidade: '' }, { cidade: '', uf: 'SP' })).toBe('')
+    expect(cidadeDoEvento({ cidade: '' }, undefined)).toBe('')
   })
 
   it('sem razão social da empresa assina com o nome; nome com caracteres proibidos vira arquivo válido', () => {

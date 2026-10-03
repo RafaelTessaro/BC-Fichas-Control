@@ -548,6 +548,16 @@ export function EventoForm() {
                     const fora = qtdOcupada.get(d.data) ?? d.maquinas
                     const excede = fora > livres
                     const repetida = datasRepetidas.has(d.data)
+                    // Explica a conta no balão: a maior quantidade (período corrido) e as em manutenção
+                    const manut = emManutencao(d.data)
+                    const nota = [
+                      f.periodoCorrido &&
+                        fora !== d.maquinas &&
+                        `As máquinas ficam com o cliente entre os dias de uso: neste dia contam as ${fora} do evento.`,
+                      manut > 0 && `${manut} em manutenção não ${manut > 1 ? 'entram' : 'entra'} na conta.`,
+                    ]
+                      .filter(Boolean)
+                      .join(' ')
                     return (
                       <motion.div
                         key={d.id}
@@ -582,19 +592,15 @@ export function EventoForm() {
                                 {repetida ? (
                                   <span className="shrink-0 font-medium whitespace-nowrap text-danger">Data repetida</span>
                                 ) : excede ? (
-                                  <span className="inline-flex shrink-0 items-center gap-1 font-medium whitespace-nowrap text-warning">
+                                  <span
+                                    className="inline-flex shrink-0 items-center gap-1 font-medium whitespace-nowrap text-warning"
+                                    title={nota || undefined}
+                                  >
                                     <TriangleAlert className="h-3.5 w-3.5" />
                                     {livres <= 0 ? 'Sem máquinas livres' : `Só ${livres} ${livres > 1 ? 'livres' : 'livre'}`}
                                   </span>
                                 ) : (
-                                  <span
-                                    className="tnum shrink-0 whitespace-nowrap text-muted"
-                                    title={
-                                      emManutencao(d.data)
-                                        ? `${emManutencao(d.data)} em manutenção não ${emManutencao(d.data) > 1 ? 'entram' : 'entra'} na conta`
-                                        : undefined
-                                    }
-                                  >
+                                  <span className="tnum shrink-0 whitespace-nowrap text-muted" title={nota || undefined}>
                                     {livres - fora} de {totalMaquinas} livres
                                   </span>
                                 )}

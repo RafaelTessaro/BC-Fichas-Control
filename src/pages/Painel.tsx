@@ -6,8 +6,8 @@ import {
   CircleCheck,
   CircleDollarSign,
   Clock,
-  Cpu,
   Database,
+  ListChecks,
   PackageCheck,
   Settings,
   Ticket,
@@ -222,7 +222,7 @@ export function Painel() {
           rotulo="Máquinas hoje"
           valor={d.maquinasHoje}
           formatar={(v) => `${Math.round(v)} / ${cap.total}`}
-          icone={<Cpu className="h-4 w-4" />}
+          icone={<IconeMaquinaFichas className="h-4 w-4" />}
           detalhe={textoMaquinasHoje(d.eventosHoje, d.soComCliente)}
           delay={0.12}
         />
@@ -347,7 +347,7 @@ function SituacaoMaquinas({ cap, semNumero }: { cap: Capacidade; semNumero: numb
       <Card className="mb-6 flex flex-col gap-4 p-4 sm:px-5 lg:flex-row lg:items-center lg:gap-6">
         <div className="flex min-w-0 items-center gap-3 lg:w-56 lg:shrink-0">
           <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-surface-2 text-ink-2">
-            <Cpu className="h-4 w-4" />
+            <IconeMaquinaFichas className="h-4 w-4" />
           </div>
           <div className="min-w-0">
             <h3 className="text-[15px] font-semibold tracking-[-0.01em] text-ink">Situação das máquinas</h3>
@@ -452,7 +452,7 @@ function ProgramacaoMaquinas({ itens, hoje }: { itens: EventoCompleto[]; hoje: s
     >
       <Card>
         <CardHeader
-          icone={<IconeMaquinaFichas className="h-4 w-4" />}
+          icone={<ListChecks className="h-4 w-4" />}
           titulo={
             <span className="flex items-center gap-2">
               Programação das máquinas
@@ -516,8 +516,12 @@ function ItemProgramacao({ x, i, hoje }: { x: EventoCompleto; i: number; hoje: s
           <p className="truncate text-xs text-muted">
             <span className={cn(falta.urgente && 'font-medium text-warning')}>{falta.texto}</span> • {x.cliente?.nome ?? '—'}
           </p>
+          {/* No celular o selo vai para baixo, para o nome do evento não ficar cortado */}
+          <div className="mt-1 sm:hidden">
+            <ProgramacaoBadge status={x.evento.programacao} />
+          </div>
         </div>
-        <ProgramacaoBadge status={x.evento.programacao} />
+        <ProgramacaoBadge status={x.evento.programacao} className="max-sm:hidden" />
       </Link>
     </motion.div>
   )

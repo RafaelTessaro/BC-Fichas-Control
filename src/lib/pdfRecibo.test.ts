@@ -59,4 +59,28 @@ describe('recibo em PDF', () => {
     const { doc } = await gerarReciboPDF(curto, cliente, CONFIG_PADRAO)
     expect(doc.getNumberOfPages()).toBe(1)
   })
+
+  it('pior caso (nomes enormes, datas soltas, cidade do cliente): uma página, com o fecho inteiro', async () => {
+    const grande: Cliente = {
+      ...cliente,
+      razaoSocial: `${cliente.razaoSocial} E REGIÃO METROPOLITANA DO INTERIOR PAULISTA`,
+      cidade: 'São José do Rio Pardo',
+      uf: 'SP',
+    }
+    const longo: Evento = {
+      ...evento,
+      nome: `${evento.nome} e Associação de Pais e Mestres`,
+      cidade: '',
+      dias: ['2026-10-01', '2026-10-03', '2026-10-05', '2026-10-07', '2026-10-09', '2026-11-25'].map((data, i) => ({
+        id: `d${i}`,
+        data,
+        maquinas: 6,
+      })),
+      bobinasConsignadas: 1000,
+      formaPagamento: 'DINHEIRO',
+    }
+    const { doc } = await gerarReciboPDF(longo, grande, CONFIG_PADRAO)
+    expect(doc.getNumberOfPages()).toBe(1)
+    expect(doc.output()).toContain('dando plena quitação do valor recebido.')
+  })
 })

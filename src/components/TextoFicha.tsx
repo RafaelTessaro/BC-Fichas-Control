@@ -1,5 +1,5 @@
-// Texto programado nas máquinas (cabeçalho ou rodapé das fichas), com botão de copiar.
-// Cada máquina tem o seu próprio layout de ficha, então aqui não há prévia: só o texto.
+// Texto programado nas máquinas (o nome do evento, que sai no topo das fichas, e o rodapé), com
+// botão de copiar. Cada máquina tem o seu próprio layout de ficha, então aqui não há prévia: só o texto.
 
 import { Check, Copy } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
@@ -37,8 +37,19 @@ async function copiarTexto(texto: string) {
   return ok
 }
 
-/** Texto programado nas máquinas (cabeçalho ou rodapé), preservando as quebras de linha, com botão de copiar. */
-export function TextoFicha({ rotulo, texto, vazio }: { rotulo: string; texto: string; vazio: string }) {
+/** Texto programado nas máquinas, preservando as quebras de linha, com botão de copiar. */
+export function TextoFicha({
+  rotulo,
+  dica,
+  texto,
+  vazio,
+}: {
+  rotulo: string
+  /** Onde o texto sai na ficha (ex.: "topo da ficha"), ao lado do rótulo. */
+  dica?: string
+  texto: string
+  vazio: string
+}) {
   const [copiado, setCopiado] = useState(false)
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(timer.current), [])
@@ -56,7 +67,10 @@ export function TextoFicha({ rotulo, texto, vazio }: { rotulo: string; texto: st
   return (
     <div className="min-w-0">
       <div className="mb-1.5 flex h-8 items-center justify-between gap-2">
-        <p className="text-[13px] font-medium text-ink-2">{rotulo}</p>
+        <p className="min-w-0 truncate text-[13px] font-medium text-ink-2">
+          {rotulo}
+          {dica && <span className="font-normal text-muted"> · {dica}</span>}
+        </p>
         {limpo && (
           <Button
             variante="ghost"

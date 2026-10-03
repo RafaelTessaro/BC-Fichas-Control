@@ -110,14 +110,18 @@ export async function gerarReciboPDF(evento: Evento, cliente: Cliente | undefine
   // antes de levar o fecho e a assinatura sozinhos para outra página
   const ESPACO_ASSINAR = 30
   const MINIMO_ASSINAR = 16
-  y += 5.5 + 14
-  garantirEspaco(8 + MINIMO_ASSINAR + alturaAssinatura)
+  // O fecho ("… dando plena quitação do valor recebido") pode quebrar em duas linhas
+  const ENTRELINHA_FECHO = 5.6
   doc
     .setFont('helvetica', 'normal')
     .setFontSize(11.5)
     .setTextColor(...TINTA)
-  doc.text(txt(recibo.fecho), L, y)
-  y += 8
+  const linhasFecho = doc.splitTextToSize(txt(recibo.fecho), W) as string[]
+  const alturaFecho = (linhasFecho.length - 1) * ENTRELINHA_FECHO
+  y += 5.5 + 14
+  garantirEspaco(alturaFecho + 8 + MINIMO_ASSINAR + alturaAssinatura)
+  doc.text(linhasFecho, L, y, { lineHeightFactor: ENTRELINHA_FECHO / (11.5 * 0.3528) })
+  y += alturaFecho + 8
   doc.text(txt(recibo.localData), R, y, { align: 'right' })
 
   const espaco = Math.min(ESPACO_ASSINAR, LIMITE - alturaAssinatura - y)

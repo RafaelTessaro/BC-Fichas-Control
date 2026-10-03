@@ -25,7 +25,7 @@ export const NAV: Array<{ grupo: string; itens: ItemNav[] }> = [
   {
     grupo: 'Gestão',
     itens: [
-      { to: '/manutencao', label: 'Manutenção', icone: Wrench, descricao: 'Máquinas, situação e ordens de serviço' },
+      { to: '/manutencao', label: 'Manutenção', icone: Wrench, descricao: 'Máquinas, manutenções e reclamações' },
       { to: '/relatorios', label: 'Relatórios', icone: ChartColumn, descricao: 'Faturamento e indicadores' },
     ],
   },

@@ -1,14 +1,22 @@
 import { format } from 'date-fns'
 import {
+  Check,
+  CircleAlert,
   CircleCheck,
   Database,
   Download,
+  Eye,
+  EyeOff,
+  KeyRound,
+  LoaderCircle,
+  Mail,
   Monitor,
   Moon,
   Palette,
   Receipt,
   RotateCcw,
   Save,
+  Send,
   Stamp,
   Sun,
   Trash2,
@@ -17,20 +25,23 @@ import {
 } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { DisponibilidadeMaquinas } from '../components/DisponibilidadeMaquinas'
+import { Badge } from '../components/ui/Badge'
 import { Button } from '../components/ui/Button'
 import { Card, CardHeader } from '../components/ui/Card'
 import { confirmar } from '../components/ui/Feedback'
-import { CurrencyInput, Field, Input } from '../components/ui/Form'
+import { CurrencyInput, Field, Input, Select } from '../components/ui/Form'
 import { PageHeader } from '../components/ui/Misc'
 import { cn } from '../lib/cn'
 import { numero } from '../lib/format'
 import { baixarArquivo } from '../lib/storage'
 import { cnpjValido, mascaraCnpj, normalizarCnpj } from '#shared/documentos.ts'
+import { emailValido } from '#shared/dominio.ts'
 import type { Configuracoes as Config } from '#shared/tipos.ts'
 import { CONFIG_PADRAO, useDados } from '../store/dados'
 import { avisarErro, toast, useUI, type Tema } from '../store/ui'
-import { api } from '../lib/api'
+import { api, type ConfigEmail, type ConfigEmailEntrada } from '../lib/api'
 import { GoogleAgendaConfig } from '../components/GoogleAgendaConfig'
 
 type CopiaServidor = { arquivo: string; tamanho: number; criadoEm: string }
@@ -62,6 +73,15 @@ export function Configuracoes() {
   const [tentouSalvar, setTentouSalvar] = useState(false)
   const [ocupado, setOcupado] = useState(false)
   const [copias, setCopias] = useState<CopiaServidor[] | null>(null)
+
+  // Vindo do envio do recibo ("Configurar e-mail"): rola até o cartão do e-mail
+  const [params] = useSearchParams()
+  const secao = params.get('secao')
+  useEffect(() => {
+    if (secao !== 'email') return
+    const t = setTimeout(() => document.getElementById('email')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150)
+    return () => clearTimeout(t)
+  }, [secao])
 
   useEffect(() => {
     let ativo = true
@@ -141,11 +161,11 @@ export function Configuracoes() {
       toast.erro('Não foi possível restaurar', 'O arquivo não é um backup válido (JSON).')
       return
     }
-    // Backup de antes do cadastro de máquinas: as máquinas e O.S. atuais não voltam
+    // Backup de antes do cadastro de máquinas: as máquinas e manutenções atuais não voltam
     const semMaquinas = !Array.isArray((dados as { maquinas?: unknown } | null)?.maquinas)
     const aviso =
       semMaquinas && maquinas.length
-        ? ` Atenção: este backup é de uma versão sem o cadastro de máquinas. ${maquinas.length === 1 ? 'A máquina' : `As ${qtd(maquinas.length, 'máquina', 'máquinas')}`} e as ordens de serviço atuais serão apagadas e precisarão ser cadastradas de novo.`
+        ? ` Atenção: este backup é de uma versão sem o cadastro de máquinas. ${maquinas.length === 1 ? 'A máquina' : `As ${qtd(maquinas.length, 'máquina', 'máquinas')}`} e as manutenções atuais serão apagadas e precisarão ser cadastradas de novo.`
         : ''
     const ok = await confirmar({
       titulo: 'Restaurar backup?',
@@ -173,7 +193,7 @@ export function Configuracoes() {
     <>
       <PageHeader
         titulo="Configurações"
-        descricao="Máquinas, valores padrão, aparência e backup dos dados."
+        descricao="Máquinas, valores padrão, recibo, e-mail, aparência e backup dos dados."
         acoes={
           <>
             {alterado && (
@@ -402,6 +422,10 @@ export function Configuracoes() {
       </div>
 
       <div className="mt-6">
+        <EmailConfig id="email" />
+      </div>
+
+      <div className="mt-6">
         <GoogleAgendaConfig />
       </div>
 
@@ -450,7 +474,7 @@ export function Configuracoes() {
   )
 }
 
-/** "9 clientes, 12 eventos e 3 O.S." (só o que existe). */
+/** "9 clientes, 12 eventos e 3 manutenções" (só o que existe). */
 function listarQuantidades(partes: Array<[number, string, string]>) {
   const itens = partes.filter(([n]) => n > 0).map(([n, um, varios]) => qtd(n, um, varios))
   return itens.length > 1 ? `${itens.slice(0, -1).join(', ')} e ${itens[itens.length - 1]}` : (itens[0] ?? '')
@@ -462,13 +486,15 @@ function ZonaDePerigo({ aoBaixarBackup }: { aoBaixarBackup: () => void }) {
   const eventos = useDados((s) => s.eventos.length)
   const maquinas = useDados((s) => s.maquinas.length)
   const ordens = useDados((s) => s.ordens.length)
+  const reclamacoes = useDados((s) => s.reclamacoes.length)
   const limparTudo = useDados((s) => s.limparTudo)
   const [apagando, setApagando] = useState(false)
   const resumo = listarQuantidades([
     [clientes, 'cliente', 'clientes'],
     [eventos, 'evento', 'eventos'],
     [maquinas, 'máquina', 'máquinas'],
-    [ordens, 'ordem de serviço', 'ordens de serviço'],
+    [ordens, 'manutenção', 'manutenções'],
+    [reclamacoes, 'reclamação', 'reclamações'],
   ])
 
   const apagar = async () => {
@@ -514,8 +540,8 @@ function ZonaDePerigo({ aoBaixarBackup }: { aoBaixarBackup: () => void }) {
         <div className="min-w-0">
           <p className="text-sm font-semibold text-ink">Apagar todos os dados</p>
           <p className="mt-1 text-[13px] text-ink-2">
-            Apaga os clientes, eventos, máquinas e ordens de serviço do servidor, em todos os computadores. As configurações
-            continuam. Antes de apagar, o servidor guarda uma cópia automática.
+            Apaga os clientes, eventos, máquinas, manutenções, reclamações e arquivos anexados do servidor, em todos os
+            computadores. As configurações continuam. Antes de apagar, o servidor guarda uma cópia automática.
           </p>
           <p className="mt-1.5 text-xs text-muted">{resumo ? `Hoje: ${resumo}.` : 'Não há dados para apagar.'}</p>
         </div>
@@ -590,5 +616,509 @@ function OpcaoTema({
         {label}
       </p>
     </button>
+  )
+}
+
+// ---- E-mail para envio de recibos --------------------------------------------------
+
+type Seguranca = ConfigEmail['seguranca']
+
+/** Modelos prontos dos provedores mais comuns (servidor, porta e segurança). */
+const MODELOS_EMAIL = [
+  {
+    id: 'gmail',
+    label: 'Gmail',
+    servidor: 'smtp.gmail.com',
+    porta: 465,
+    seguranca: 'SSL',
+    dica: (
+      <>
+        No Gmail, a senha normal da conta não funciona aqui: use uma <b className="font-semibold text-ink">senha de app</b>. Ative
+        a verificação em duas etapas na sua Conta do Google e crie a senha de app em{' '}
+        <b className="font-medium text-ink">myaccount.google.com/apppasswords</b> (são 16 letras). Cole no campo Senha.
+      </>
+    ),
+  },
+  {
+    id: 'outlook',
+    label: 'Outlook / Hotmail',
+    servidor: 'smtp-mail.outlook.com',
+    porta: 587,
+    seguranca: 'STARTTLS',
+    dica: (
+      <>
+        No Outlook e no Hotmail, use uma <b className="font-semibold text-ink">senha de app</b>: ative a verificação em duas
+        etapas em <b className="font-medium text-ink">account.microsoft.com</b> → Segurança e crie a senha de app nas opções
+        avançadas. Se o teste falhar mesmo assim, a conta pode não permitir envio por programas: use uma conta do Gmail.
+      </>
+    ),
+  },
+  {
+    id: 'yahoo',
+    label: 'Yahoo',
+    servidor: 'smtp.mail.yahoo.com',
+    porta: 465,
+    seguranca: 'SSL',
+    dica: (
+      <>
+        No Yahoo, gere uma <b className="font-semibold text-ink">senha de app</b> em Segurança da conta → Gerar senha de app, e
+        cole no campo Senha.
+      </>
+    ),
+  },
+  {
+    id: 'outro',
+    label: 'Outro',
+    servidor: '',
+    porta: 587,
+    seguranca: 'STARTTLS',
+    dica: (
+      <>
+        Use os dados de envio (SMTP) do seu provedor de e-mail. Eles costumam estar na página de ajuda do provedor, ou com quem
+        cuida do e-mail da empresa.
+      </>
+    ),
+  },
+] as const satisfies ReadonlyArray<{
+  id: string
+  label: string
+  servidor: string
+  porta: number
+  seguranca: Seguranca
+  dica: ReactNode
+}>
+
+type ModeloEmail = (typeof MODELOS_EMAIL)[number]['id']
+
+const SEGURANCAS: Array<{ valor: Seguranca; label: string }> = [
+  { valor: 'SSL', label: 'SSL (porta 465)' },
+  { valor: 'STARTTLS', label: 'STARTTLS (porta 587)' },
+  { valor: 'NENHUMA', label: 'Nenhuma (não recomendado)' },
+]
+
+/** Campos do formulário (a senha fica em branco: só vai se o usuário digitar uma nova). */
+type FormEmail = Omit<ConfigEmailEntrada, 'porta'> & { porta: string }
+
+const formDoServidor = (c: ConfigEmail | null): FormEmail => ({
+  servidor: c?.servidor ?? '',
+  porta: c?.servidor ? String(c.porta) : '',
+  seguranca: c?.seguranca ?? 'STARTTLS',
+  usuario: c?.usuario ?? '',
+  senha: '',
+  remetenteNome: c?.remetenteNome ?? '',
+  remetenteEmail: c?.remetenteEmail ?? '',
+})
+
+const modeloDe = (servidor: string): ModeloEmail | null =>
+  MODELOS_EMAIL.find((m) => m.servidor && m.servidor === servidor.trim().toLowerCase())?.id ?? (servidor.trim() ? 'outro' : null)
+
+/**
+ * Configuração do e-mail que envia o recibo e o resumo para o cliente. Fica só no servidor (a
+ * senha nunca volta para a tela) e tem o próprio botão de salvar, separado do resto da página.
+ */
+function EmailConfig({ id }: { id: string }) {
+  const nomeEmpresa = useDados((s) => s.config.empresaNome)
+  const [carregado, setCarregado] = useState<ConfigEmail | null>(null)
+  const [erroCarga, setErroCarga] = useState('')
+  const [f, setF] = useState<FormEmail>(formDoServidor(null))
+  const [modelo, setModelo] = useState<ModeloEmail | null>(null)
+  const [verSenha, setVerSenha] = useState(false)
+  const [ocupado, setOcupado] = useState<'salvar' | 'teste' | 'esquecer' | null>(null)
+  const [paraTeste, setParaTeste] = useState('')
+  const [resultadoTeste, setResultadoTeste] = useState<{ ok: boolean; texto: string } | null>(null)
+  const [recarga, setRecarga] = useState(0)
+
+  useEffect(() => {
+    let ativo = true
+    api
+      .configEmail()
+      .then((c) => {
+        if (!ativo) return
+        setCarregado(c)
+        setErroCarga('')
+        setF(formDoServidor(c))
+        setModelo(modeloDe(c.servidor))
+        setParaTeste(c.remetenteEmail || c.usuario)
+      })
+      .catch((e: Error) => ativo && setErroCarga(e.message))
+    return () => {
+      ativo = false
+    }
+  }, [recarga])
+
+  const set = <K extends keyof FormEmail>(k: K, v: FormEmail[K]) => {
+    setF((x) => ({ ...x, [k]: v }))
+    setResultadoTeste(null)
+  }
+
+  const escolherModelo = (m: (typeof MODELOS_EMAIL)[number]) => {
+    setModelo(m.id)
+    setResultadoTeste(null)
+    if (m.id === 'outro') {
+      // Sai de um modelo pronto: o servidor fica para digitar
+      if (modeloDe(f.servidor) !== 'outro') setF((x) => ({ ...x, servidor: '', porta: String(m.porta), seguranca: m.seguranca }))
+      setTimeout(() => document.getElementById('cfg-smtp')?.focus(), 50)
+      return
+    }
+    setF((x) => ({ ...x, servidor: m.servidor, porta: String(m.porta), seguranca: m.seguranca }))
+  }
+
+  const base = formDoServidor(carregado)
+  const alterado = JSON.stringify({ ...f, senha: '' }) !== JSON.stringify(base) || !!f.senha
+  const faltaSenha = !f.senha && !carregado?.senhaDefinida
+  const completo = !!f.servidor.trim() && !!f.usuario.trim() && !faltaSenha
+  const usuarioEhEmail = emailValido(f.usuario.trim())
+
+  const salvar = async () => {
+    setOcupado('salvar')
+    try {
+      const porta = Number(f.porta)
+      const salvo = await api.salvarConfigEmail({
+        ...f,
+        porta: Number.isInteger(porta) && porta > 0 ? porta : f.seguranca === 'SSL' ? 465 : 587,
+      })
+      setCarregado(salvo)
+      setF(formDoServidor(salvo))
+      setVerSenha(false)
+      setParaTeste((p) => p || salvo.remetenteEmail || salvo.usuario)
+      toast.sucesso('E-mail configurado', 'Envie um e-mail de teste para conferir se está tudo certo.')
+    } catch (e) {
+      avisarErro('Não foi possível salvar o e-mail', e)
+    } finally {
+      setOcupado(null)
+    }
+  }
+
+  const testar = async () => {
+    const destino = paraTeste.trim()
+    if (!emailValido(destino)) {
+      setResultadoTeste({ ok: false, texto: 'Informe um e-mail válido para receber o teste.' })
+      document.getElementById('cfg-email-teste')?.focus()
+      return
+    }
+    setOcupado('teste')
+    setResultadoTeste(null)
+    try {
+      await api.testarEmail(destino)
+      setResultadoTeste({
+        ok: true,
+        texto: `E-mail de teste enviado para ${destino}. Confira a caixa de entrada (e a pasta de spam).`,
+      })
+    } catch (e) {
+      setResultadoTeste({ ok: false, texto: (e as Error).message })
+    } finally {
+      setOcupado(null)
+    }
+  }
+
+  const esquecer = async () => {
+    const ok = await confirmar({
+      titulo: 'Esquecer a configuração do e-mail?',
+      descricao:
+        'O servidor apaga o e-mail e a senha gravados. O envio de recibos por e-mail para de funcionar até ser configurado de novo (o WhatsApp continua funcionando).',
+      confirmar: 'Esquecer configuração',
+      perigo: true,
+    })
+    if (!ok) return
+    setOcupado('esquecer')
+    try {
+      await api.esquecerConfigEmail()
+      setCarregado(null)
+      setF(formDoServidor(null))
+      setModelo(null)
+      setResultadoTeste(null)
+      setRecarga((n) => n + 1)
+      toast.sucesso('Configuração do e-mail apagada')
+    } catch (e) {
+      avisarErro('Não foi possível apagar a configuração', e)
+    } finally {
+      setOcupado(null)
+    }
+  }
+
+  const dica = MODELOS_EMAIL.find((m) => m.id === modelo)?.dica
+
+  return (
+    <Card id={id} className="scroll-mt-24">
+      <CardHeader
+        icone={<Mail className="h-4 w-4" />}
+        titulo="E-mail para envio de recibos"
+        descricao="O e-mail da empresa que envia o recibo e o resumo do evento ao cliente. Fica só no servidor e vale para todos os computadores; tem o próprio botão de salvar."
+        acoes={
+          carregado &&
+          (carregado.configurado ? <Badge tom="success">Configurado</Badge> : <Badge tom="neutral">Não configurado</Badge>)
+        }
+      />
+      {!carregado && !erroCarga && recarga === 0 ? (
+        <p className="flex items-center gap-2 px-5 pb-5 text-[13px] text-muted">
+          <LoaderCircle className="h-4 w-4 animate-spin" />
+          Carregando…
+        </p>
+      ) : erroCarga ? (
+        <div className="flex flex-wrap items-center gap-2 px-5 pb-5 text-[13px] text-danger">
+          <CircleAlert className="h-4 w-4" />
+          {erroCarga}
+          <Button tamanho="sm" variante="ghost" onClick={() => setRecarga((n) => n + 1)}>
+            Tentar de novo
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-5 px-5 pb-5">
+          {/* Modelo pronto do provedor */}
+          <div className="flex flex-col gap-2">
+            <p className="text-[13px] font-medium text-ink-2">Qual é o e-mail da empresa?</p>
+            <div role="radiogroup" aria-label="Provedor de e-mail" className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {MODELOS_EMAIL.map((m) => {
+                const ativo = modelo === m.id
+                return (
+                  <button
+                    key={m.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={ativo}
+                    onClick={() => escolherModelo(m)}
+                    className={cn(
+                      'flex h-11 cursor-pointer items-center justify-center gap-2 rounded-xl border px-3 text-[13px] font-medium transition-colors',
+                      'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand',
+                      ativo
+                        ? 'border-brand/60 bg-brand-soft text-brand-ink'
+                        : 'border-line-strong/80 text-ink-2 hover:bg-surface-2',
+                    )}
+                  >
+                    {ativo && <Check className="h-4 w-4 shrink-0" />}
+                    {m.label}
+                  </button>
+                )
+              })}
+            </div>
+            <AnimatePresence initial={false} mode="wait">
+              {dica && (
+                <motion.p
+                  key={modelo}
+                  initial={{ opacity: 0, y: -2 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.15 }}
+                  className="flex items-start gap-2.5 rounded-xl bg-info-soft px-3.5 py-3 text-[13px] leading-relaxed text-ink-2"
+                >
+                  <KeyRound className="mt-0.5 h-4 w-4 shrink-0 text-info" />
+                  <span>{dica}</span>
+                </motion.p>
+              )}
+            </AnimatePresence>
+          </div>
+
+          <div className="@container">
+            <div className="grid grid-cols-1 gap-4 @xl:grid-cols-6">
+              <Field label="Servidor de envio (SMTP)" htmlFor="cfg-smtp" className="@xl:col-span-3">
+                <Input
+                  id="cfg-smtp"
+                  value={f.servidor}
+                  onChange={(e) => {
+                    set('servidor', e.target.value)
+                    setModelo(modeloDe(e.target.value) ?? 'outro')
+                  }}
+                  placeholder="Ex.: smtp.gmail.com"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </Field>
+              <Field label="Porta" htmlFor="cfg-porta" className="@xl:col-span-1">
+                <Input
+                  id="cfg-porta"
+                  inputMode="numeric"
+                  value={f.porta}
+                  onChange={(e) => set('porta', e.target.value.replace(/\D/g, '').slice(0, 5))}
+                  placeholder={f.seguranca === 'SSL' ? '465' : '587'}
+                  className="tnum"
+                />
+              </Field>
+              <Field label="Segurança" htmlFor="cfg-seguranca" className="@xl:col-span-2">
+                <Select id="cfg-seguranca" value={f.seguranca} onChange={(e) => set('seguranca', e.target.value as Seguranca)}>
+                  {SEGURANCAS.map((s) => (
+                    <option key={s.valor} value={s.valor}>
+                      {s.label}
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <Field
+                label="Usuário"
+                htmlFor="cfg-usuario"
+                className="@xl:col-span-3"
+                hint="Normalmente é o próprio endereço de e-mail."
+              >
+                <Input
+                  id="cfg-usuario"
+                  type="email"
+                  value={f.usuario}
+                  onChange={(e) => set('usuario', e.target.value)}
+                  placeholder="Ex.: contato@gmail.com"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </Field>
+              <Field
+                label="Senha"
+                htmlFor="cfg-senha"
+                className="@xl:col-span-3"
+                hint={
+                  carregado?.senhaDefinida
+                    ? 'Já tem uma senha gravada. Deixe em branco para manter; digite só para trocar.'
+                    : 'No Gmail, Outlook e Yahoo, use a senha de app (veja a dica acima).'
+                }
+              >
+                <div className="relative">
+                  <Input
+                    id="cfg-senha"
+                    type={verSenha ? 'text' : 'password'}
+                    value={f.senha}
+                    onChange={(e) => set('senha', e.target.value)}
+                    placeholder={carregado?.senhaDefinida ? '•••••••• (gravada no servidor)' : 'Senha de app'}
+                    autoComplete="new-password"
+                    spellCheck={false}
+                    className="pr-11"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setVerSenha((v) => !v)}
+                    aria-label={verSenha ? 'Esconder a senha' : 'Mostrar a senha'}
+                    title={verSenha ? 'Esconder a senha' : 'Mostrar a senha'}
+                    className="absolute top-1/2 right-1.5 flex h-7 w-8 -translate-y-1/2 cursor-pointer items-center justify-center rounded-lg text-muted transition-colors hover:bg-surface-2 hover:text-ink"
+                  >
+                    {verSenha ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </Field>
+              <Field
+                label="Nome do remetente"
+                htmlFor="cfg-remetente-nome"
+                className="@xl:col-span-3"
+                hint="Como aparece para o cliente na caixa de entrada."
+              >
+                <Input
+                  id="cfg-remetente-nome"
+                  value={f.remetenteNome}
+                  onChange={(e) => set('remetenteNome', e.target.value)}
+                  placeholder={nomeEmpresa ? `Ex.: ${nomeEmpresa}` : 'Ex.: Nome da empresa'}
+                />
+              </Field>
+              <Field
+                label="E-mail do remetente"
+                htmlFor="cfg-remetente-email"
+                className="@xl:col-span-3"
+                hint={usuarioEhEmail ? 'Em branco, usa o usuário.' : 'O e-mail que aparece como remetente.'}
+              >
+                <Input
+                  id="cfg-remetente-email"
+                  type="email"
+                  value={f.remetenteEmail}
+                  onChange={(e) => set('remetenteEmail', e.target.value)}
+                  placeholder={usuarioEhEmail ? f.usuario.trim() : 'Ex.: contato@empresa.com.br'}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+              </Field>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-3 border-t border-line pt-4 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variante="primary"
+                icone={ocupado === 'salvar' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                onClick={() => void salvar()}
+                disabled={!alterado || !completo || !!ocupado}
+                title={!completo ? 'Preencha o servidor, o usuário e a senha.' : undefined}
+              >
+                {ocupado === 'salvar' ? 'Salvando…' : 'Salvar e-mail'}
+              </Button>
+              {alterado && carregado?.servidor && (
+                <Button
+                  variante="ghost"
+                  icone={<RotateCcw className="h-4 w-4" />}
+                  onClick={() => {
+                    setF(formDoServidor(carregado))
+                    setModelo(modeloDe(carregado.servidor))
+                    setResultadoTeste(null)
+                  }}
+                  disabled={!!ocupado}
+                >
+                  Descartar
+                </Button>
+              )}
+              {carregado?.servidor && (
+                <Button
+                  variante="ghost"
+                  icone={<Trash2 className="h-4 w-4" />}
+                  onClick={() => void esquecer()}
+                  disabled={!!ocupado}
+                  className="text-danger hover:bg-danger-soft hover:text-danger"
+                >
+                  Esquecer configuração
+                </Button>
+              )}
+            </div>
+
+            {/* Teste: só com a configuração gravada (o teste usa a do servidor) */}
+            {carregado?.configurado && (
+              <div className="flex min-w-0 flex-col gap-1.5 lg:w-[420px]">
+                <label htmlFor="cfg-email-teste" className="text-[13px] font-medium text-ink-2">
+                  Enviar e-mail de teste para
+                </label>
+                <div className="flex gap-2">
+                  <Input
+                    id="cfg-email-teste"
+                    type="email"
+                    value={paraTeste}
+                    onChange={(e) => {
+                      setParaTeste(e.target.value)
+                      setResultadoTeste(null)
+                    }}
+                    placeholder="voce@email.com"
+                    className="min-w-0"
+                  />
+                  <Button
+                    icone={ocupado === 'teste' ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                    onClick={() => void testar()}
+                    disabled={!!ocupado || alterado}
+                    title={alterado ? 'Salve as alterações antes de testar.' : undefined}
+                  >
+                    {ocupado === 'teste' ? 'Enviando…' : 'Testar'}
+                  </Button>
+                </div>
+                {alterado && <p className="text-xs text-muted">Salve as alterações antes de testar.</p>}
+              </div>
+            )}
+          </div>
+
+          <AnimatePresence initial={false}>
+            {resultadoTeste && (
+              <motion.p
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: 'auto' }}
+                exit={{ opacity: 0, height: 0 }}
+                transition={{ duration: 0.18 }}
+                className="-mt-2 overflow-hidden"
+              >
+                <span
+                  className={cn(
+                    'flex items-start gap-2 rounded-xl px-3.5 py-3 text-[13px]',
+                    resultadoTeste.ok ? 'bg-success-soft text-success' : 'bg-danger-soft text-danger',
+                  )}
+                >
+                  {resultadoTeste.ok ? (
+                    <CircleCheck className="mt-0.5 h-4 w-4 shrink-0" />
+                  ) : (
+                    <CircleAlert className="mt-0.5 h-4 w-4 shrink-0" />
+                  )}
+                  {resultadoTeste.texto}
+                </span>
+              </motion.p>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
+    </Card>
   )
 }

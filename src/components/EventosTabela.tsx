@@ -133,8 +133,9 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
           const { evento: e, resumo: r, cliente } = it
           // A cidade do evento (só os antigos têm) ou a do cliente; no histórico do cliente, só a do evento
           const cidade = e.cidade || (ocultarCliente ? '' : (cliente?.cidade ?? ''))
-          // Programação das máquinas: só aparece enquanto falta concluir, nos eventos de hoje em diante
-          const programacao = e.status !== 'CANCELADO' && e.programacao !== 'CONCLUIDA' && (r.dataFim ?? '') >= hoje
+          // Programação das máquinas: aparece nos eventos de hoje em diante (inclusive "Concluída",
+          // para a secretária ver que já está pronta); nos que já passaram, não interessa mais
+          const programacao = e.status !== 'CANCELADO' && (r.dataFim ?? '') >= hoje
           return (
             <Linha key={e.id} indice={i} aoClicar={() => navegar(`/eventos/${e.id}`)}>
               <Td className="tnum text-xs font-medium text-muted max-2xl:hidden">{codigoEvento(e.codigo)}</Td>

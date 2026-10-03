@@ -13,8 +13,9 @@ export default defineConfig({
     },
   },
   build: {
-    // recharts + motion formam o bloco principal; o jsPDF é carregado sob demanda
-    chunkSizeWarningLimit: 1100,
+    // recharts + motion + as telas formam o bloco principal (uso em rede local);
+    // o jsPDF é carregado sob demanda
+    chunkSizeWarningLimit: 1300,
   },
   test: {
     environment: 'node',

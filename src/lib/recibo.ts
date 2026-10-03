@@ -77,6 +77,17 @@ export interface Recibo {
   nomeArquivo: string
 }
 
+/**
+ * Cidade do evento para os textos entregues ao cliente: a do próprio evento (só os antigos têm
+ * uma) ou a do cadastro do cliente, com a UF ("Rio Claro - SP").
+ */
+export function cidadeDoEvento(evento: Pick<Evento, 'cidade'>, cliente: Pick<Cliente, 'cidade' | 'uf'> | undefined) {
+  const propria = evento.cidade.trim()
+  if (propria) return propria
+  const cidade = cliente?.cidade.trim() ?? ''
+  return cidade ? [cidade, cliente?.uf.trim()].filter(Boolean).join(' - ') : ''
+}
+
 /** Avulso cadastrado sem nome (o sistema grava “Cliente avulso”): o recibo não tem a quem nomear. */
 const semNome = (c: Cliente) => !c.nome.trim() || (c.tipo === 'AVULSO' && /^cliente avulso$/i.test(c.nome.trim()))
 
@@ -101,7 +112,7 @@ export function montarRecibo(
   const codigo = String(evento.codigo).padStart(4, '0')
   const quem = pagador(cliente)
   const periodo = periodoRecibo(evento.dias.map((d) => d.data))
-  const cidade = evento.cidade.trim()
+  const cidade = cidadeDoEvento(evento, cliente)
 
   const texto =
     `Recebemos de ${quem.nome}${quem.documento ? `, ${quem.documento}` : ''}, a importância de ${reais(r.total)} ` +
@@ -141,7 +152,7 @@ export function montarRecibo(
     detalhes,
     total: detalhes.length > 1 ? reais(r.total) : null,
     pagamento: `${FORMAS_PAGAMENTO[evento.formaPagamento].label}${evento.dataPagamento ? `, em ${dataCurta(evento.dataPagamento)}` : ''}`,
-    fecho: 'Para maior clareza, firmamos o presente recibo.',
+    fecho: 'Para maior clareza, firmamos o presente recibo, dando plena quitação do valor recebido.',
     localData: `${local ? `${local}, ` : ''}${dataPorExtenso(dataPagamento)}.`,
     assinatura,
     nomeArquivo: `${nomeArquivoSeguro(`Recibo_${codigo}${cliente && !semNome(cliente) ? `_${cliente.nome.trim().replace(/\s+/g, '_')}` : ''}`)}.pdf`,
