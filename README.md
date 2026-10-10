@@ -100,8 +100,8 @@ do cliente), o cartão avisa; é só gerar de novo, e o contrato anterior que es
 cancelado sozinho (*"Substituído pelo contrato nº …"*). Se o anterior já estava assinado, ele
 continua valendo até o cliente assinar o novo; aí o cartão mostra o botão para cancelar o anterior.
 Cancelar ou excluir o evento cancela sozinho o contrato que esperava a assinatura (*"Evento
-cancelado."*); um contrato já assinado fica guardado e os valores seguem a cláusula do
-cancelamento. Depois que o aluguel termina, mudar o cadastro não pede um contrato novo.
+cancelado."*); um contrato já assinado fica guardado. Depois que o aluguel termina, mudar o
+cadastro não pede um contrato novo.
 
 A aba **Contratos** (no menu, em Cadastros) reúne todos os contratos gerados, com a situação de
 cada um (esperando assinatura, assinado ou cancelado) e a busca por número, cliente ou evento:
@@ -114,19 +114,20 @@ contrato informa ao cliente).
 
 | Assunto | Regra |
 | --- | --- |
-| Cancelamento | Grátis até 7 dias antes do 1º dia de uso. Depois, a empresa retém no máximo 10% das diárias (20% se o cliente não vier retirar e não avisar). Se a empresa cancelar, devolve tudo e paga 10% ao cliente |
-| Arrependimento | Fechado por WhatsApp, telefone, e-mail ou internet: o cliente pode desistir em até 7 dias, com devolução total (art. 49 do CDC) |
 | Danos | Por mau uso, o cliente paga o conserto, com orçamento antes. Perda ou furto por descuido (ou dano sem conserto): o **valor de reposição** da máquina. Desgaste natural e roubo com boletim de ocorrência não são cobrados |
 | Caução | Não tem |
 | Bobinas | As lacradas voltam sem custo; as abertas contam como usadas e são cobradas |
 | Máquina reserva | Fica com o cliente sem custo; só é cobrada (pela diária) nos dias em que for usada |
-| Atraso no pagamento | Multa de 2%, juros pela taxa legal e correção pelo IPCA |
 | Atraso na devolução | Não é cobrado |
 | Retirada e devolução | Sempre na sede da empresa |
 | Assinatura | Sem testemunhas; vale no papel ou eletrônica (gov.br ou plataforma de assinatura) |
 | Foro | A cidade da empresa, sem tirar do cliente o direito de processar na cidade dele |
 | Dados pessoais (LGPD) | Usados só para o contrato, recibos, cobranças e obrigações legais; guardados por até 5 anos; o cliente pode pedir acesso, correção e os outros direitos do art. 18 |
 | Texto | Letra corpo 12 e as cláusulas que limitam direitos em **negrito**, como pede o CDC |
+
+Cancelamento e atraso no pagamento não são cobrados, por isso o contrato não tem cláusula sobre
+eles (desde a versão 2.6). Os contratos gerados antes continuam saindo com o texto da época; um
+que ainda espera a assinatura mostra o aviso para gerar de novo com as cláusulas atuais.
 
 **Onde configurar:** em **Configurações → Contrato de locação** ficam o endereço, o telefone e o
 e-mail da empresa, quem assina pela empresa (nome e CPF), o foro (em branco, vale a cidade da

@@ -948,6 +948,13 @@ function CartaoManutencao({
           {ordem.responsavel && <Dado rotulo="Responsável">{ordem.responsavel}</Dado>}
         </dl>
       )}
+      {ordem.observacoes && (
+        <dl className="mt-3 text-sm">
+          <Dado rotulo="Observações">
+            <span className="whitespace-pre-line">{ordem.observacoes}</span>
+          </Dado>
+        </dl>
+      )}
       <RegistroAntigo ordem={ordem} />
     </motion.article>
   )
@@ -1040,6 +1047,12 @@ function ItemManutencao({ item }: { item: Extract<ItemHistorico, { tipo: 'os' }>
           <p className="mt-1 text-[13px] break-words text-ink-2">
             <span className="text-muted">Problema: </span>
             {o.problema}
+          </p>
+        )}
+        {o.observacoes && (
+          <p className="mt-1 text-[13px] break-words whitespace-pre-line text-ink-2">
+            <span className="text-muted">Observações: </span>
+            {o.observacoes}
           </p>
         )}
         <RegistroAntigo ordem={o} className="mt-1" />

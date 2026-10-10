@@ -1,7 +1,6 @@
 import { format } from 'date-fns'
 import {
   Ban,
-  CalendarX2,
   Check,
   CircleAlert,
   CircleCheck,
@@ -15,13 +14,11 @@ import {
   LoaderCircle,
   Mail,
   MapPin,
-  MessageCircle,
   Monitor,
   Moon,
   PackageOpen,
   PackageX,
   Palette,
-  Percent,
   Receipt,
   RotateCcw,
   Save,
@@ -542,16 +539,6 @@ export function Configuracoes() {
  */
 const REGRAS_CONTRATO: Array<{ icone: ReactNode; titulo: string; texto: ReactNode }> = [
   {
-    icone: <CalendarX2 className="h-4 w-4" />,
-    titulo: 'Cancelamento',
-    texto: 'Grátis até 7 dias antes do 1º dia. Depois, até 10% das diárias; se não vier retirar, até 20%.',
-  },
-  {
-    icone: <MessageCircle className="h-4 w-4" />,
-    titulo: 'Arrependimento',
-    texto: '7 dias para desistir, com devolução total, quando fechado por WhatsApp ou telefone.',
-  },
-  {
     icone: <Wrench className="h-4 w-4" />,
     titulo: 'Danos por mau uso',
     texto: 'O cliente paga o conserto, com orçamento apresentado antes.',
@@ -571,11 +558,6 @@ const REGRAS_CONTRATO: Array<{ icone: ReactNode; titulo: string; texto: ReactNod
     icone: <PackageOpen className="h-4 w-4" />,
     titulo: 'Bobinas',
     texto: 'As lacradas voltam sem custo; as abertas são cobradas como usadas.',
-  },
-  {
-    icone: <Percent className="h-4 w-4" />,
-    titulo: 'Atraso no pagamento',
-    texto: 'Multa de 2% + juros (e correção pelo IPCA).',
   },
   { icone: <Clock className="h-4 w-4" />, titulo: 'Atraso na devolução', texto: 'Não é cobrado.' },
   { icone: <MapPin className="h-4 w-4" />, titulo: 'Retirada e devolução', texto: 'Sempre na empresa.' },

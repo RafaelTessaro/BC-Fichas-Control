@@ -503,6 +503,7 @@ export function normalizarOS(entrada: unknown): Resultado<OrdemServicoInput> {
       conclusao,
       servicos: servicos.slice(0, LIMITES.servicos),
       problema,
+      observacoes: texto(typeof r.observacoes === 'string' ? r.observacoes.replace(/\r\n?/g, '\n') : '', LIMITES.textoLongo),
       solucao: texto(r.solucao, LIMITES.textoLongo),
       pecas: texto(r.pecas, LIMITES.textoLongo),
       responsavel: texto(r.responsavel),

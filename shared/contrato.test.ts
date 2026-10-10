@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MODELO_CONTRATO,
   assinaOProprio,
   assinantePadrao,
   devolucaoPadrao,
@@ -12,7 +13,7 @@ import {
   textoContrato,
 } from './contrato.ts'
 import { CLIENTE_VAZIO, CONFIG_PADRAO, MAQUINA_VAZIA, normalizarDadosContrato, normalizarNovoContrato } from './dominio.ts'
-import type { Cliente, Evento, Maquina } from './tipos.ts'
+import type { Cliente, DadosContrato, Evento, Maquina } from './tipos.ts'
 
 const cliente = (extra: Partial<Cliente> = {}): Cliente => ({
   ...CLIENTE_VAZIO,
@@ -164,15 +165,11 @@ describe('dados do contrato', () => {
 })
 
 describe('texto do contrato (escolhas do dono, dentro do CDC)', () => {
-  it('traz as regras escolhidas: cancelamento, arrependimento, danos, bobinas, multa de 2% e foro do consumidor', () => {
+  it('traz as regras escolhidas: danos, bobinas, sem multa por atraso e foro do consumidor', () => {
     const t = textoTodo(dados(undefined, undefined, { valorReposicaoP: 1800, valorReposicaoG: 2600 }))
-    expect(t).toContain('sem nenhum custo até 7 (sete) dias antes da primeira data de uso')
-    expect(t).toContain('art. 49 do Código de Defesa do Consumidor')
-    expect(t).toContain('no máximo 10% (dez por cento)')
     expect(t).toContain('R$ 1.800,00 por máquina P (pequena) e R$ 2.600,00 por máquina G (grande)')
     expect(t).toContain('nem por roubo, incêndio, enchente')
     expect(t).toContain('as bobinas que voltarem lacradas não são cobradas')
-    expect(t).toContain('multa de 2% (dois por cento)')
     expect(t).toContain('Não há multa por atraso na devolução')
     expect(t).toContain('art. 101, inciso I')
     expect(t).toContain('art. 10, § 2º, da Medida Provisória 2.200-2/2001')
@@ -200,12 +197,38 @@ describe('texto do contrato (escolhas do dono, dentro do CDC)', () => {
   })
 
   it('as cláusulas que limitam direitos vêm em destaque (negrito)', () => {
-    const blocos = textoContrato(dados(), 1)
-    const destacados = blocos.filter((b) => b.tipo === 'paragrafo' && b.destaque).map((b) => (b as { texto: string }).texto)
-    expect(destacados.some((x) => x.includes('multa de 2%'))).toBe(true)
-    expect(destacados.some((x) => x.includes('valor de reposição'))).toBe(true)
-    expect(destacados.some((x) => x.includes('lacradas'))).toBe(true)
-    expect(destacados.some((x) => x.includes('reter no máximo 10%'))).toBe(true)
+    const destacados = (d: DadosContrato) =>
+      textoContrato(d, 1)
+        .filter((b) => b.tipo === 'paragrafo' && b.destaque)
+        .map((b) => (b as { texto: string }).texto)
+    const atual = destacados(dados())
+    expect(atual.some((x) => x.includes('valor de reposição'))).toBe(true)
+    expect(atual.some((x) => x.includes('lacradas'))).toBe(true)
+    // Modelo 1 (até a versão 2.5): também o cancelamento e a multa por atraso
+    const antigo = destacados({ ...dados(), modelo: 1 })
+    expect(antigo.some((x) => x.includes('multa de 2%'))).toBe(true)
+    expect(antigo.some((x) => x.includes('reter no máximo 10%'))).toBe(true)
+  })
+
+  it('modelo 2: sem as cláusulas do cancelamento, do arrependimento e da multa por atraso no pagamento', () => {
+    const d = dados()
+    expect(d.modelo).toBe(MODELO_CONTRATO)
+    expect(MODELO_CONTRATO).toBe(2)
+    const t = textoTodo(d)
+    expect(t).not.toContain('DO CANCELAMENTO')
+    expect(t).not.toContain('art. 49')
+    expect(t).not.toMatch(/multa de 2%|juros de mora|IPCA/)
+    // O pagamento continua com os outros itens, numerados sem buraco
+    expect(t).toContain('3. O pagamento é feito')
+    expect(t).toContain('4. Os valores deste contrato não são alterados depois de assinado')
+    const numeros = [...t.matchAll(/CLÁUSULA (\d+)ª/g)].map((m) => Number(m[1]))
+    expect(numeros).toEqual(numeros.map((_, i) => i + 1))
+    // O modelo 1 continua com elas (contratos gerados antes saem iguais)
+    const t1 = textoTodo({ ...d, modelo: 1 })
+    expect(t1).toContain('sem nenhum custo até 7 (sete) dias antes da primeira data de uso')
+    expect(t1).toContain('art. 49 do Código de Defesa do Consumidor')
+    expect(t1).toContain('no máximo 10% (dez por cento)')
+    expect(t1).toContain('multa de 2% (dois por cento)')
   })
 })
 
@@ -305,14 +328,22 @@ describe('texto do contrato: casos da revisão', () => {
   })
 
   it('o texto do modelo 1 não muda (mudou uma cláusula? crie o modelo 2)', () => {
-    const d = dados(undefined, undefined, { empresaRepresentante: 'Fabio de Godoy Lima', valorReposicaoP: 1800 })
-    expect(d.modelo).toBe(1)
+    const d = {
+      ...dados(undefined, undefined, { empresaRepresentante: 'Fabio de Godoy Lima', valorReposicaoP: 1800 }),
+      modelo: 1,
+    }
     expect(textoTodo(d)).toMatchSnapshot()
     // Modelo desconhecido (backup de uma versão mais nova): sai com o texto atual
-    expect(textoTodo({ ...d, modelo: 99 })).toBe(textoTodo(d))
+    expect(textoTodo({ ...d, modelo: 99 })).toBe(textoTodo({ ...d, modelo: MODELO_CONTRATO }))
     // Gravado antes do número do modelo: é o modelo 1, com as condições do contrato vazias
     const { modelo: _m, condicoesContrato: _c, ...antigo } = d
     expect(normalizarDadosContrato(antigo)).toMatchObject({ modelo: 1, condicoesContrato: '' })
+  })
+
+  it('o texto do modelo 2 não muda (mudou uma cláusula? crie o modelo 3)', () => {
+    const d = dados(undefined, undefined, { empresaRepresentante: 'Fabio de Godoy Lima', valorReposicaoP: 1800 })
+    expect(d.modelo).toBe(2)
+    expect(textoTodo(d)).toMatchSnapshot()
   })
 })
 

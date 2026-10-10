@@ -45,10 +45,14 @@ export function EmptyState({
     <motion.div
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
-      className={cn('flex flex-col items-center justify-center px-6 py-14 text-center', className)}
+      // O brilho atrás do ícone fica dentro do bloco (não vaza sobre a barra de filtros acima)
+      className={cn(
+        'relative isolate flex flex-col items-center justify-center overflow-hidden px-6 py-14 text-center',
+        className,
+      )}
     >
       <div className="relative mb-4">
-        <div className="absolute inset-0 scale-150 rounded-full bg-brand-soft blur-xl" />
+        <div className="absolute inset-1 -z-10 rounded-2xl bg-brand-soft blur-lg" />
         <div className="relative flex h-14 w-14 items-center justify-center rounded-2xl border border-line bg-surface text-brand shadow-xs">
           {icone}
         </div>

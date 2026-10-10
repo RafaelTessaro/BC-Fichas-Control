@@ -2,7 +2,7 @@
 // no aluguel depois de gerado e o arquivo da cópia assinada. Sem React, para poder ser testado.
 
 import type { Tone } from '#shared/calc.ts'
-import { codigoContrato, dataBR, diaDeMaiorUso, montarDadosContrato, mudancasDesde } from '#shared/contrato.ts'
+import { MODELO_CONTRATO, codigoContrato, dataBR, diaDeMaiorUso, montarDadosContrato, mudancasDesde } from '#shared/contrato.ts'
 import { quantidadeCurta, quantidadePorExtenso } from '#shared/maquinas.ts'
 import type {
   Cliente,
@@ -98,6 +98,7 @@ export interface FontesAtuais {
  * O que mudou no aluguel (ou no cadastro do cliente) depois que o contrato foi gerado, para a tela
  * pedir um contrato novo. Não contam: o pagamento registrado depois (o combinado não muda) e a
  * escolha das máquinas quando o contrato saiu sem elas (os números vão no Termo de Entrega).
+ * Esperando a assinatura com o texto de um modelo antigo, também pede um novo (as cláusulas mudaram).
  * Contrato cancelado ou evento excluído: nada a comparar.
  */
 export function mudancasDoContrato(contrato: Pick<Contrato, 'status' | 'dados'>, f: FontesAtuais): string[] {
@@ -113,7 +114,10 @@ export function mudancasDoContrato(contrato: Pick<Contrato, 'status' | 'dados'>,
   })
   atual.valores.formaPagamento = gerado.valores.formaPagamento
   if (!gerado.evento.maquinas.length) atual.evento.maquinas = []
-  return mudancasDesde(gerado, atual)
+  const lista = mudancasDesde(gerado, atual)
+  // Texto de um modelo antigo: vale gerar de novo enquanto o cliente ainda não assinou
+  if (contrato.status === 'AGUARDANDO' && gerado.modelo < MODELO_CONTRATO) lista.push('as cláusulas do contrato')
+  return lista
 }
 
 /**

@@ -321,6 +321,16 @@ describe('ordens de serviço', () => {
       201,
     )
     expect(segunda.json).toMatchObject({ numero: 2, tipo: 'PREVENTIVA', servicos: ['Limpeza completa', 'Higienização'] })
+    // Observações (desde a 2.6): gravadas e devolvidas; as antigas vêm vazias
+    expect(abre.json.observacoes).toBe('')
+    const comObs = await req<OrdemServico>(
+      'PUT',
+      `/api/ordens/${segunda.json.id}`,
+      { ...segunda.json, observacoes: 'Peça encomendada\r\nchega sexta' },
+      200,
+    )
+    expect(comObs.json.observacoes).toBe('Peça encomendada\nchega sexta')
+    expect((await dados()).ordens.find((o) => o.id === segunda.json.id)?.observacoes).toBe('Peça encomendada\nchega sexta')
 
     // Concluir sem data: hoje; e devolver a máquina
     const conclui = await req<OrdemServico>(

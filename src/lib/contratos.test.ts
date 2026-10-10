@@ -202,6 +202,15 @@ describe('o aluguel mudou depois do contrato', () => {
     ])
   })
 
+  it('texto de um modelo antigo: pede um novo só enquanto espera a assinatura', () => {
+    const antigo = (status: Contrato['status']) => {
+      const c = contrato(1, status)
+      return { ...c, dados: { ...c.dados, modelo: 1 } }
+    }
+    expect(mudancasDoContrato(antigo('AGUARDANDO'), fontes)).toEqual(['as cláusulas do contrato'])
+    expect(mudancasDoContrato(antigo('ASSINADO'), fontes)).toEqual([])
+  })
+
   it('contrato cancelado ou evento excluído: nada a comparar', () => {
     const e = evento({ valorDiaria: 90 })
     expect(mudancasDoContrato(contrato(1, 'CANCELADO'), { ...fontes, evento: e })).toEqual([])

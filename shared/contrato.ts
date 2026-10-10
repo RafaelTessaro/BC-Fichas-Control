@@ -2,14 +2,13 @@
 // texto das cláusulas. Usado pelo servidor (para gravar o contrato) e pela tela (para o PDF).
 //
 // As regras foram escolhidas pelo dono dentro do Código de Defesa do Consumidor (Lei 8.078/1990):
-// - cancelamento grátis até 7 dias antes do 1º dia (e direito de arrependimento do art. 49 quando a
-//   contratação foi por telefone/WhatsApp/internet); depois, retenção de no máximo 10% das diárias
-//   (20% se o cliente não aparecer para retirar), com reciprocidade se a empresa cancelar;
 // - danos por mau uso: conserto com orçamento; perda ou furto por descuido: valor de reposição
 //   informado; desgaste natural e roubo/força maior comprovados não são cobrados;
 // - sem caução; bobinas lacradas voltam sem custo, abertas ou não devolvidas são cobradas;
-// - atraso no pagamento: multa de 2%, juros pela taxa legal e IPCA; atraso na devolução não é cobrado;
-// - retirada e devolução na sede da empresa; sem testemunhas.
+// - atraso na devolução não é cobrado; retirada e devolução na sede da empresa; sem testemunhas.
+// O modelo 1 (contratos gerados até a versão 2.5) também tinha as cláusulas do cancelamento (com o
+// arrependimento do art. 49) e da multa por atraso no pagamento. No modelo 2 elas saíram: a empresa
+// não cobra cancelamento nem atraso.
 // Texto em corpo 12 e cláusulas que limitam direitos em destaque (art. 54, §§ 3º e 4º).
 
 import { valorPorExtenso } from './extenso.ts'
@@ -135,7 +134,7 @@ export function assinantePadrao(c: Cliente | undefined): { nome: string; cpf: st
 }
 
 /** Modelo (versão) do texto das cláusulas gerado hoje. Mudou uma cláusula? Novo modelo, sem mexer nos antigos. */
-export const MODELO_CONTRATO = 1
+export const MODELO_CONTRATO = 2
 
 const soDigitos = (s: string) => s.replace(/\D/g, '')
 const mesmoNome = (a: string, b: string) => a.trim().localeCompare(b.trim(), 'pt-BR', { sensitivity: 'base' }) === 0
@@ -398,8 +397,16 @@ function textoDatasUso(dias: DadosContrato['evento']['dias'], clausulaDatas: num
   return `${dias.length} dias, entre ${dataBR(primeira)} e ${dataBR(ultima)} (cláusula ${clausulaDatas}ª)`
 }
 
-/** Texto do modelo 1 (o primeiro): do quadro-resumo às assinaturas. */
-function textoModelo1(d: DadosContrato, numero: number): BlocoContrato[] {
+/** O que muda de um modelo do texto para outro. */
+interface RegrasModelo {
+  /** Cláusula do cancelamento (com o arrependimento do art. 49 do CDC). */
+  cancelamento: boolean
+  /** Multa, juros e correção por atraso no pagamento. */
+  multaAtraso: boolean
+}
+
+/** Texto das cláusulas, do quadro-resumo às assinaturas. */
+function textoModelo(d: DadosContrato, numero: number, regras: RegrasModelo): BlocoContrato[] {
   const b: BlocoContrato[] = []
   let n = 0
   const clausula = (titulo: string) => {
@@ -507,12 +514,15 @@ function textoModelo1(d: DadosContrato, numero: number): BlocoContrato[] {
     `2. As bobinas${temReserva ? ' e as máquinas reserva usadas' : ''} são acertadas na devolução, conforme as cláusulas seguintes.`,
   )
   par(`3. O pagamento é feito ${FORMAS[v.formaPagamento]}, e a LOCADORA emite recibo de todo valor recebido.`)
-  par(
-    '4. Em caso de atraso no pagamento, incidem multa de 2% (dois por cento) sobre o valor em atraso, juros de mora' +
-      ' pela taxa legal (art. 406 do Código Civil) e correção monetária pelo IPCA.',
-    true,
-  )
-  par('5. Os valores deste contrato não são alterados depois de assinado, salvo acordo por escrito entre as partes.')
+  let itemPreco = 4
+  if (regras.multaAtraso) {
+    par(
+      `${itemPreco++}. Em caso de atraso no pagamento, incidem multa de 2% (dois por cento) sobre o valor em atraso, juros de mora` +
+        ' pela taxa legal (art. 406 do Código Civil) e correção monetária pelo IPCA.',
+      true,
+    )
+  }
+  par(`${itemPreco}. Os valores deste contrato não são alterados depois de assinado, salvo acordo por escrito entre as partes.`)
 
   if (temReserva) {
     clausula('DA MÁQUINA RESERVA')
@@ -600,34 +610,36 @@ function textoModelo1(d: DadosContrato, numero: number): BlocoContrato[] {
       ' imprevisto. Não há multa por atraso na devolução.',
   )
 
-  clausula('DO CANCELAMENTO')
-  par(
-    '1. O LOCATÁRIO pode cancelar a locação sem nenhum custo até 7 (sete) dias antes da primeira data de uso, com' +
-      ' devolução integral do que tiver pago em até 5 (cinco) dias úteis.',
-    true,
-  )
-  par(
-    '2. Se a contratação foi feita fora da sede da LOCADORA (por telefone, WhatsApp, e-mail ou internet), o LOCATÁRIO' +
-      ' pode desistir em até 7 (sete) dias, contados da assinatura ou do recebimento deste contrato, com devolução' +
-      ' imediata e integral dos valores pagos (art. 49 do Código de Defesa do Consumidor).',
-    true,
-  )
-  par(
-    '3. Fora desses casos, a LOCADORA pode reter no máximo 10% (dez por cento) do valor das diárias; se o LOCATÁRIO não' +
-      ' comparecer para retirar as máquinas e não avisar, no máximo 20% (vinte por cento). O restante é devolvido em até' +
-      ' 5 (cinco) dias úteis.',
-    true,
-  )
-  par(
-    '4. Se o evento for cancelado por caso fortuito ou força maior (por exemplo, determinação de autoridade), o' +
-      ' LOCATÁRIO pode remarcar sem custo, conforme a disponibilidade de máquinas, ou receber de volta tudo o que pagou.',
-    true,
-  )
-  par(
-    '5. Se a LOCADORA cancelar ou não entregar as máquinas, devolve integralmente os valores pagos e paga ao LOCATÁRIO' +
-      ' 10% (dez por cento) do valor das diárias.',
-    true,
-  )
+  if (regras.cancelamento) {
+    clausula('DO CANCELAMENTO')
+    par(
+      '1. O LOCATÁRIO pode cancelar a locação sem nenhum custo até 7 (sete) dias antes da primeira data de uso, com' +
+        ' devolução integral do que tiver pago em até 5 (cinco) dias úteis.',
+      true,
+    )
+    par(
+      '2. Se a contratação foi feita fora da sede da LOCADORA (por telefone, WhatsApp, e-mail ou internet), o LOCATÁRIO' +
+        ' pode desistir em até 7 (sete) dias, contados da assinatura ou do recebimento deste contrato, com devolução' +
+        ' imediata e integral dos valores pagos (art. 49 do Código de Defesa do Consumidor).',
+      true,
+    )
+    par(
+      '3. Fora desses casos, a LOCADORA pode reter no máximo 10% (dez por cento) do valor das diárias; se o LOCATÁRIO não' +
+        ' comparecer para retirar as máquinas e não avisar, no máximo 20% (vinte por cento). O restante é devolvido em até' +
+        ' 5 (cinco) dias úteis.',
+      true,
+    )
+    par(
+      '4. Se o evento for cancelado por caso fortuito ou força maior (por exemplo, determinação de autoridade), o' +
+        ' LOCATÁRIO pode remarcar sem custo, conforme a disponibilidade de máquinas, ou receber de volta tudo o que pagou.',
+      true,
+    )
+    par(
+      '5. Se a LOCADORA cancelar ou não entregar as máquinas, devolve integralmente os valores pagos e paga ao LOCATÁRIO' +
+        ' 10% (dez por cento) do valor das diárias.',
+      true,
+    )
+  }
 
   clausula('DA RESCISÃO')
   par(
@@ -713,8 +725,14 @@ function textoModelo1(d: DadosContrato, numero: number): BlocoContrato[] {
   return b
 }
 
-/** O texto de cada modelo: um contrato antigo continua saindo com as cláusulas de quando foi gerado. */
-const MODELOS: Record<number, (d: DadosContrato, numero: number) => BlocoContrato[]> = { 1: textoModelo1 }
+/**
+ * O texto de cada modelo: um contrato antigo continua saindo com as cláusulas de quando foi gerado.
+ * Modelo 1: até a versão 2.5, com o cancelamento e a multa por atraso. Modelo 2: sem os dois.
+ */
+const MODELOS: Record<number, (d: DadosContrato, numero: number) => BlocoContrato[]> = {
+  1: (d, numero) => textoModelo(d, numero, { cancelamento: true, multaAtraso: true }),
+  2: (d, numero) => textoModelo(d, numero, { cancelamento: false, multaAtraso: false }),
+}
 
 /** O contrato inteiro, do quadro-resumo às assinaturas (o termo de entrega é desenhado à parte). */
 export function textoContrato(d: DadosContrato, numero: number): BlocoContrato[] {

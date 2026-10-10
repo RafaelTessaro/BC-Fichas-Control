@@ -145,6 +145,7 @@ function estadoInicial(
     conclusao: concluir ? hojeISO() : '',
     servicos: [],
     problema: '',
+    observacoes: '',
     solucao: '',
     pecas: '',
     responsavel: '',
@@ -497,6 +498,15 @@ function FormularioOS({
             <option key={r} value={r} />
           ))}
         </datalist>
+      </Field>
+      <Field label="Observações" htmlFor="os-observacoes" className="sm:col-span-6">
+        <Textarea
+          id="os-observacoes"
+          value={f.observacoes}
+          onChange={(e) => set('observacoes', e.target.value)}
+          placeholder="Ex.: peça encomendada, previsão de entrega na sexta"
+          className="min-h-[72px]"
+        />
       </Field>
 
       {maquina && sugestao && (

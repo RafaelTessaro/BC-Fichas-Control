@@ -317,7 +317,7 @@ function ContratoAtual({
           <span>
             {semEfeito
               ? 'O evento foi cancelado: este contrato não vale mais. Cancele-o no menu “Mais”.'
-              : 'O evento foi cancelado. O contrato assinado fica guardado; os valores seguem a cláusula do cancelamento.'}
+              : 'O evento foi cancelado. O contrato assinado fica guardado na aba Contratos.'}
           </span>
         </div>
       )}

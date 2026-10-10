@@ -314,6 +314,7 @@ export function gerarDadosExemplo(hoje: Date) {
       conclusao: o.abertura,
       servicos: [],
       problema: '',
+      observacoes: '',
       solucao: '',
       pecas: '',
       responsavel: 'Rafael',

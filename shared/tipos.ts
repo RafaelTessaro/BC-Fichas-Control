@@ -317,6 +317,8 @@ export interface OrdemServico {
   servicos: string[]
   /** Problema relatado ou motivo da manutenção. */
   problema: string
+  /** Observações livres (ex.: peça encomendada, cliente avisado). */
+  observacoes: string
   /** Campos da versão anterior (não aparecem mais na tela; preservados nos registros antigos). */
   solucao: string
   pecas: string

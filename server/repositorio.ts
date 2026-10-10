@@ -1417,6 +1417,8 @@ export class Repositorio {
 
   private paraOS(l: LinhaOS): OrdemServico {
     return {
+      // Gravadas antes do campo de observações (versão 2.6)
+      observacoes: '',
       ...JSON.parse(l.dados),
       id: l.id,
       versao: l.versao,

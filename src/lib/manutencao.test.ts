@@ -80,6 +80,7 @@ const os = (numero: number, maquinaId: string, extra: Partial<OrdemServico> = {}
   conclusao: '2026-01-10',
   servicos: ['Limpeza completa'],
   problema: '',
+  observacoes: '',
   solucao: '',
   pecas: '',
   responsavel: '',
