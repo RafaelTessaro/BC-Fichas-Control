@@ -1,5 +1,7 @@
+import { differenceInCalendarDays, parseISO } from 'date-fns'
 import {
   ArrowLeft,
+  CalendarCheck,
   CalendarClock,
   CalendarPlus,
   ChevronRight,
@@ -49,6 +51,7 @@ import { useHoje } from '../lib/hoje'
 import { porDataDesc, useEventosCompletos, type EventoCompleto } from '../lib/hooks'
 import { DIAS_DA_SEMANA, diaDaSemana } from '../lib/repeticao'
 import { useDados } from '../store/dados'
+import { usePode } from '../store/sessao'
 import { avisarErro, toast } from '../store/ui'
 import { hojeLocalIso } from '#shared/dominio.ts'
 
@@ -61,6 +64,9 @@ export function ClienteDetalhe() {
   const [editando, setEditando] = useState(false)
   const [consultando, setConsultando] = useState(false)
   const [atualizacao, setAtualizacao] = useState<DadosCnpj | null>(null)
+  // O usuário comum vê o total de cada evento no histórico, mas não as somas do cliente
+  const verFat = usePode('verFaturamento')
+  const podeExcluir = usePode('excluirCliente')
 
   const eventos = useMemo(() => todos.filter((e) => e.evento.clienteId === id).sort(porDataDesc), [todos, id])
   const hoje = useHoje()
@@ -86,6 +92,12 @@ export function ClienteDetalhe() {
         { faturado: 0, recebido: 0, aReceber: 0, diarias: 0 },
       ),
     [eventos],
+  )
+  // Eventos já encerrados e ainda não pagos (o mesmo critério do painel), só a quantidade
+  const pendentes = useMemo(
+    () =>
+      eventos.filter(({ evento: e, resumo: r }) => e.status !== 'CANCELADO' && (r.dataFim ?? '9999') < hoje && !r.pago).length,
+    [eventos, hoje],
   )
 
   if (!cliente) {
@@ -150,15 +162,17 @@ export function ClienteDetalhe() {
         }
         acoes={
           <>
-            <Button
-              variante="ghost"
-              tamanho="icon"
-              onClick={excluir}
-              aria-label="Excluir cliente"
-              className="hover:bg-danger-soft hover:text-danger"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
+            {podeExcluir && (
+              <Button
+                variante="ghost"
+                tamanho="icon"
+                onClick={excluir}
+                aria-label="Excluir cliente"
+                className="hover:bg-danger-soft hover:text-danger"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
             {podeConsultar && (
               <Button
                 icone={<RefreshCw className={cn('h-4 w-4', consultando && 'animate-spin')} />}
@@ -182,25 +196,57 @@ export function ClienteDetalhe() {
         }
       />
 
-      <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard
-          rotulo="Total faturado"
-          valor={t.faturado}
-          formatar={moeda}
-          icone={<CircleDollarSign className="h-4 w-4" />}
-          destaque
-        />
-        <StatCard rotulo="Recebido" valor={t.recebido} formatar={moeda} icone={<Wallet className="h-4 w-4" />} delay={0.04} />
-        <StatCard rotulo="A receber" valor={t.aReceber} formatar={moeda} icone={<Clock className="h-4 w-4" />} delay={0.08} />
-        <StatCard
-          rotulo="Eventos"
-          valor={eventos.length}
-          formatar={(v) => numero(Math.round(v))}
-          icone={<Ticket className="h-4 w-4" />}
-          detalhe={`${numero(t.diarias)} diárias no total`}
-          delay={0.12}
-        />
-      </div>
+      {verFat ? (
+        <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <StatCard
+            rotulo="Total faturado"
+            valor={t.faturado}
+            formatar={moeda}
+            icone={<CircleDollarSign className="h-4 w-4" />}
+            destaque
+          />
+          <StatCard rotulo="Recebido" valor={t.recebido} formatar={moeda} icone={<Wallet className="h-4 w-4" />} delay={0.04} />
+          <StatCard rotulo="A receber" valor={t.aReceber} formatar={moeda} icone={<Clock className="h-4 w-4" />} delay={0.08} />
+          <StatCard
+            rotulo="Eventos"
+            valor={eventos.length}
+            formatar={(v) => numero(Math.round(v))}
+            icone={<Ticket className="h-4 w-4" />}
+            detalhe={`${numero(t.diarias)} diárias no total`}
+            delay={0.12}
+          />
+        </div>
+      ) : (
+        // Usuário comum: o andamento do cliente, sem somas em R$ nem o total de diárias
+        <div className="mb-6 grid grid-cols-1 gap-4 md:grid-cols-3">
+          <StatCard
+            rotulo="Eventos"
+            valor={eventos.length}
+            formatar={(v) => numero(Math.round(v))}
+            icone={<Ticket className="h-4 w-4" />}
+            detalhe={`${numero(proximos.length)} ${proximos.length === 1 ? 'próximo' : 'próximos'}`}
+            destaque
+          />
+          <StatCard
+            // A data não é animada como número: ao mudar o próximo evento, o cartão é montado de novo
+            key={proximos[0]?.evento.id ?? 'nenhum'}
+            rotulo="Próximo evento"
+            valor={0}
+            formatar={() => dataCurta(proximos[0]?.resumo.dataInicio)}
+            icone={<CalendarCheck className="h-4 w-4" />}
+            detalhe={proximos[0] ? quandoComeca(proximos[0].resumo.dataInicio, hoje) : 'Nenhum evento marcado'}
+            delay={0.04}
+          />
+          <StatCard
+            rotulo="Pagamentos pendentes"
+            valor={pendentes}
+            formatar={(v) => numero(Math.round(v))}
+            icone={<Clock className="h-4 w-4" />}
+            detalhe={pendentes === 1 ? 'Evento encerrado sem pagamento' : 'Eventos encerrados sem pagamento'}
+            delay={0.08}
+          />
+        </div>
+      )}
 
       <div className="flex flex-col gap-6">
         <Card>
@@ -292,6 +338,16 @@ export function ClienteDetalhe() {
       </Modal>
     </>
   )
+}
+
+/** Detalhe do cartão "Próximo evento": "Começa hoje", "Começa em 5 dias", "Acontecendo agora". */
+function quandoComeca(inicio: string | null, hoje: string) {
+  if (!inicio) return 'Sem datas'
+  const n = differenceInCalendarDays(parseISO(inicio), parseISO(hoje))
+  if (n < 0) return 'Acontecendo agora'
+  if (n === 0) return 'Começa hoje'
+  if (n === 1) return 'Começa amanhã'
+  return `Começa em ${numero(n)} dias`
 }
 
 /** Eventos do cliente de hoje em diante: data, nome, status e máquinas ("4+1"). */

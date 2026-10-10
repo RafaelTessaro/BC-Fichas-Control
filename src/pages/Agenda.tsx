@@ -38,6 +38,7 @@ import { numero } from '../lib/format'
 import { useHoje } from '../lib/hoje'
 import { useEventosCompletos, type EventoCompleto } from '../lib/hooks'
 import { useDados } from '../store/dados'
+import { usePode } from '../store/sessao'
 
 const COR_STATUS: Record<StatusEvento, string> = {
   EM_ABERTO: 'bg-info',
@@ -85,6 +86,7 @@ export function Agenda() {
   const config = useDados((s) => s.config)
   const eventosBrutos = useDados((s) => s.eventos)
   const clientes = useDados((s) => s.clientes)
+  const podeConfigurar = usePode('configuracoes')
   const eventos = useEventosCompletos()
   const hojeIso = useHoje()
   const mesAtual = hojeIso.slice(0, 7)
@@ -255,9 +257,13 @@ export function Agenda() {
           ) : (
             <>
               Ocupação diária considerando {numero(total)} máquinas.{' '}
-              <Link to="/configuracoes" className="font-medium text-brand-ink hover:underline">
-                Informe quantas máquinas P e G a empresa tem
-              </Link>
+              {podeConfigurar ? (
+                <Link to="/configuracoes" className="font-medium text-brand-ink hover:underline">
+                  Informe quantas máquinas P e G a empresa tem
+                </Link>
+              ) : (
+                'Peça ao administrador para informar quantas máquinas P e G a empresa tem.'
+              )}
             </>
           )
         }

@@ -418,7 +418,7 @@ describe('rotas /api/google', () => {
 
     const inexistente = await t.req('POST', '/api/google/testar', { calendarId: 'outra@group.calendar.google.com' })
     expect(inexistente.statusCode).toBe(400)
-    expect(inexistente.json().erro).toBe('Agenda não encontrada: confira o ID da agenda.')
+    expect(inexistente.json().erro).toBe('Agenda não encontrada: confira o ID da agenda e se ela foi compartilhada com o e-mail da conta de serviço.')
 
     t.sim.offline = true
     const offline = await t.req('POST', '/api/google/testar', { calendarId: AGENDA })
@@ -451,7 +451,12 @@ describe('integração com o servidor', () => {
     const sim = criarSimuladorGoogle(conta.chavePublica)
     sim.criarAgenda(AGENDA)
     vi.stubGlobal('fetch', sim.fetch)
-    const { app } = await criarApp({ pastaDados: pasta, arquivoBanco: ':memory:', pastaEstatica: null })
+    const { app } = await criarApp({
+      pastaDados: pasta,
+      arquivoBanco: ':memory:',
+      pastaEstatica: null,
+      acessoLivreParaTestes: true,
+    })
     try {
       expect(
         (await app.inject({ method: 'POST', url: '/api/google/credenciais', payload: { json: conta.json } })).statusCode,
@@ -505,7 +510,7 @@ describe('robustez (revisão)', () => {
 
     const r = await t.req('PUT', '/api/google/config', { calendarId: 'erradoo@group.calendar.google.com' })
     expect(r.statusCode).toBe(400)
-    expect(r.json().erro).toBe('Agenda não encontrada: confira o ID da agenda.')
+    expect(r.json().erro).toBe('Agenda não encontrada: confira o ID da agenda e se ela foi compartilhada com o e-mail da conta de serviço.')
     expect((await t.req('GET', '/api/google/status')).json()).toMatchObject({ calendarId: AGENDA, resumo: { ok: 1 } })
     for (let i = 0; i < 3; i++) {
       t.avancar(60 * 60_000)
@@ -706,7 +711,7 @@ describe('robustez (revisão)', () => {
       t.avancar(60 * 60_000)
     }
     expect((await t.req('GET', '/api/google/status')).json()).toMatchObject({
-      ultimoErro: 'Agenda não encontrada: confira o ID da agenda.',
+      ultimoErro: 'Agenda não encontrada: confira o ID da agenda e se ela foi compartilhada com o e-mail da conta de serviço.',
       resumo: { erros: 2 },
     })
     expect(syncDe(e2)?.status).toBe('erro')

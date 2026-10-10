@@ -1,9 +1,11 @@
 // Contratos de locação: gerar (com os dados congelados), mudar a situação e guardar o arquivo
 // assinado (foto ou PDF digitalizado) em <pasta de dados>/contratos/<contrato>/assinado.
 // O PDF do contrato em si é montado no navegador a partir dos dados gravados.
+// A cópia assinada trocada ou apagada não some: vai para <pasta de dados>/contratos/<contrato>/anteriores/
+// (só a exclusão do contrato, pelo administrador, apaga a pasta inteira: o descarte previsto pela LGPD).
 
 import { createReadStream, existsSync, mkdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { extname, join } from 'node:path'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Contexto } from '../contexto.ts'
 import { ErroApi } from '../erros.ts'
@@ -20,6 +22,21 @@ export async function rotasContratos(app: FastifyInstance, { repo, pastaDados }:
   const caminho = (id: string) => {
     if (!/^[A-Za-z0-9_-]{1,100}$/.test(id)) throw new ErroApi(404, 'Contrato não encontrado.')
     return join(pasta, id, 'assinado')
+  }
+
+  /** Move a cópia assinada atual para anteriores/<data e hora>-<nome original> (-2, -3… se repetir). */
+  function guardarAnterior(id: string, nomeOriginal: string) {
+    const atual = caminho(id)
+    if (!existsSync(atual)) return
+    const anteriores = join(pasta, id, 'anteriores')
+    mkdirSync(anteriores, { recursive: true })
+    const carimbo = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')
+    const nome = `${carimbo}-${nomeSeguro(nomeOriginal)}`
+    const extensao = extname(nome)
+    const base = nome.slice(0, nome.length - extensao.length)
+    let destino = join(anteriores, nome)
+    for (let n = 2; existsSync(destino); n++) destino = join(anteriores, `${base}-${n}${extensao}`)
+    renameSync(atual, destino)
   }
 
   app.post('/api/contratos', async (req, reply) => reply.code(201).send(repo.criarContrato(req.body)))
@@ -40,11 +57,13 @@ export async function rotasContratos(app: FastifyInstance, { repo, pastaDados }:
     const tipo = String(req.headers['x-tipo'] ?? '').toLowerCase()
     if (!TIPOS_ASSINADO.test(tipo)) throw new ErroApi(400, 'Envie o contrato assinado em PDF ou foto (JPG, PNG).')
     const destino = caminho(req.params.id)
-    return repo.registrarArquivoContrato(req.params.id, { nome, tipo, tamanho: corpo.length }, () => {
+    return repo.registrarArquivoContrato(req.params.id, { nome, tipo, tamanho: corpo.length }, (anterior) => {
       mkdirSync(join(destino, '..'), { recursive: true })
-      // Grava num arquivo temporário e troca: se algo falhar, o anterior continua inteiro
+      // Grava num arquivo temporário e troca: se algo falhar, o anterior continua inteiro.
+      // A cópia anterior vai para "anteriores" só depois de a nova estar gravada no disco.
       const temporario = `${destino}.novo`
       writeFileSync(temporario, corpo)
+      if (anterior) guardarAnterior(req.params.id, anterior.nome)
       renameSync(temporario, destino)
     })
   })
@@ -63,9 +82,10 @@ export async function rotasContratos(app: FastifyInstance, { repo, pastaDados }:
     return reply.send(createReadStream(arquivo))
   })
 
+  // A cópia apagada vai para "anteriores" (não some)
   app.delete('/api/contratos/:id/arquivo', async (req: ComId) => {
-    const { contrato } = repo.removerArquivoContrato(req.params.id)
-    rmSync(caminho(contrato.id), { force: true })
+    const { contrato, anterior } = repo.removerArquivoContrato(req.params.id)
+    guardarAnterior(contrato.id, anterior.arquivo?.nome ?? 'contrato-assinado')
     return contrato
   })
 }

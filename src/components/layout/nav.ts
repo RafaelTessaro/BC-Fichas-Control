@@ -5,23 +5,41 @@ import {
   LayoutDashboard,
   Settings,
   Ticket,
+  UserCog,
   Users,
   Wrench,
   type LucideIcon,
 } from 'lucide-react'
+import { pode, type Permissao } from '#shared/permissoes.ts'
+import type { NivelUsuario } from '#shared/tipos.ts'
 
 export interface ItemNav {
   to: string
   label: string
   icone: LucideIcon
   descricao: string
+  /** Só aparece para quem tem a permissão (o servidor também recusa as rotas da página). */
+  permissao?: Permissao
+  /** Descrição para quem não vê o faturamento (a página mostra menos coisas para ele). */
+  descricaoComum?: string
 }
 
-export const NAV: Array<{ grupo: string; itens: ItemNav[] }> = [
+export interface GrupoNav {
+  grupo: string
+  itens: ItemNav[]
+}
+
+const NAV: GrupoNav[] = [
   {
     grupo: 'Visão geral',
     itens: [
-      { to: '/', label: 'Painel', icone: LayoutDashboard, descricao: 'Resumo do mês e pendências' },
+      {
+        to: '/',
+        label: 'Painel',
+        icone: LayoutDashboard,
+        descricao: 'Resumo do mês e pendências',
+        descricaoComum: 'Pendências, máquinas e próximos eventos',
+      },
       { to: '/agenda', label: 'Agenda', icone: CalendarDays, descricao: 'Calendário de máquinas por dia' },
     ],
   },
@@ -35,18 +53,48 @@ export const NAV: Array<{ grupo: string; itens: ItemNav[] }> = [
   },
   {
     grupo: 'Gestão',
+    itens: [{ to: '/manutencao', label: 'Manutenção', icone: Wrench, descricao: 'Máquinas, manutenções e reclamações' }],
+  },
+  {
+    grupo: 'Administração',
     itens: [
-      { to: '/manutencao', label: 'Manutenção', icone: Wrench, descricao: 'Máquinas, manutenções e reclamações' },
-      { to: '/relatorios', label: 'Relatórios', icone: ChartColumn, descricao: 'Faturamento e indicadores' },
+      {
+        to: '/relatorios',
+        label: 'Relatórios',
+        icone: ChartColumn,
+        descricao: 'Faturamento e indicadores',
+        permissao: 'verFaturamento',
+      },
+      {
+        to: '/usuarios',
+        label: 'Usuários',
+        icone: UserCog,
+        descricao: 'Quem acessa o sistema e o nível de cada um',
+        permissao: 'usuarios',
+      },
+      {
+        to: '/configuracoes',
+        label: 'Configurações',
+        icone: Settings,
+        descricao: 'Valores padrão, quantidade de máquinas e backup',
+        permissao: 'configuracoes',
+      },
     ],
   },
 ]
 
-export const NAV_CONFIG: ItemNav = {
-  to: '/configuracoes',
-  label: 'Configurações',
-  icone: Settings,
-  descricao: 'Valores padrão, quantidade de máquinas e backup',
+/** Menu de quem entrou: só as páginas que o nível pode abrir, sem grupo vazio. */
+export function navDoNivel(nivel: NivelUsuario | null | undefined): GrupoNav[] {
+  const veFaturamento = pode(nivel, 'verFaturamento')
+  return NAV.map((g) => ({
+    grupo: g.grupo,
+    itens: g.itens
+      .filter((it) => !it.permissao || pode(nivel, it.permissao))
+      .map((it) => (!veFaturamento && it.descricaoComum ? { ...it, descricao: it.descricaoComum } : it)),
+  })).filter((g) => g.itens.length > 0)
 }
 
-export const TODAS_PAGINAS = [...NAV.flatMap((g) => g.itens), NAV_CONFIG]
+/** Todas as páginas que o nível pode abrir (título do cabeçalho e busca global). */
+export function paginasDoNivel(nivel: NivelUsuario | null | undefined): ItemNav[] {
+  return navDoNivel(nivel).flatMap((g) => g.itens)
+}

@@ -10,12 +10,14 @@ import { confirmar } from '../components/ui/Feedback'
 import { Select } from '../components/ui/Form'
 import { Avatar, EmptyState, Menu, PageHeader, SearchInput, Segmented } from '../components/ui/Misc'
 import { Linha, Tabela, Td, Th } from '../components/ui/Table'
+import { cn } from '../lib/cn'
 import { chaveDocumento, ROTULO_TIPO_CLIENTE, rotuloSituacao, situacaoPedeAtencao, tomSituacao } from '../lib/consultas'
 import { exportarCSV } from '../lib/csv'
 import { dataCurta, enderecoCompleto, moeda, normalizar, numero } from '../lib/format'
 import { useEventosCompletos } from '../lib/hooks'
 import type { Cliente, TipoCliente } from '#shared/tipos.ts'
 import { useDados } from '../store/dados'
+import { usePode } from '../store/sessao'
 import { avisarErro, toast } from '../store/ui'
 
 type Ordem = 'nome' | 'faturado' | 'recente'
@@ -32,10 +34,15 @@ export function Clientes() {
   const eventos = useEventosCompletos()
   const navegar = useNavigate()
   const [params, setParams] = useSearchParams()
+  // O usuário comum não vê quanto cada cliente faturou nem quantos eventos fez (nem ordena por isso)
+  const verFat = usePode('verFaturamento')
+  const podeExportar = usePode('exportarPlanilhas')
+  const podeExcluir = usePode('excluirCliente')
 
   const [busca, setBusca] = useState('')
   const [tipo, setTipo] = useState<'todos' | TipoCliente>('todos')
-  const [ordem, setOrdem] = useState<Ordem>('nome')
+  const [ordemEscolhida, setOrdem] = useState<Ordem>('nome')
+  const ordem: Ordem = !verFat && ordemEscolhida === 'faturado' ? 'nome' : ordemEscolhida
   const [modalLocal, setModal] = useState<{ aberto: boolean; cliente?: Cliente }>({ aberto: false })
   // `?novo=1` (vindo do painel ou da busca global) abre o cadastro direto
   const modal = params.get('novo') === '1' ? { aberto: true } : modalLocal
@@ -145,14 +152,16 @@ export function Clientes() {
         descricao={`${numero(clientes.length)} ${clientes.length === 1 ? 'cliente cadastrado' : 'clientes cadastrados'}`}
         acoes={
           <>
-            <Button
-              icone={<Download className="h-4 w-4" />}
-              onClick={exportar}
-              disabled={!lista.length}
-              title="Baixa uma planilha (CSV) que abre no Excel"
-            >
-              Exportar planilha
-            </Button>
+            {podeExportar && (
+              <Button
+                icone={<Download className="h-4 w-4" />}
+                onClick={exportar}
+                disabled={!lista.length}
+                title="Baixa uma planilha (CSV) que abre no Excel"
+              >
+                Exportar planilha
+              </Button>
+            )}
             <Button variante="primary" icone={<Plus className="h-4 w-4" />} onClick={() => setModal({ aberto: true })}>
               Novo cliente
             </Button>
@@ -176,7 +185,7 @@ export function Clientes() {
           <div className="md:ml-auto md:w-52">
             <Select value={ordem} onChange={(e) => setOrdem(e.target.value as Ordem)} aria-label="Ordenar por">
               <option value="nome">Ordenar: nome (A–Z)</option>
-              <option value="faturado">Ordenar: maior faturamento</option>
+              {verFat && <option value="faturado">Ordenar: maior faturamento</option>}
               <option value="recente">Ordenar: evento mais recente</option>
             </Select>
           </div>
@@ -206,10 +215,14 @@ export function Clientes() {
                 <Th>Cliente</Th>
                 <Th className="max-xl:hidden">Contato</Th>
                 <Th className="max-2xl:hidden">Cidade</Th>
-                <Th alinhar="right" className="max-sm:hidden">
-                  Eventos
-                </Th>
-                <Th alinhar="right">Faturado</Th>
+                {verFat && (
+                  <>
+                    <Th alinhar="right" className="max-sm:hidden">
+                      Eventos
+                    </Th>
+                    <Th alinhar="right">Faturado</Th>
+                  </>
+                )}
                 <Th className="max-sm:hidden">Último evento</Th>
                 <Th className="w-12" />
               </tr>
@@ -218,8 +231,13 @@ export function Clientes() {
               {lista.map(({ c, s }, i) => (
                 <Linha key={c.id} indice={i} aoClicar={() => navegar(`/clientes/${c.id}`)}>
                   <Td>
-                    {/* No celular o nome é encurtado para o valor faturado caber na tela */}
-                    <div className="flex items-center gap-3 max-sm:max-w-[132px]">
+                    {/* No celular o nome é encurtado para o valor faturado caber na tela; sem ele, usa a largura toda */}
+                    <div
+                      className={cn(
+                        'flex items-center gap-3',
+                        verFat ? 'max-sm:max-w-[132px]' : 'max-sm:max-w-[calc(100vw-9rem)]',
+                      )}
+                    >
                       <Avatar nome={c.nome} />
                       <div className="min-w-0">
                         <div className="flex min-w-0 items-center gap-2">
@@ -254,12 +272,16 @@ export function Clientes() {
                   <Td className="whitespace-nowrap max-2xl:hidden">
                     {c.cidade ? `${c.cidade}${c.uf ? ` / ${c.uf}` : ''}` : '—'}
                   </Td>
-                  <Td alinhar="right" className="max-sm:hidden">
-                    {s.qtd}
-                  </Td>
-                  <Td alinhar="right" className="font-medium text-ink">
-                    {moeda(s.faturado)}
-                  </Td>
+                  {verFat && (
+                    <>
+                      <Td alinhar="right" className="max-sm:hidden">
+                        {s.qtd}
+                      </Td>
+                      <Td alinhar="right" className="font-medium text-ink">
+                        {moeda(s.faturado)}
+                      </Td>
+                    </>
+                  )}
                   <Td className="tnum max-sm:hidden">{dataCurta(s.ultimo)}</Td>
                   <Td onClick={(e) => e.stopPropagation()}>
                     <Menu
@@ -279,8 +301,17 @@ export function Clientes() {
                           icone: <CalendarPlus className="h-4 w-4" />,
                           aoClicar: () => navegar(`/eventos/novo?cliente=${c.id}`),
                         },
-                        'sep',
-                        { label: 'Excluir', icone: <Trash2 className="h-4 w-4" />, aoClicar: () => excluir(c), perigo: true },
+                        ...(podeExcluir
+                          ? [
+                              'sep' as const,
+                              {
+                                label: 'Excluir',
+                                icone: <Trash2 className="h-4 w-4" />,
+                                aoClicar: () => excluir(c),
+                                perigo: true,
+                              },
+                            ]
+                          : []),
                       ]}
                     />
                   </Td>

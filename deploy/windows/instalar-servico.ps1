@@ -13,10 +13,14 @@
 
   -IncluirRedePublica: libera a porta também quando o Windows classifica a rede como "Pública"
   (prefira marcar a rede da empresa como "Privada" — veja o aviso no final).
+
+  No fim, cria o atalho "Redefinir senha do BC Fichas" no Menu Iniciar e, se ainda não houver
+  administrador, pede para criar um (o sistema pede usuário e senha). -SemPerguntas: só avisa.
 #>
 param(
   [int]$Porta = 0,
-  [switch]$IncluirRedePublica
+  [switch]$IncluirRedePublica,
+  [switch]$SemPerguntas
 )
 
 $ErrorActionPreference = 'Stop'
@@ -72,6 +76,10 @@ $saude = Esperar-Servidor $Porta
 if ($saude) { Write-Host "Servidor respondendo (versão $($saude.versao))." -ForegroundColor Green }
 else { Write-Warning "O servidor ainda não respondeu em http://localhost:$Porta. Veja o registro: $($script:Raiz)\dados\servidor.log" }
 
+# Usuários e senhas: o atalho para redefinir senhas e o primeiro administrador
+Criar-AtalhoRedefinirSenha $script:Raiz
+Garantir-Administrador -SemPerguntas:$SemPerguntas
+
 $publicas = @(Get-NetConnectionProfile | Where-Object NetworkCategory -eq 'Public')
 if ($publicas.Count -gt 0 -and -not $IncluirRedePublica) {
   Write-Host ''
@@ -86,5 +94,7 @@ $ips = Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -notli
 Write-Host ''
 Write-Host 'Acesse de qualquer computador da rede:' -ForegroundColor Green
 foreach ($ip in $ips) { Write-Host "  http://$($ip):$Porta" -ForegroundColor Green }
+Write-Host 'Entre com o usuário do administrador e cadastre os funcionários em Administração > Usuários.'
+Write-Host 'Esqueceu a senha? Menu Iniciar > BC Fichas Control > Redefinir senha do BC Fichas (neste computador).'
 Write-Host ''
 Write-Host "Registro do servidor: $($script:Raiz)\dados\servidor.log"

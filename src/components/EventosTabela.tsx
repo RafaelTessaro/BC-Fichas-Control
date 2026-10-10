@@ -9,6 +9,7 @@ import { useHoje } from '../lib/hoje'
 import type { EventoCompleto } from '../lib/hooks'
 import { podeGerarRecibo } from '../lib/recibo'
 import { useDados } from '../store/dados'
+import { usePode } from '../store/sessao'
 import { avisarErro, toast } from '../store/ui'
 import { PagamentoBadge, StatusBadge } from './Badges'
 import { GoogleSyncBadge } from './GoogleSyncBadge'
@@ -108,6 +109,7 @@ function SeloProgramacao({ evento, className }: { evento: EventoCompleto['evento
 export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto[]; ocultarCliente?: boolean }) {
   const navegar = useNavigate()
   const acoes = useAcoesEvento()
+  const podeExcluir = usePode('excluirEvento')
   const hoje = useHoje()
   // Quantas datas tem cada série ("Repetir em outras datas"), contando também as que estão fora da lista
   const eventos = useDados((s) => s.eventos)
@@ -245,8 +247,18 @@ export function EventosTabela({ itens, ocultarCliente }: { itens: EventoCompleto
                       icone: <Repeat className="h-4 w-4" />,
                       aoClicar: () => acoes.repetir(e.id),
                     },
-                    'sep',
-                    { label: 'Excluir', icone: <Trash2 className="h-4 w-4" />, aoClicar: () => acoes.excluir(it), perigo: true },
+                    // O comum não exclui: tira o evento da agenda mudando a situação para Cancelado
+                    ...(podeExcluir
+                      ? [
+                          'sep' as const,
+                          {
+                            label: 'Excluir',
+                            icone: <Trash2 className="h-4 w-4" />,
+                            aoClicar: () => acoes.excluir(it),
+                            perigo: true,
+                          },
+                        ]
+                      : []),
                   ]}
                 />
               </Td>

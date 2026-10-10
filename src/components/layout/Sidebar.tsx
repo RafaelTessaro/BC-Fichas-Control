@@ -7,8 +7,10 @@ import logo from '../../assets/logo-mark.png'
 import { cn } from '../../lib/cn'
 import { aguardandoSemEfeito } from '../../lib/contratos'
 import { useDados } from '../../store/dados'
+import { useSessao } from '../../store/sessao'
 import { useUI, type Tema } from '../../store/ui'
-import { NAV, NAV_CONFIG, type ItemNav } from './nav'
+import { MenuUsuario } from '../sessao/MenuUsuario'
+import { navDoNivel, type ItemNav } from './nav'
 
 function ativoPara(pathname: string, to: string) {
   return to === '/' ? pathname === '/' : pathname === to || pathname.startsWith(to + '/')
@@ -163,6 +165,8 @@ export function SeletorTema({ compacto }: { compacto?: boolean }) {
 export function Sidebar({ mobile, aoNavegar }: { mobile?: boolean; aoNavegar?: () => void }) {
   const { sidebarRecolhida, alternarSidebar } = useUI()
   const recolhida = !mobile && sidebarRecolhida
+  const nivel = useSessao((s) => s.usuario?.nivel)
+  const grupos = useMemo(() => navDoNivel(nivel), [nivel])
   const eventos = useDados((s) => s.eventos)
   const pendentes = useMemo(() => eventos.filter((e) => e.status === 'PENDENTE').length, [eventos])
   const ordens = useDados((s) => s.ordens)
@@ -201,7 +205,7 @@ export function Sidebar({ mobile, aoNavegar }: { mobile?: boolean; aoNavegar?: (
       </div>
 
       <nav className="scroll-fino flex-1 overflow-y-auto px-3 pt-3 pb-4">
-        {NAV.map((g) => (
+        {grupos.map((g) => (
           <div key={g.grupo} className="mb-5">
             {!recolhida ? (
               <p className="mb-1.5 px-3 text-[11px] font-semibold tracking-[0.06em] text-muted uppercase">{g.grupo}</p>
@@ -217,8 +221,8 @@ export function Sidebar({ mobile, aoNavegar }: { mobile?: boolean; aoNavegar?: (
         ))}
       </nav>
 
-      <div className="flex flex-col gap-2 border-t border-line px-3 py-3">
-        <Item item={NAV_CONFIG} recolhida={recolhida} aoNavegar={aoNavegar} />
+      <div className={cn('flex flex-col gap-2 border-t border-line px-3 py-3', recolhida && 'items-center')}>
+        <MenuUsuario recolhido={recolhida} />
         <div className={cn('flex items-center gap-2', recolhida ? 'flex-col' : 'px-1')}>
           {recolhida ? (
             <SeletorTema compacto />

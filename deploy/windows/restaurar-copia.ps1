@@ -6,8 +6,16 @@
   O banco atual é guardado antes em dados\backups (motivo "antes-restaurar-copia"; se ele estiver
   corrompido, os arquivos são guardados como estão, com "-bruto" no nome). O servidor volta a
   funcionar no fim, mesmo se algo der errado.
+
+  Os usuários, as senhas e o registro de atividades continuam os de hoje (a cópia antiga não traz de
+  volta senhas antigas nem contas excluídas), e todas as sessões são encerradas: quem estava no
+  sistema entra de novo. Só se o banco atual estiver ilegível as contas voltam como estavam na
+  cópia; o script avisa e, se não houver administrador, pede para criar um (-SemPerguntas: só avisa).
 #>
-param([Parameter(Mandatory = $true)][string]$Arquivo)
+param(
+  [Parameter(Mandatory = $true)][string]$Arquivo,
+  [switch]$SemPerguntas
+)
 
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'comum.ps1')
@@ -31,15 +39,21 @@ try {
   if ($copia) { Write-Host "Banco atual guardado em: $copia" }
 
   # Prepara a cópia escolhida antes de mexer no banco atual
-  Remove-Item $temporario -Force -ErrorAction SilentlyContinue
+  Remove-Item $temporario, "$temporario-wal", "$temporario-shm" -Force -ErrorAction SilentlyContinue
   Executar 'Preparando a cópia...' { node (Join-Path $script:Ferramentas 'copiar-banco.mjs') $Arquivo $temporario }
+  # A cópia recebe os usuários e o registro de atividades de hoje, sem nenhuma sessão aberta
+  Write-Host 'Mantendo os usuários e as senhas atuais...'
+  $transplante = Ferramenta-Usuarios 'transplantar' @($banco, $temporario)
+  if ($transplante.transplantado) { Write-Host "Usuários atuais mantidos ($($transplante.usuarios))." }
+  else { Write-Warning $transplante.aviso }
+  Remove-Item "$temporario-wal", "$temporario-shm" -Force -ErrorAction SilentlyContinue
   # Os arquivos -wal/-shm pertencem ao banco antigo: se ficarem, o SQLite os aplicaria sobre a cópia
   Remove-Item "$banco-wal", "$banco-shm" -Force -ErrorAction SilentlyContinue
   Move-Item -Force $temporario $banco
   $restaurado = $true
   Write-Host "Cópia restaurada: $Arquivo" -ForegroundColor Green
 } catch {
-  Remove-Item $temporario -Force -ErrorAction SilentlyContinue
+  Remove-Item $temporario, "$temporario-wal", "$temporario-shm" -Force -ErrorAction SilentlyContinue
   Write-Host ''
   Write-Host "ERRO: $($_.Exception.Message)" -ForegroundColor Red
   Write-Host 'Nada foi restaurado: o banco atual continua o mesmo.' -ForegroundColor Red
@@ -51,3 +65,4 @@ try {
   else { Write-Warning "O servidor ainda não respondeu em http://localhost:$porta. Veja o registro: $($script:Raiz)\dados\servidor.log" }
 }
 if (-not $restaurado) { exit 1 }
+Garantir-Administrador -SemPerguntas:$SemPerguntas

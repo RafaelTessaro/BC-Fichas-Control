@@ -10,7 +10,8 @@ function descricao(g: SyncGoogle) {
     return `Sincronizado com o Google Agenda${quando}.`
   }
   if (g.status === 'pendente') return 'Enviando ao Google Agenda…'
-  return `Erro ao enviar ao Google Agenda: ${g.erro || 'tente novamente em Configurações.'}`
+  // Texto neutro: o selo aparece para os dois níveis, e só o administrador abre as Configurações
+  return `Erro ao enviar ao Google Agenda: ${g.erro || 'o administrador pode tentar de novo em Configurações.'}`
 }
 
 /** Indica se o evento está sincronizado com o Google Agenda. */

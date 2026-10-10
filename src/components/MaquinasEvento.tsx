@@ -34,6 +34,7 @@ import {
 import { cn } from '../lib/cn'
 import { codigoEvento } from '../lib/format'
 import { useDados } from '../store/dados'
+import { usePode } from '../store/sessao'
 import { toast } from '../store/ui'
 import { MaquinaChip, SeloReserva, TipoMaquinaBadge, useSituacoes } from './Maquinas'
 import { Badge } from './ui/Badge'
@@ -381,6 +382,9 @@ export function SeletorMaquinas({
   const eventos = useDados((s) => s.eventos)
   const clientes = useDados((s) => s.clientes)
   const ordens = useDados((s) => s.ordens)
+  // Sem máquina cadastrada: só quem cuida da frota (e das Configurações) resolve
+  const podeFrota = usePode('gerenciarFrota')
+  const podeConfigurar = usePode('configuracoes')
   const hoje = useHoje()
   const [modo, setModo] = useState<ComoEnviar>('TITULAR')
   const [menu, setMenu] = useState<MenuAberto | null>(null)
@@ -722,16 +726,23 @@ export function SeletorMaquinas({
             {maquinas.length ? 'Todas as máquinas estão desativadas' : 'Nenhuma máquina cadastrada'}
           </p>
           <p className="mt-1 max-w-sm text-[13px] text-muted">
-            Informe quantas máquinas P e G você tem em Configurações, ou cadastre uma a uma na Manutenção. Depois é só marcar
-            quais vão para cada evento.
+            {!podeFrota
+              ? maquinas.length
+                ? 'Peça ao administrador para reativar ou cadastrar as máquinas.'
+                : 'Peça ao administrador para cadastrar as máquinas.'
+              : podeConfigurar
+                ? 'Informe quantas máquinas P e G você tem em Configurações, ou cadastre uma a uma na Manutenção. Depois é só marcar quais vão para cada evento.'
+                : 'Cadastre as máquinas uma a uma na Manutenção. Depois é só marcar quais vão para cada evento.'}
           </p>
           <div className="mt-4 flex flex-wrap justify-center gap-2">
             <Button tamanho="sm" variante="soft" icone={<Wrench className="h-4 w-4" />} onClick={() => navegar('/manutencao')}>
               Abrir Manutenção
             </Button>
-            <Button tamanho="sm" onClick={() => navegar('/configuracoes')}>
-              Ir para Configurações
-            </Button>
+            {podeConfigurar && (
+              <Button tamanho="sm" onClick={() => navegar('/configuracoes')}>
+                Ir para Configurações
+              </Button>
+            )}
           </div>
         </div>
       ) : (
@@ -941,6 +952,7 @@ export function SeletorMaquinas({
 export function MaquinasEnviadas({ evento }: { evento: Evento }) {
   const navegar = useNavigate()
   const maquinas = useDados((s) => s.maquinas)
+  const podeFrota = usePode('gerenciarFrota')
   const eventos = useDados((s) => s.eventos)
   const situacoes = useSituacoes()
 
@@ -1085,7 +1097,9 @@ export function MaquinasEnviadas({ evento }: { evento: Evento }) {
           <div className="rounded-xl border border-dashed border-line-strong px-4 py-5 text-center">
             <p className="text-[13px] text-muted">
               {!maquinas.length
-                ? 'Cadastre suas máquinas para registrar quais foram enviadas e saber onde cada uma está.'
+                ? podeFrota
+                  ? 'Cadastre suas máquinas para registrar quais foram enviadas e saber onde cada uma está.'
+                  : 'Peça ao administrador para cadastrar as máquinas.'
                 : cancelado
                   ? 'Este evento foi cancelado.'
                   : 'Marque quais máquinas vão para este evento para saber onde cada uma está.'}

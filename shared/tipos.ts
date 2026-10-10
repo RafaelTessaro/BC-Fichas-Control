@@ -420,3 +420,128 @@ export type MensagemTempoReal =
   | { revisao: number; tipo: 'contrato'; acao: 'excluido'; id: ID }
   | { revisao: number; tipo: 'config'; acao: 'salvo'; dado: Configuracoes }
   | { revisao: number; tipo: 'tudo'; acao: 'recarregar' }
+
+// ---- Usuários e sessão (2.6) ---------------------------------------------------
+
+/** Só dois níveis: o administrador faz tudo; o comum faz o dia a dia sem ver o faturamento. */
+export type NivelUsuario = 'ADMIN' | 'COMUM'
+
+/** Usuário como as telas recebem (o hash da senha nunca sai do servidor). */
+export interface Usuario {
+  id: ID
+  versao: number
+  /** Para entrar: minúsculo, sem espaços nem acentos (ex.: "maria.souza"). */
+  login: string
+  /** Como aparece nas telas (ex.: "Maria Souza"). */
+  nome: string
+  nivel: NivelUsuario
+  ativo: boolean
+  /** Senha temporária: troca obrigatória ao entrar. */
+  trocarSenha: boolean
+  criadoEm: string
+  atualizadoEm: string
+  senhaAlteradaEm: string
+  /** ISO; '' = nunca entrou. */
+  ultimoAcessoEm: string
+  ultimoAcessoIp: string
+  /** Calculado: sessões vigentes agora. */
+  sessoesAtivas: number
+}
+
+/** Quem está usando este navegador. */
+export type UsuarioSessao = Pick<Usuario, 'id' | 'login' | 'nome' | 'nivel' | 'trocarSenha'>
+
+/** GET /api/sessao */
+export interface EstadoSessao {
+  usuario: UsuarioSessao | null
+  /** Nenhum usuário cadastrado: o administrador ainda não foi criado no computador do servidor. */
+  semUsuarios: boolean
+  /** Versão da interface servida agora (a mesma do `ola` do tempo real). */
+  build: string
+}
+
+export interface EntradaLogin {
+  login: string
+  senha: string
+  manterConectado?: boolean
+}
+/** POST /api/sessao */
+export interface RespostaLogin {
+  usuario: UsuarioSessao
+  build: string
+}
+/** `senha` vazia: o servidor gera uma temporária. */
+export interface NovoUsuario {
+  nome: string
+  login: string
+  nivel: NivelUsuario
+  senha: string
+}
+export interface AlteracaoUsuario {
+  nome?: string
+  nivel?: NivelUsuario
+  ativo?: boolean
+  versao?: number
+}
+export interface TrocaSenha {
+  senhaAtual: string
+  senhaNova: string
+}
+/** POST /api/usuarios e POST /api/usuarios/:id/senha */
+export interface ResultadoSenha {
+  usuario: Usuario
+  /** Só quando o servidor gerou a senha: mostrar uma única vez. */
+  senhaTemporaria?: string
+}
+
+/** Campo `codigo` das respostas de erro de acesso. */
+export type CodigoErroAcesso =
+  | 'SEM_SESSAO'
+  | 'CREDENCIAIS_INVALIDAS'
+  | 'DESATIVADO'
+  | 'MUITAS_TENTATIVAS'
+  | 'SEM_PERMISSAO'
+  | 'TROCAR_SENHA'
+  | 'SENHA_ATUAL'
+  | 'SENHA_IGUAL'
+  | 'ULTIMO_ADMIN'
+  | 'PROPRIA_CONTA'
+  | 'CONFLITO'
+  | 'LOGIN_EXISTENTE'
+  | 'LIMITE_USUARIOS'
+
+export type AcaoAuditoria =
+  | 'LOGIN'
+  | 'LOGIN_FALHOU'
+  | 'BLOQUEIO'
+  | 'LOGOUT'
+  | 'ACESSO_NEGADO'
+  | 'SENHA_TROCADA'
+  | 'SENHA_REDEFINIDA'
+  | 'USUARIO_CRIADO'
+  | 'USUARIO_ALTERADO'
+  | 'USUARIO_EXCLUIDO'
+  | 'SESSOES_ENCERRADAS'
+  | 'FERRAMENTA_LOCAL'
+  | 'COPIA_RESTAURADA'
+  | 'BACKUP_BAIXADO'
+  | 'BACKUP_RESTAURADO'
+  | 'BACKUP_MESCLADO'
+  | 'DADOS_APAGADOS'
+  | 'ALTERACAO'
+
+export type GrupoAuditoria = 'acessos' | 'usuarios' | 'dados' | 'alteracoes'
+
+export interface RegistroAuditoria {
+  id: number
+  em: string
+  usuarioId: ID
+  /** Login no momento do registro ('' quando o login digitado não existe; o texto digitado nunca é gravado). */
+  login: string
+  ip: string
+  acao: AcaoAuditoria
+  /** Id do registro afetado (`:id` da rota), ou ''. */
+  alvo: string
+  /** Ex.: 'PATCH /api/eventos/:id | pago,dataPagamento' ou 'nível: COMUM → ADMIN'. */
+  detalhe: string
+}

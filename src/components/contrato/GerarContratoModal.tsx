@@ -35,6 +35,7 @@ import { datasDoEvento } from '../../lib/envio'
 import { dataCurta, numero } from '../../lib/format'
 import { useHoje } from '../../lib/hoje'
 import { useDados } from '../../store/dados'
+import { usePode } from '../../store/sessao'
 import { avisarErro, toast } from '../../store/ui'
 import { Button } from '../ui/Button'
 import { Field, Input, Textarea } from '../ui/Form'
@@ -96,6 +97,7 @@ export function GerarContratoModal({ aberto, evento, aoFechar, aoGerar }: GerarC
   const config = useDados((s) => s.config)
   const contratos = useDados((s) => s.contratos)
   const gerarContrato = useDados((s) => s.gerarContrato)
+  const podeConfigurar = usePode('configuracoes')
   const navegar = useNavigate()
   const hoje = useHoje()
   const ids = useId()
@@ -395,15 +397,20 @@ export function GerarContratoModal({ aberto, evento, aoFechar, aoGerar }: GerarC
                     Completar o cliente
                   </Button>
                 )}
-                {pendencias.some((p) => /Configurações|reposição/.test(p)) && (
-                  <Button
-                    tamanho="sm"
-                    icone={<Settings className="h-4 w-4" />}
-                    onClick={() => irPara('/configuracoes?secao=contrato')}
-                  >
-                    Completar em Configurações
-                  </Button>
-                )}
+                {pendencias.some((p) => /Configurações|reposição/.test(p)) &&
+                  (podeConfigurar ? (
+                    <Button
+                      tamanho="sm"
+                      icone={<Settings className="h-4 w-4" />}
+                      onClick={() => irPara('/configuracoes?secao=contrato')}
+                    >
+                      Completar em Configurações
+                    </Button>
+                  ) : (
+                    <p className="basis-full text-xs text-ink-2">
+                      Peça ao administrador para completar os dados da empresa e a reposição em Configurações.
+                    </p>
+                  ))}
               </div>
             </div>
           )}

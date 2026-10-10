@@ -7,6 +7,7 @@ import { join } from 'node:path'
 import type { FastifyInstance } from 'fastify'
 import nodemailer, { type Transporter } from 'nodemailer'
 import { emailValido } from '#shared/dominio.ts'
+import { pode } from '#shared/permissoes.ts'
 import type { Contexto } from './contexto.ts'
 import { lerMeta } from './db.ts'
 import { ErroApi } from './erros.ts'
@@ -266,7 +267,13 @@ export function criarModuloEmail(ctx: Contexto, criarTransporte: CriarTransporte
   }
 
   async function rotas(app: FastifyInstance) {
-    app.get('/api/email/config', async () => configPublica(lerConfigEmail(ctx)))
+    // Quem não cuida das configurações (o comum) só precisa saber se dá para enviar e de quem sai.
+    // Falha fechada: sem usuário identificado na requisição, também a resposta reduzida.
+    app.get('/api/email/config', async (req) => {
+      const c = configPublica(lerConfigEmail(ctx))
+      if (req.usuario && pode(req.usuario.nivel, 'configuracoes')) return c
+      return { configurado: c.configurado, remetenteNome: c.remetenteNome, remetenteEmail: c.remetenteEmail }
+    })
 
     app.put('/api/email/config', async (req) => {
       const c = normalizarConfigEmail(req.body, lerConfigEmail(ctx))

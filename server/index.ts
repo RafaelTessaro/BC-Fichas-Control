@@ -17,7 +17,7 @@ const porta = Number(process.env.PORTA ?? 3000)
 const host = process.env.HOST ?? '0.0.0.0'
 const pastaDados = process.env.PASTA_DADOS ?? 'dados'
 
-const { app } = await criarApp({ pastaDados, logger: true, tarefasEmSegundoPlano: true })
+const { app, usuarios } = await criarApp({ pastaDados, logger: true, tarefasEmSegundoPlano: true, porta })
 
 try {
   await app.listen({ port: porta, host })
@@ -42,6 +42,12 @@ ${enderecos.map((e) => `  Na rede da empresa: ${e}`).join('\n')}
 
   Dados em: ${pastaDados}   (Ctrl+C para encerrar)
 `)
+
+if (usuarios.administradoresAtivos() === 0)
+  console.log(
+    '  Nenhum administrador cadastrado: ninguém consegue entrar. No computador do servidor, use Menu Iniciar › ' +
+      'BC Fichas Control › Redefinir senha do BC Fichas (no Linux: npm run usuarios -- definir <banco>).\n',
+  )
 
 let encerrando = false
 for (const sinal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'] as const) {

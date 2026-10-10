@@ -66,6 +66,7 @@ import {
   type Locacao,
 } from '../lib/manutencao'
 import { useDados } from '../store/dados'
+import { usePode } from '../store/sessao'
 import { avisarErro, toast } from '../store/ui'
 
 /** Estado do formulário de manutenção: nova (talvez já preenchida), edição ou conclusão. */
@@ -74,6 +75,9 @@ type ModalOS = { ordem?: OrdemServico; concluir?: boolean; inicial?: Partial<Ord
 type ModalReclamacao = { reclamacao?: Reclamacao }
 type Aba = 'manutencoes' | 'historico'
 type FiltroHistorico = 'tudo' | ItemHistorico['tipo']
+
+/** O que sobra da troca de situação para quem não cuida da frota: desativar e reativar são do administrador. */
+const SITUACOES_DO_DIA_A_DIA: readonly StatusMaquina[] = ['DISPONIVEL', 'MANUTENCAO']
 
 /** Quantas manutenções aparecem antes de "Mostrar mais". */
 const POR_PAGINA = 8
@@ -93,6 +97,11 @@ export function MaquinaDetalhe() {
   const excluirOrdem = useDados((s) => s.excluirOrdem)
   const excluirReclamacao = useDados((s) => s.excluirReclamacao)
   const situacao = useSituacoes().get(id ?? '')
+  // Editar, desativar, reativar e excluir a máquina é do administrador; o dia a dia (situação,
+  // manutenções e reclamações) é de todos
+  const podeFrota = usePode('gerenciarFrota')
+  const podeExcluirOS = usePode('excluirManutencao')
+  const podeApagarReclamacao = usePode('excluirReclamacao')
 
   const [editando, setEditando] = useState(false)
   const [modalOS, setModalOS] = useState<ModalOS | null>(null)
@@ -131,12 +140,15 @@ export function MaquinaDetalhe() {
 
   const ident = maquina.identificacao
   const desativada = maquina.status === 'DESATIVADA'
+  const opcoesSituacao = podeFrota ? STATUS_MAQUINA_LISTA : SITUACOES_DO_DIA_A_DIA
+  /** Sem a permissão, a máquina desativada fica só para leitura. */
+  const situacaoTravada = !opcoesSituacao.includes(maquina.status)
   // Locações de hoje em diante, sem a que está acontecendo agora (já aparece em destaque)
   const proximas = locacoes.filter((l) => l.evento.id !== situacao.evento?.id)
 
   /** Troca a situação cadastrada (com confirmação ao desativar ou com eventos marcados). */
   const mudarSituacao = async (nova: StatusMaquina, jaConfirmado = false) => {
-    if (nova === maquina.status || mudando) return
+    if (nova === maquina.status || mudando || situacaoTravada || !opcoesSituacao.includes(nova)) return
     if (!jaConfirmado) {
       const pergunta = perguntaSituacao(maquina, nova, locacoes)
       if (pergunta && !(await confirmar(pergunta))) return
@@ -164,6 +176,7 @@ export function MaquinaDetalhe() {
 
   /** Oferece desativar no lugar de excluir (máquina com histórico). `motivo`: o que ela já tem registrado. */
   const oferecerDesativar = async (motivo: string) => {
+    if (!podeFrota) return
     const regra = 'Para não perder esse histórico, ela não pode ser excluída'
     if (desativada) {
       return void toast.info('Esta máquina não pode ser excluída', `${motivo} ${regra}; ela já está desativada.`)
@@ -251,7 +264,11 @@ export function MaquinaDetalhe() {
     })
 
   const filtrado = historico.filter((h) => filtro === 'tudo' || h.tipo === filtro)
-  const semManutencao = desativada ? 'Reative a máquina para registrar uma manutenção' : undefined
+  const semManutencao = !desativada
+    ? undefined
+    : podeFrota
+      ? 'Reative a máquina para registrar uma manutenção'
+      : 'Máquina desativada. Só o administrador reativa.'
 
   return (
     <>
@@ -281,19 +298,23 @@ export function MaquinaDetalhe() {
         descricao={`${TIPO_MAQUINA[maquina.tipo].label} (${TIPO_MAQUINA[maquina.tipo].descricao.toLowerCase()}) · cadastrada em ${dataCurta(hojeLocalIso(new Date(maquina.criadoEm)))}`}
         acoes={
           <>
-            <Button
-              variante="ghost"
-              tamanho="icon"
-              onClick={excluir}
-              aria-label="Excluir máquina"
-              title="Excluir máquina"
-              className="hover:bg-danger-soft hover:text-danger"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
-            <Button icone={<Pencil className="h-4 w-4" />} onClick={() => setEditando(true)}>
-              Editar
-            </Button>
+            {podeFrota && (
+              <>
+                <Button
+                  variante="ghost"
+                  tamanho="icon"
+                  onClick={excluir}
+                  aria-label="Excluir máquina"
+                  title="Excluir máquina"
+                  className="hover:bg-danger-soft hover:text-danger"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+                <Button icone={<Pencil className="h-4 w-4" />} onClick={() => setEditando(true)}>
+                  Editar
+                </Button>
+              </>
+            )}
             <Button icone={<MessageSquarePlus className="h-4 w-4" />} onClick={() => setModalReclamacao({})}>
               Registrar reclamação
             </Button>
@@ -384,9 +405,14 @@ export function MaquinaDetalhe() {
             {proximas.length > 0 && <ProximasLocacoes locacoes={proximas} />}
             <div>
               <p id="rotulo-situacao" className="mb-1.5 text-[13px] font-medium text-ink-2">
-                Alterar situação
+                {situacaoTravada ? 'Situação' : 'Alterar situação'}
               </p>
-              <TrocaSituacao valor={maquina.status} aoMudar={(s) => void mudarSituacao(s)} desabilitado={mudando} />
+              <TrocaSituacao
+                valor={maquina.status}
+                opcoes={opcoesSituacao}
+                aoMudar={(s) => void mudarSituacao(s)}
+                desabilitado={mudando}
+              />
               {situacao.estado === 'LOCADA' && (
                 <p className="mt-2 text-xs text-muted">“Locada” é automático: vem dos eventos com esta máquina.</p>
               )}
@@ -402,7 +428,7 @@ export function MaquinaDetalhe() {
             podeAbrirManutencao={!desativada}
             aoRegistrar={() => setModalReclamacao({})}
             aoEditar={(r) => setModalReclamacao({ reclamacao: r })}
-            aoApagar={(r) => void apagarReclamacao(r)}
+            aoApagar={podeApagarReclamacao ? (r) => void apagarReclamacao(r) : undefined}
             aoAbrirManutencao={manutencaoDaReclamacao}
           />
         </Card>
@@ -459,7 +485,7 @@ export function MaquinaDetalhe() {
                     indice={i}
                     aoEditar={() => setModalOS({ ordem: o })}
                     aoConcluir={() => setModalOS({ ordem: o, concluir: true })}
-                    aoExcluir={() => void excluirOS(o)}
+                    aoExcluir={podeExcluirOS ? () => void excluirOS(o) : undefined}
                   />
                 ))}
                 {ordens.length > limite && (
@@ -510,7 +536,7 @@ export function MaquinaDetalhe() {
         </Card>
       </div>
 
-      <MaquinaFormModal aberto={editando} maquina={maquina} aoFechar={() => setEditando(false)} />
+      {podeFrota && <MaquinaFormModal aberto={editando} maquina={maquina} aoFechar={() => setEditando(false)} />}
       <OrdemServicoModal
         aberto={!!modalOS}
         aoFechar={() => setModalOS(null)}
@@ -676,19 +702,36 @@ const OPCOES_SITUACAO: Record<StatusMaquina, { icone: ReactNode; ativo: string }
   DESATIVADA: { icone: <Ban className="h-4 w-4" />, ativo: 'border-line-strong bg-neutral-soft text-neutral' },
 }
 
-/** Troca rápida da situação cadastrada. */
+/**
+ * Troca rápida da situação cadastrada, entre as `opcoes` que a pessoa pode escolher. Situação fora
+ * delas (a máquina desativada, para quem não cuida da frota) aparece só para leitura.
+ */
 function TrocaSituacao({
   valor,
+  opcoes,
   aoMudar,
   desabilitado,
 }: {
   valor: StatusMaquina
+  opcoes: readonly StatusMaquina[]
   aoMudar: (s: StatusMaquina) => void
   desabilitado: boolean
 }) {
+  if (!opcoes.includes(valor)) {
+    return (
+      <p className="flex items-center gap-2 rounded-xl bg-neutral-soft px-3.5 py-2.5 text-[13px] text-ink-2">
+        {OPCOES_SITUACAO[valor].icone}
+        {valor === 'DESATIVADA' ? 'Desativada. Só o administrador reativa.' : ESTADO_MAQUINA[valor].label}
+      </p>
+    )
+  }
   return (
-    <div role="radiogroup" aria-labelledby="rotulo-situacao" className="grid grid-cols-3 gap-2">
-      {STATUS_MAQUINA_LISTA.map((s) => {
+    <div
+      role="radiogroup"
+      aria-labelledby="rotulo-situacao"
+      className={cn('grid gap-2', opcoes.length === 3 ? 'grid-cols-3' : 'grid-cols-2')}
+    >
+      {opcoes.map((s) => {
         const ativo = s === valor
         return (
           <button
@@ -730,7 +773,8 @@ function Reclamacoes({
   podeAbrirManutencao: boolean
   aoRegistrar: () => void
   aoEditar: (r: Reclamacao) => void
-  aoApagar: (r: Reclamacao) => void
+  /** Sem ele (quem não apaga reclamações), a lixeira não aparece. */
+  aoApagar?: (r: Reclamacao) => void
   aoAbrirManutencao: (r: Reclamacao) => void
 }) {
   const [todas, setTodas] = useState(false)
@@ -784,16 +828,18 @@ function Reclamacoes({
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
-                      <Button
-                        variante="ghost"
-                        tamanho="icon-sm"
-                        onClick={() => aoApagar(r)}
-                        aria-label="Apagar reclamação"
-                        title="Apagar"
-                        className="hover:bg-danger-soft hover:text-danger"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      {aoApagar && (
+                        <Button
+                          variante="ghost"
+                          tamanho="icon-sm"
+                          onClick={() => aoApagar(r)}
+                          aria-label="Apagar reclamação"
+                          title="Apagar"
+                          className="hover:bg-danger-soft hover:text-danger"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                   <p className="mt-1 text-xs text-muted">
@@ -865,7 +911,8 @@ function CartaoManutencao({
   indice: number
   aoEditar: () => void
   aoConcluir: () => void
-  aoExcluir: () => void
+  /** Sem ele (quem não exclui manutenções), a lixeira não aparece. */
+  aoExcluir?: () => void
 }) {
   const aberta = osEmAberto(ordem)
   const duracao = ordem.conclusao ? diasEntre(ordem.abertura, ordem.conclusao) : null
@@ -916,16 +963,18 @@ function CartaoManutencao({
           >
             <Pencil className="h-4 w-4" />
           </Button>
-          <Button
-            variante="ghost"
-            tamanho="icon-sm"
-            onClick={aoExcluir}
-            aria-label={`Excluir a manutenção ${codigoOS(ordem.numero)}`}
-            title="Excluir"
-            className="hover:bg-danger-soft hover:text-danger"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
+          {aoExcluir && (
+            <Button
+              variante="ghost"
+              tamanho="icon-sm"
+              onClick={aoExcluir}
+              aria-label={`Excluir a manutenção ${codigoOS(ordem.numero)}`}
+              title="Excluir"
+              className="hover:bg-danger-soft hover:text-danger"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
         </div>
       </header>
 

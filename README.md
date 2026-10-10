@@ -6,10 +6,10 @@ mesmo da planilha **Controle Interno de Locação** e o resumo do cliente sai em
 timbrado da Balanças.com.
 
 O sistema roda em um **servidor na rede da empresa**. Os outros computadores (e celulares
-no Wi-Fi) acessam pelo navegador e veem os mesmos dados, atualizados na hora. **Não precisa
-de internet** para funcionar: enquanto a rede local estiver ativa, tudo continua normal.
-A internet só é usada para a consulta automática de CNPJ/CEP e para enviar os eventos ao
-Google Agenda — se ela cair, essas duas funções esperam e voltam sozinhas.
+no Wi-Fi) acessam pelo navegador, cada pessoa com o seu **usuário e senha**, e veem os mesmos
+dados, atualizados na hora. **Não precisa de internet** para funcionar: enquanto a rede local
+estiver ativa, tudo continua normal. A internet só é usada para a consulta automática de CNPJ/CEP
+e para enviar os eventos ao Google Agenda — se ela cair, essas duas funções esperam e voltam sozinhas.
 
 ```
   Computador do escritório ─┐
@@ -28,8 +28,12 @@ Google Agenda — se ela cair, essas duas funções esperam e voltam sozinhas.
 | | **Eventos** | Nome (o topo das fichas) e rodapé, dias de uso com a quantidade de máquinas e de **máquinas reserva** em cada dia (e se as máquinas ficam com o cliente entre um dia e outro), máquinas enviadas (titulares e reserva), andamento da programação, arquivos anexados (prints, logo, cardápio, PDF), valores, bobinas, desconto, pagamento, PDF do cliente, recibo (PIX ou dinheiro), **contrato de locação**, envio por e-mail ou WhatsApp e **Repetir em outras datas** (para o cliente que já passou as datas do ano) |
 | | **Contratos** | Contratos de locação gerados nos eventos: quais esperam a assinatura, PDF, envio ao cliente (WhatsApp ou e-mail) e a cópia assinada (foto ou PDF) |
 | Gestão | **Manutenção** | Máquinas P e G com identificação (P-01, G-03…), situação (disponível, locada, em manutenção, desativada) e onde cada uma está; registro das manutenções (preventiva ou corretiva, serviços feitos, problema relatado, responsável), lista de serviços cadastrados por você, reclamações de clientes e o histórico de cada máquina |
-| | **Relatórios** | Faturamento por mês/semana, recebido × a receber, ticket médio, formas de pagamento, ranking de clientes e planilha (CSV) |
+| Administração | **Relatórios** | Faturamento por mês/semana, recebido × a receber, ticket médio, formas de pagamento, ranking de clientes e planilha (CSV) |
+| | **Usuários** | Quem acessa o sistema e o nível de cada um: novo usuário (com senha temporária), editar, redefinir a senha, desativar, encerrar as sessões, a tabela "O que cada nível pode" e a atividade recente (quem entrou e quem alterou o quê) |
 | | **Configurações** | Disponibilidade de máquinas (quantas P e G), valores padrão, dados do recibo, contrato de locação (dados da empresa e valores de reposição), e-mail para envio de recibos, tema claro/escuro, backups, integração com o Google Agenda e zona de perigo (apagar dados) |
+
+O grupo **Administração** e os totais de faturamento aparecem só para o **administrador**; veja
+[Usuários e senhas](#usuários-e-senhas).
 
 Atalhos: **Ctrl/⌘ + K** abre a busca global e **Ctrl/⌘ + S** salva o evento.
 
@@ -190,19 +194,26 @@ substitui o arquivo da versão.
    - libera a porta no Firewall para a rede da empresa;
    - deixa a pasta do sistema e a pasta de dados acessíveis só para Administradores (o banco e a
      chave do Google ficam protegidos, e ninguém sem permissão consegue alterar o que roda no servidor);
+   - cria o atalho **Menu Iniciar → BC Fichas Control → Redefinir senha do BC Fichas**;
+   - pede para criar o **administrador** do sistema (veja [Usuários e senhas](#usuários-e-senhas));
    - mostra o endereço de acesso, por exemplo `http://192.168.0.10:3000`.
 
    Se aparecer o aviso de que a rede está como **Pública**, os outros computadores não vão
    conseguir acessar: marque a rede da empresa como **Privada** (o próprio aviso mostra o
    comando) ou libere também a rede pública com o comando da tabela [Outros comandos](#outros-comandos).
-4. Nos outros computadores, abra esse endereço no Chrome ou Edge e salve nos favoritos. Para
-   ter um ícone na área de trabalho, no Chrome use **menu ⋮ → Transmitir, salvar e compartilhar →
-   Criar atalho…** e marque **Abrir como janela**.
+4. Nos outros computadores, abra esse endereço no Chrome ou Edge, entre com o usuário e a senha e
+   salve nos favoritos. Para ter um ícone na área de trabalho, no Chrome use **menu ⋮ → Transmitir,
+   salvar e compartilhar → Criar atalho…** e marque **Abrir como janela**.
+5. Feche a janela da pasta `C:\BC-Fichas-Control`. Depois de instalado, **não abra mais essa pasta
+   pelo Explorer**: o "Continuar" do Windows daria à sua conta acesso permanente a ela e desfaria
+   parte da proteção. Para as senhas, use o atalho; para o resto, os [comandos](#outros-comandos).
 
 **Para atualizar:** extraia o pacote novo em outra pasta, fora da instalação (ex.:
 `C:\BC-Fichas-Control-novo`), e dê dois cliques no **`ATUALIZAR.bat` dessa pasta nova**. Ele encontra a instalação, faz uma cópia do
 banco, troca os arquivos do sistema (a pasta `dados` e o `.env` ficam como estão) e reinicia o
-servidor. Depois a pasta nova pode ser apagada.
+servidor. Depois a pasta nova pode ser apagada. **Na atualização para a 2.6**, a janela pede no fim
+para criar o administrador: até isso ser feito, ninguém entra no sistema. As abas que estavam
+abertas nos outros computadores recarregam sozinhas e passam a pedir usuário e senha.
 
 Para **gerar o pacote** a partir do código (Linux, macOS ou WSL, com Node.js, git, curl, zip e unzip):
 `scripts/empacotar-windows.sh` → `pacotes/BC-Fichas-Control-<versão>-windows.zip`. Ele empacota o
@@ -215,6 +226,7 @@ Para **gerar o pacote** a partir do código (Linux, macOS ou WSL, com Node.js, g
 3. Abra o **PowerShell como Administrador** na pasta e rode
    `Set-ExecutionPolicy -Scope Process Bypass -Force` e depois `.\deploy\windows\instalar-servico.ps1`
    (sem a pasta `node_modules`, ele roda `npm ci` e `npm run build` antes, o que precisa de internet).
+   No fim, ele pede para criar o administrador.
 
 Para testar antes de instalar como serviço: `npm start` (Ctrl+C encerra).
 
@@ -227,11 +239,18 @@ Executados no **PowerShell como Administrador**:
 | Atualizar na própria pasta (depois de copiar os arquivos novos por cima; a pasta `dados` é preservada; com o código-fonte numa instalação feita pelo pacote, apague antes o `pacote.json`) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\atualizar.ps1` |
 | Mudar a porta (padrão 3000) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\instalar-servico.ps1 -Porta 8080` |
 | Liberar o acesso também com a rede classificada como Pública | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\instalar-servico.ps1 -IncluirRedePublica` |
-| Voltar uma cópia do banco (o servidor volta a funcionar no fim, mesmo se der errado) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\restaurar-copia.ps1 -Arquivo C:\BC-Fichas-Control\dados\backups\<arquivo>.db` |
-| Remover o serviço (os dados não são apagados) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\desinstalar-servico.ps1` |
+| Criar o administrador ou redefinir a senha de qualquer usuário (o mesmo que o atalho **Redefinir senha do BC Fichas** do Menu Iniciar ou o `REDEFINIR-SENHA.bat` de um pacote; veja [Esqueceu a senha](#esqueceu-a-senha)) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\redefinir-senha.ps1` |
+| Voltar uma cópia do banco (mantém os usuários e as senhas atuais; o servidor volta a funcionar no fim, mesmo se der errado) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\restaurar-copia.ps1 -Arquivo C:\BC-Fichas-Control\dados\backups\<arquivo>.db` |
+| Remover o serviço e o atalho do Menu Iniciar (os dados não são apagados) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\desinstalar-servico.ps1` |
+| Ler o fim do registro (log) do servidor | `Get-Content C:\BC-Fichas-Control\dados\servidor.log -Tail 50` |
+| Copiar os dados e as cópias para um pendrive (aqui, a unidade `E:`) | `robocopy C:\BC-Fichas-Control\dados E:\BC-Fichas-dados /E` |
+| Usuários pelo terminal, numa instalação feita com o código-fonte (na pasta do sistema; veja [Desenvolvimento](#desenvolvimento)) | `npm run usuarios -- situacao dados\bc-fichas.db` |
 
-O registro (log) do servidor fica em `C:\BC-Fichas-Control\dados\servidor.log`. Como a pasta é
-restrita a Administradores, ao abri-la pelo Explorer o Windows pede confirmação.
+O `instalar-servico.ps1`, o `atualizar.ps1` e o `restaurar-copia.ps1` aceitam `-SemPerguntas`: sem
+administrador cadastrado, só avisam, em vez de pedir para criar um.
+
+O registro (log) do servidor fica em `C:\BC-Fichas-Control\dados\servidor.log`. A pasta é restrita
+a Administradores: **não a abra pelo Explorer** (veja o passo 5 da instalação); use os comandos acima.
 
 ### Linux
 
@@ -243,7 +262,13 @@ sudo mkdir -p /opt/bc-fichas && sudo cp -r . /opt/bc-fichas && sudo chown -R bcf
 cd /opt/bc-fichas && sudo -u bcfichas npm ci && sudo -u bcfichas npm run build
 sudo cp deploy/linux/bc-fichas.service /etc/systemd/system/
 sudo systemctl daemon-reload && sudo systemctl enable --now bc-fichas
+# Criar o administrador (mostra uma senha temporária; no primeiro acesso o sistema pede para trocar).
+# O mesmo comando, com o usuário de uma conta que já existe, redefine a senha dela.
+echo '{"login":"admin","nome":"Seu Nome","tornarAdmin":true}' | sudo -u bcfichas node server/ferramentas/redefinir-senha.mjs definir /opt/bc-fichas/dados/bc-fichas.db
 ```
+
+A ferramenta `server/ferramentas/redefinir-senha.mjs` também tem `situacao` (lista os usuários),
+`encerrar-sessoes` e `transplantar` (usado ao voltar uma cópia; veja [Dados e backups](#dados-e-backups)).
 
 ### Configurações do servidor
 
@@ -273,12 +298,29 @@ num computador da rede consiga ler os dados do sistema.
   vão para `dados/anexos-removidos` e voltam sozinhos se o evento voltar (ex.: ao restaurar uma
   cópia). Essa pasta pode ser apagada à mão quando não precisar mais deles.
 - **Apagar todos os dados** fica separado, no fim de Configurações, na **Zona de perigo**: pede para
-  digitar `APAGAR` e o servidor guarda uma cópia automática antes. As configurações continuam.
+  digitar `APAGAR` e o servidor guarda uma cópia automática antes. As configurações e os usuários continuam.
+- **Usuários, senhas e o registro de atividades não vão no backup `.json`**: restaurar um `.json` ou
+  apagar todos os dados não mexe nas contas.
+- As **cópias `.db`** levam o banco inteiro, inclusive os resumos (hash) das senhas: guarde o pendrive
+  ou o HD com as cópias como um documento sigiloso.
 - Para voltar uma cópia `.db`, use o `restaurar-copia.ps1` (tabela acima). **Não** copie o arquivo
   `.db` por cima com o Explorer: o banco trabalha junto com os arquivos `bc-fichas.db-wal` e
-  `bc-fichas.db-shm`, e misturar arquivos de momentos diferentes corrompe os dados. No Linux:
-  pare o serviço, apague `dados/bc-fichas.db-wal` e `dados/bc-fichas.db-shm`, copie a cópia por
-  cima de `dados/bc-fichas.db` e inicie de novo.
+  `bc-fichas.db-shm`, e misturar arquivos de momentos diferentes corrompe os dados.
+- Voltar uma cópia `.db` **mantém os usuários, as senhas e o registro de atividades de hoje** (uma
+  cópia antiga não traz de volta senhas antigas nem contas excluídas) e encerra todas as sessões:
+  quem estava no sistema entra de novo. Só se o banco atual estiver estragado as contas voltam como
+  estavam na cópia; o script avisa e, se não houver administrador, pede para criar um.
+- No Linux, para voltar uma cópia:
+
+  ```bash
+  sudo systemctl stop bc-fichas
+  cd /opt/bc-fichas
+  sudo -u bcfichas node server/ferramentas/copiar-banco.mjs dados/backups/<arquivo>.db dados/restaurando.db
+  sudo -u bcfichas node server/ferramentas/redefinir-senha.mjs transplantar dados/bc-fichas.db dados/restaurando.db
+  sudo -u bcfichas rm -f dados/bc-fichas.db-wal dados/bc-fichas.db-shm
+  sudo -u bcfichas mv dados/restaurando.db dados/bc-fichas.db
+  sudo systemctl start bc-fichas
+  ```
 
 **Vindo da versão anterior (que salvava no navegador)?** Abra o novo sistema em cada computador
 que usava a versão anterior, no mesmo navegador: o Painel mostra o aviso *"Encontramos dados da
@@ -294,8 +336,135 @@ se mantém as próprias alterações. O servidor também não aceita dois client
 CNPJ/CPF. Se a conexão com o servidor cair, uma faixa amarela avisa no topo da tela e o
 sistema reconecta sozinho; quando o servidor é atualizado, as telas abertas recarregam sozinhas.
 
-O acesso não pede senha: qualquer computador da rede da empresa consegue abrir o sistema.
-Não exponha a porta do servidor para a internet.
+## Usuários e senhas
+
+Desde a versão 2.6, o sistema pede **usuário e senha** em todos os computadores. Cada pessoa tem o
+próprio usuário (não divida o mesmo usuário entre pessoas): o registro de atividades mostra quem
+entrou e quem fez cada alteração.
+
+### Níveis
+
+| Nível | O que faz |
+| --- | --- |
+| **Administrador** | Tudo: faturamento, relatórios, configurações, usuários e cópias de segurança. |
+| **Comum** | O dia a dia: agenda, clientes, eventos, contratos, pagamentos e manutenção. Vê o valor de cada evento, mas não os totais de faturamento. |
+
+**O que o comum não vê:**
+
+- os totais em R$ de vários eventos (do mês, de um período, de um cliente ou de uma lista) e a
+  comparação com o período anterior;
+- quanto cada cliente alugou: as colunas "Faturado" e "Eventos" da lista de clientes, o total
+  faturado, recebido e a receber do cliente e as diárias somadas dele;
+- **Relatórios**, **Usuários**, **Configurações** e as cópias de segurança (nem pela busca, nem
+  digitando o endereço).
+
+No Painel, no lugar do faturamento, o comum vê **Próximos 7 dias**, **Pagamentos pendentes** (só a
+quantidade), **Bobinas a conferir** e **Máquinas hoje**. O valor de **cada** evento continua com ele:
+diárias, bobinas, desconto, total, pagamento, recibo e contrato.
+
+O faturamento fica **escondido, não secreto**: como o comum vê o valor de cada evento, alguém
+curioso poderia somar à mão. O que o sistema impede é o que importa: o comum não abre Relatórios,
+não baixa backup nem planilha e não vê os totais na tela. Recibo, contrato, PDF, WhatsApp e e-mail
+continuam levando o valor do evento.
+
+### Permissões padrão
+
+Quem barra é o **servidor**: uma ação proibida é recusada mesmo que alguém chame o sistema direto,
+sem passar pela tela.
+
+| Ação | Administrador | Comum |
+| --- | --- | --- |
+| Agenda, clientes, eventos (com valores), contratos, pagamentos, recibos, envios, anexos e manutenção | sim | sim |
+| Alterar o valor da diária e da bobina e dar desconto no evento | sim | sim |
+| Apagar reclamações e arquivos anexados ao evento (o arquivo fica guardado no servidor) | sim | sim |
+| Trocar a cópia assinada do contrato (a anterior fica guardada) | sim | sim |
+| Mudar a máquina entre Disponível e Manutenção; acrescentar serviço à lista da manutenção | sim | sim |
+| Ver faturamento e indicadores (totais em R$, Relatórios, quanto cada cliente alugou) | sim | não |
+| Exportar planilhas de eventos e clientes | sim | não |
+| Excluir clientes e eventos (o comum usa a situação **Cancelado**) | sim | não |
+| Excluir contratos e apagar a cópia assinada | sim | não |
+| Excluir manutenções | sim | não |
+| Cadastrar, editar, desativar, reativar e excluir máquinas | sim | não |
+| Renomear e remover serviços da lista da manutenção | sim | não |
+| Configurações, e-mail e Google Agenda | sim | não |
+| Cópias de segurança, restaurar e apagar dados | sim | não |
+| Usuários e registro de atividades | sim | não |
+
+**Para mudar uma permissão**, peça ao responsável pelo sistema: cada linha é uma decisão em
+[`shared/permissoes.ts`](shared/permissoes.ts), e a mudança vale no servidor e nas telas a partir da
+versão seguinte. A página **Usuários** mostra a tabela "O que cada nível pode" da versão instalada.
+
+### Primeiro acesso: o administrador
+
+O primeiro administrador só é criado **no computador do servidor**, nunca pela tela:
+
+- **Na instalação e na atualização para a 2.6**, a janela do INSTALAR ou do ATUALIZAR pergunta no
+  fim o nome de quem vai administrar, o usuário para entrar (Enter = `admin`) e a senha, duas vezes
+  (Enter em branco = o sistema gera uma senha temporária e a mostra na tela; no primeiro acesso ele
+  pede para trocar). Se a senha for recusada (fraca demais, por exemplo), a janela diz o motivo e
+  pergunta de novo.
+- Digitar `PULAR` no nome deixa para depois, mas **ninguém entra no sistema** até o administrador
+  ser criado pelo atalho **Redefinir senha do BC Fichas** ([abaixo](#esqueceu-a-senha)). Enquanto
+  isso, a tela de todos os computadores mostra só essa instrução.
+- Depois de entrar, cadastre os funcionários em **Administração → Usuários → Novo usuário**. O
+  sistema gera uma senha temporária para entregar à pessoa; no primeiro acesso ela cria a própria senha.
+- Tenha **dois administradores** (por exemplo, o dono e quem cuida do escritório): se um esquecer a
+  senha, o outro redefine pela tela.
+
+### Senhas
+
+- De **8 a 128 caracteres**, sem regra de maiúscula, número ou símbolo. Uma frase de 3 ou 4 palavras
+  (ex.: `cavalo azul pulando a cerca`) é fácil de lembrar e difícil de adivinhar.
+- O sistema recusa senhas muito comuns (`12345678`, `senha123`…), sequências, um caractere repetido
+  e senhas com o nome da pessoa, o usuário dela ou o nome do sistema, sempre dizendo o motivo.
+- Depois de 5 tentativas erradas seguidas, a entrada espera 30 segundos, e a espera dobra a cada
+  nova tentativa errada (até 15 minutos). Redefinir a senha destrava na hora.
+- A senha não é gravada: o servidor guarda só um resumo (hash scrypt) que não permite recuperá-la.
+
+### Sessão
+
+- Sem **Manter conectado neste computador** (que vem desmarcado), a sessão acaba depois de 4 horas
+  sem uso ou 12 horas no total.
+- Com a opção marcada, a pessoa fica conectada por até 30 dias (7 dias sem uso); o administrador,
+  por no máximo 7 dias.
+- Em computador compartilhado, deixe a opção desmarcada e use **Sair** (no menu do usuário, no pé
+  do menu lateral) no fim do dia.
+- Desativar um usuário, mudar o nível dele ou redefinir a senha encerra na hora as sessões dele.
+
+### Esqueceu a senha
+
+- **Funcionário:** o administrador abre **Usuários**, escolhe a pessoa e usa **Redefinir senha**; o
+  sistema gera uma senha temporária para entregar.
+- **Administrador** (ou nenhum administrador consegue entrar): no **computador do servidor**, abra
+  **Menu Iniciar → BC Fichas Control → Redefinir senha do BC Fichas** e responda **Sim** ao pedido
+  de permissão do Windows. A janela lista os usuários; digite o usuário, a senha nova (ou Enter para
+  uma temporária) e, se a conta for comum, se ela deve virar administrador. Um usuário que não existe
+  vira um administrador novo.
+- Não precisa parar o servidor: a senha nova vale na hora, o bloqueio por tentativas acaba e as
+  sessões abertas daquela conta caem em até 1 minuto.
+- Sem o atalho, dê dois cliques no `REDEFINIR-SENHA.bat` de um pacote do sistema extraído em outra
+  pasta: ele sempre usa a instalação (a ferramenta e o banco de lá).
+- **Nunca abra a pasta `C:\BC-Fichas-Control` pelo Explorer.** O Windows avisa que você não tem
+  permissão e oferece "Continuar": isso grava a sua conta nas permissões da pasta e desfaz parte da
+  proteção do banco e do sistema.
+- No Linux: o comando `definir` da seção [Linux](#linux).
+
+### Registro de atividades
+
+Em **Usuários → Atividade recente**, o administrador vê as entradas, as tentativas que falharam, as
+mudanças de usuários, os backups e **cada gravação, com quem fez**, guardados por 12 meses.
+
+Para a LGPD: o sistema guarda o nome, o usuário, o nível, os horários, o endereço (IP) do computador
+e as gravações de cada funcionário, para segurança e controle. Avise os funcionários (o aviso também
+está na tela de entrada). O sistema não guarda CPF, e-mail nem telefone do funcionário. Quem sai da
+empresa deve ser **desativado**, não excluído.
+
+### Rede
+
+Dentro da rede da empresa, o sistema usa HTTP sem cadeado: a senha passa pela rede sem
+criptografia, e o Chrome pode marcar o campo de senha como "Não seguro" (é esperado). Use Wi-Fi com
+WPA2 ou WPA3, deixe os visitantes numa rede separada e **nunca libere a porta do servidor para a
+internet**.
 
 ## Máquinas e manutenção
 
@@ -388,10 +557,13 @@ Configuração (uma vez só, cerca de 10 minutos):
    "bc-fichas-agenda"). Abra-a, vá em **Chaves → Adicionar chave → Criar nova chave → JSON** e
    guarde o arquivo baixado.
 3. No [Google Agenda](https://calendar.google.com), crie (ou escolha) a agenda que vai receber
-   os eventos. Em **Configurações e compartilhamento → Compartilhar com pessoas específicas**,
-   adicione o e-mail da conta de serviço (termina com `iam.gserviceaccount.com`) com a
-   permissão **"Fazer alterações nos eventos"**.
-4. Na mesma página, em **Integrar agenda**, copie o **ID da agenda**.
+   os eventos. Em **Minhas agendas**, abra **⋮ → Configurações e compartilhamento →
+   Compartilhado com → Adicionar participantes e grupos**, cole o e-mail da conta de serviço
+   (termina com `iam.gserviceaccount.com`) e escolha a permissão **"Fazer alterações e ver
+   detalhes do evento"** (até julho de 2026 o nome era "Fazer alterações nos eventos"). Com uma
+   permissão só de "Ver…", o teste de conexão passa, mas o envio dá erro de permissão.
+4. Na mesma página, em **Integrar agenda**, copie o **ID da agenda** (um texto comprido que
+   termina em `@group.calendar.google.com`; não copie o código de incorporação).
 5. No BC Fichas Control, em **Configurações → Google Agenda**: envie o arquivo JSON, cole o ID
    da agenda, clique em **Testar conexão** e depois em **Ativar**.
 
@@ -405,7 +577,11 @@ Observações:
 - Ao iniciar, uma vez por dia e no botão **Sincronizar tudo agora**, o servidor confere a agenda:
   recria o que foi apagado direto no Google e remove cópias de eventos que não existem mais no
   sistema (por exemplo, depois de voltar uma cópia antiga do banco). Eventos criados à mão na
-  agenda nunca são mexidos.
+  agenda nunca são mexidos nem trazidos para o sistema: se a agenda já tem eventos digitados à
+  mão, eles ficam ao lado dos enviados pelo sistema (apague os repetidos ou use uma agenda nova
+  só para o sistema). Ao ativar, todos os eventos do sistema são enviados, inclusive os antigos.
+- A Google Calendar API é gratuita no uso do sistema (muito abaixo dos limites); não é preciso
+  ativar faturamento nem cadastrar cartão no Google Cloud.
 - Use a agenda com **uma única instalação** do sistema: um servidor de teste apontando para a
   mesma agenda apagaria os eventos da outra instalação.
 
@@ -416,6 +592,8 @@ Observações:
 ```bash
 npm install
 npm run dev          # servidor (porta 3000) + interface com recarga automática (porta 5173)
+# Na primeira vez, com o servidor já iniciado, crie o administrador (mostra uma senha temporária):
+echo '{"login":"admin","nome":"Dev","tornarAdmin":true}' | npm run usuarios -- definir dados/bc-fichas.db
 ```
 
 | Comando | Descrição |
@@ -423,7 +601,8 @@ npm run dev          # servidor (porta 3000) + interface com recarga automática
 | `npm run dev` | servidor e interface em modo de desenvolvimento |
 | `npm run build` | compila a interface em `dist/` (servida pelo servidor) |
 | `npm start` | inicia o servidor de produção |
-| `npm test` | testes (cálculo, API, banco, relatórios, consultas, Google Agenda) |
+| `npm run usuarios -- <comando> <banco>` | usuários pelo terminal: `situacao`, `definir` (cria o administrador ou redefine uma senha; JSON na entrada padrão), `encerrar-sessoes` e `transplantar` |
+| `npm test` | testes (cálculo, API, acesso e usuários, banco, relatórios, consultas, Google Agenda) |
 | `npm run lint` / `npm run format` | análise estática / formatação |
 
 ```

@@ -12,7 +12,7 @@ let app: Awaited<ReturnType<typeof criarApp>>['app']
 
 beforeEach(async () => {
   pasta = mkdtempSync(join(tmpdir(), 'bcf-24-'))
-  ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: ':memory:', pastaEstatica: null }))
+  ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: ':memory:', pastaEstatica: null, acessoLivreParaTestes: true }))
 })
 
 afterEach(async () => {

@@ -77,8 +77,11 @@ INSTALAR (primeira vez)
      - Se aparecer "O Windows protegeu o computador", clique em "Mais informações"
        e depois em "Executar assim mesmo".
      - Responda "Sim" quando o Windows pedir permissão de administrador.
-  3. No fim, a janela mostra o endereço de acesso, por exemplo http://192.168.0.10:3000
+  3. No fim, a janela pede para criar o ADMINISTRADOR do sistema (veja PRIMEIRO ACESSO).
+  4. A janela mostra o endereço de acesso, por exemplo http://192.168.0.10:3000
      Abra esse endereço no Chrome ou Edge dos outros computadores e salve nos favoritos.
+  5. Feche a janela da pasta C:\BC-Fichas-Control. Depois de instalado, NÃO abra mais
+     essa pasta pelo Explorer (veja o aviso em ESQUECEU A SENHA DO ADMINISTRADOR).
 
   O sistema passa a iniciar sozinho junto com o Windows (mesmo sem ninguém fazer login)
   e reinicia sozinho se parar.
@@ -92,11 +95,55 @@ ATUALIZAR (quando receber uma versão nova)
   2. Dê dois cliques em ATUALIZAR.bat DENTRO da pasta nova.
      Os dados e as configurações são mantidos; antes é feita uma cópia do banco.
   3. Depois pode apagar a pasta nova.
+  Na atualização para a versão 2.6, a janela pede no fim para criar o ADMINISTRADOR:
+  até isso ser feito, ninguém entra no sistema (veja PRIMEIRO ACESSO).
+
+PRIMEIRO ACESSO (usuários e senhas)
+  O sistema pede usuário e senha em todos os computadores. O ADMINISTRADOR vê e faz tudo.
+  O usuário COMUM faz o dia a dia (agenda, clientes, eventos, contratos, pagamentos e
+  manutenção) e não vê os totais de faturamento, os relatórios, as configurações, os
+  usuários nem as cópias de segurança.
+
+  1. No fim do INSTALAR ou do ATUALIZAR, a janela pergunta:
+     - o nome de quem vai administrar;
+     - o usuário para entrar no sistema (Enter = admin);
+     - a senha, duas vezes (ela não aparece ao digitar). Use 8 caracteres ou mais; uma
+       frase de 3 ou 4 palavras é fácil de lembrar. Enter em branco = o sistema gera uma
+       senha temporária: anote, porque no primeiro acesso ele pede para trocar.
+     Se a senha for recusada, a janela diz o motivo e pergunta de novo.
+     Digitar PULAR no nome deixa para depois, mas NINGUÉM entra no sistema até o
+     administrador ser criado pelo atalho "Redefinir senha do BC Fichas" (abaixo).
+  2. Entre no sistema com esse usuário e cadastre os funcionários em
+     Administração > Usuários > Novo usuário. O sistema gera uma senha temporária para
+     entregar à pessoa; no primeiro acesso ela cria a própria senha.
+  3. Tenha dois administradores, e cada pessoa com o seu próprio usuário.
+
+ESQUECEU A SENHA DO ADMINISTRADOR
+  Funcionário que esqueceu a senha: o administrador redefine em
+  Administração > Usuários.
+  Administrador que esqueceu a senha (ou ninguém consegue entrar):
+  1. No computador do servidor, abra o Menu Iniciar > BC Fichas Control >
+     Redefinir senha do BC Fichas e responda "Sim" ao pedido de permissão.
+  2. A janela mostra os usuários. Digite o usuário e a senha nova (ou Enter para uma
+     senha temporária). Um usuário que não existe vira um administrador novo.
+  3. Pronto: não precisa reiniciar nada. O bloqueio por tentativas erradas também acaba.
+  Sem o atalho: dê dois cliques em REDEFINIR-SENHA.bat dentro de um pacote do sistema
+  extraído em outra pasta (ele sempre usa a instalação).
+
+  IMPORTANTE: nunca abra a pasta C:\BC-Fichas-Control pelo Explorer. O Windows diz
+  que você não tem permissão e oferece "Continuar": isso dá à sua conta acesso
+  permanente à pasta e desfaz parte da proteção do banco de dados e do sistema.
+  Para as senhas, use sempre o atalho do Menu Iniciar.
 
 DADOS E CÓPIAS
   - Banco de dados: C:\BC-Fichas-Control\dados\bc-fichas.db
   - Cópias automáticas diárias: C:\BC-Fichas-Control\dados\backups
   - Registro do servidor: C:\BC-Fichas-Control\dados\servidor.log
+  - Para copiar os dados para um pendrive (letra E:, por exemplo) sem abrir a pasta,
+    abra o PowerShell como Administrador e use:
+      robocopy C:\BC-Fichas-Control\dados E:\BC-Fichas-dados /E
+  - As cópias levam também os usuários e as senhas (guardadas de forma protegida):
+    guarde o pendrive ou HD com as cópias como um documento sigiloso.
   Mais detalhes no arquivo README.md.
 EOF
 

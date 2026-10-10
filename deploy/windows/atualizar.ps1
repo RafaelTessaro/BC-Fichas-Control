@@ -11,7 +11,13 @@
   código-fonte, roda npm ci e npm run build (precisa de internet); se a instalação veio do pacote
   completo, apague antes o arquivo pacote.json. PowerShell como Administrador:
     powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\atualizar.ps1
+
+  No fim, cria o atalho "Redefinir senha do BC Fichas" no Menu Iniciar e, se ainda não houver
+  administrador (atualização da 2.5 ou anterior), pede para criar um: o sistema passa a pedir usuário
+  e senha, e ninguém entra antes disso. -SemPerguntas: só avisa.
 #>
+param([switch]$SemPerguntas)
+
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'comum.ps1')
 
@@ -86,3 +92,7 @@ try {
   }
   exit 1
 }
+
+# Usuários e senhas, fora do try principal: um problema aqui nunca deixa o servidor parado
+try { Criar-AtalhoRedefinirSenha $instalada } catch { Write-Warning $_.Exception.Message }
+try { Garantir-Administrador -SemPerguntas:$SemPerguntas } catch { Write-Warning $_.Exception.Message }

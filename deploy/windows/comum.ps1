@@ -185,3 +185,184 @@ function Desbloquear-Scripts([string]$Pasta) {
   Get-ChildItem -LiteralPath (Join-Path $Pasta 'deploy\windows') -Filter *.ps1 -ErrorAction SilentlyContinue |
     Unblock-File -ErrorAction SilentlyContinue
 }
+
+# ---- Usuários e senhas ----------------------------------------------------------------
+
+$script:AvisoSemAdministrador = 'Ninguém consegue entrar no sistema até criar o administrador: Menu Iniciar > BC Fichas Control > Redefinir senha do BC Fichas.'
+
+# Roda a ferramenta de usuários (server\ferramentas\redefinir-senha.mjs) e devolve a resposta já
+# convertida; um erro da ferramenta vira exceção com a mensagem dela. Entrada e resposta passam em
+# base64 do UTF-8: o console usaria a página de código 850 e estragaria acentos (ex.: "João — Recepção"
+# ou uma senha com "ç").
+function Ferramenta-Usuarios([string]$Comando, [string[]]$Argumentos = @(), [string]$Entrada) {
+  # Local: com 'Stop', uma linha no stderr do node viraria erro no Windows PowerShell
+  $ErrorActionPreference = 'Continue'
+  $ferramenta = Join-Path $script:Ferramentas 'redefinir-senha.mjs'
+  $global:LASTEXITCODE = -1
+  if ($PSBoundParameters.ContainsKey('Entrada')) {
+    $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Entrada))
+    $saida = $b64 | & node $ferramenta $Comando @Argumentos --base64 2>$null
+  } else {
+    $saida = & node $ferramenta $Comando @Argumentos --base64 2>$null
+  }
+  $codigo = $LASTEXITCODE
+  $resposta = $null
+  $texto = (@($saida) -join '').Trim()
+  if ($texto) {
+    try { $resposta = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($texto)) | ConvertFrom-Json }
+    catch { $resposta = $null }
+  }
+  if ($codigo -ne 0) {
+    if ($resposta -and $resposta.erro) { throw [string]$resposta.erro }
+    throw "A ferramenta de usuários falhou (código $codigo)."
+  }
+  if ($null -eq $resposta) { throw 'A ferramenta de usuários não respondeu.' }
+  return $resposta
+}
+
+# Texto digitado (já sem espaços nas pontas).
+function Ler-Texto([string]$Pergunta) {
+  return ([string](Read-Host $Pergunta)).Trim()
+}
+
+# Pergunta até a resposta ser S ou N.
+function Perguntar-SimNao([string]$Pergunta) {
+  while ($true) {
+    $resposta = Ler-Texto $Pergunta
+    if ($resposta -match '^s') { return $true }
+    if ($resposta -match '^n') { return $false }
+  }
+}
+
+# Texto de uma senha lida com Read-Host -AsSecureString; a cópia em memória não gerenciada é zerada.
+function Texto-Da-Senha([Security.SecureString]$Segura) {
+  $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($Segura)
+  try { return [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
+  finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
+}
+
+# Pede a senha duas vezes, sem mostrar. Enter vazio: o sistema gera uma temporária (troca obrigatória
+# no primeiro acesso). Senha digitada para outra pessoa também vira temporária.
+# Devolve @{ Senha = '' ou a digitada; TrocarSenha = $true ou $false }.
+function Perguntar-Senha {
+  while ($true) {
+    $senha = Texto-Da-Senha (Read-Host 'Senha (não aparece ao digitar; Enter = gerar uma senha temporária)' -AsSecureString)
+    if ($senha -eq '') { return @{ Senha = ''; TrocarSenha = $true } }
+    $repetida = Texto-Da-Senha (Read-Host 'Repita a senha' -AsSecureString)
+    if ($senha -cne $repetida) {
+      Write-Host 'As duas senhas não são iguais. Digite de novo.' -ForegroundColor Red
+      continue
+    }
+    $propria = Perguntar-SimNao 'Quem vai usar esta conta é você mesmo, agora? (S/N)'
+    return @{ Senha = $senha; TrocarSenha = -not $propria }
+  }
+}
+
+# Lista de usuários da ferramenta (situacao), administradores primeiro.
+function Mostrar-Usuarios($Lista) {
+  foreach ($u in @($Lista)) {
+    $nivel = if ($u.nivel -eq 'ADMIN') { 'Administrador' } else { 'Comum' }
+    $desativado = if ($u.ativo) { '' } else { ' (desativado)' }
+    Write-Host ('  {0,-20} {1} - {2}{3}' -f $u.login, $u.nome, $nivel, $desativado)
+  }
+}
+
+# Resultado do "definir": usuário, senha temporária e o que acontece no próximo acesso.
+function Mostrar-ContaDefinida($Resultado) {
+  $nivel = if ($Resultado.nivel -eq 'ADMIN') { 'Administrador' } else { 'Comum' }
+  $feito = if ($Resultado.criado) { 'Conta criada' } else { 'Senha redefinida' }
+  Write-Host ''
+  Write-Host "$($feito): $($Resultado.nome) ($nivel)" -ForegroundColor Green
+  Write-Host "  Usuário: $($Resultado.login)" -ForegroundColor Green
+  if ($Resultado.senhaTemporaria) {
+    Write-Host "  Senha temporária: $($Resultado.senhaTemporaria)" -ForegroundColor Green
+    Write-Host '  Anote. No primeiro acesso o sistema pede para trocar.' -ForegroundColor Yellow
+  } elseif ($Resultado.trocarSenha) {
+    Write-Host '  Na próxima entrada o sistema pede para trocar a senha.' -ForegroundColor Yellow
+  }
+}
+
+# Na instalação, na atualização e na restauração de uma cópia: sem administrador ativo, ninguém entra
+# no sistema, e ele só é criado aqui, no computador do servidor. Pergunta até criar (ou até a pessoa
+# digitar PULAR). Nunca interrompe o script que a chamou: qualquer problema vira aviso.
+function Garantir-Administrador([switch]$SemPerguntas) {
+  try {
+    $banco = Join-Path (Pasta-Dados) 'bc-fichas.db'
+    if (-not (Test-Path -LiteralPath $banco)) {
+      Write-Warning "O banco de dados ainda não existe (o servidor não chegou a iniciar). $script:AvisoSemAdministrador"
+      return
+    }
+    $situacao = Ferramenta-Usuarios 'situacao' @($banco)
+    if ($situacao.administradoresAtivos -gt 0) { return }
+    if ($SemPerguntas -or -not [Environment]::UserInteractive) {
+      Write-Warning "Nenhum administrador cadastrado. $script:AvisoSemAdministrador"
+      return
+    }
+    Write-Host ''
+    Write-Host 'O sistema agora pede usuário e senha. Vamos criar o ADMINISTRADOR (acesso a tudo). Ninguém entra no sistema antes disso.' -ForegroundColor Yellow
+    if ($situacao.usuarios -gt 0) {
+      Write-Host 'Há usuários cadastrados, mas nenhum administrador ativo. Para tornar um deles administrador, digite o usuário dele:' -ForegroundColor Yellow
+      Mostrar-Usuarios $situacao.lista
+    }
+    for ($tentativa = 1; $tentativa -le 20; $tentativa++) {
+      Write-Host ''
+      $nome = Ler-Texto 'Nome de quem vai administrar (ex.: Fabio Souza; PULAR para deixar para depois)'
+      if ($nome -eq 'PULAR') { break }
+      if (-not $nome) {
+        Write-Host 'Digite o nome.' -ForegroundColor Red
+        continue
+      }
+      $login = Ler-Texto 'Usuário para entrar no sistema (Enter = admin)'
+      if (-not $login) { $login = 'admin' }
+      $senha = Perguntar-Senha
+      $entrada = @{ login = $login; nome = $nome; senha = $senha.Senha; tornarAdmin = $true; trocarSenha = $senha.TrocarSenha } |
+        ConvertTo-Json -Compress
+      try {
+        Mostrar-ContaDefinida (Ferramenta-Usuarios 'definir' @($banco) $entrada)
+        Write-Host '  Entre no sistema com este usuário e cadastre os funcionários em Administração > Usuários.' -ForegroundColor Green
+        return
+      } catch {
+        Write-Host "Não foi possível criar o administrador: $($_.Exception.Message)" -ForegroundColor Red
+        Write-Host 'Vamos tentar de novo.'
+      }
+    }
+    Write-Host $script:AvisoSemAdministrador -ForegroundColor Red
+  } catch {
+    Write-Warning "Não foi possível conferir o administrador ($($_.Exception.Message)). $script:AvisoSemAdministrador"
+  }
+}
+
+# Pasta do sistema no Menu Iniciar (para todos os usuários do computador).
+function Pasta-MenuIniciar {
+  return Join-Path $env:ProgramData 'Microsoft\Windows\Start Menu\Programs\BC Fichas Control'
+}
+
+# Comando do atalho: pede a elevação e roda o REDEFINIR-SENHA.bat da pasta num cmd de administrador.
+# O PowerShell do atalho (sem elevação) não lê nada da pasta protegida; só o cmd elevado lê.
+function Comando-AtalhoRedefinirSenha([string]$Pasta) {
+  $bat = ($Pasta.TrimEnd('\') + '\REDEFINIR-SENHA.bat').Replace("'", "''")
+  return "Start-Process -FilePath `$env:ComSpec -ArgumentList '/d /c `"`"$bat`" elevado`"' -Verb RunAs"
+}
+
+# Atalho "Redefinir senha do BC Fichas" no Menu Iniciar. É por ele que o dono cria o administrador ou
+# redefine uma senha: abrir a pasta instalada pelo Explorer gravaria a conta dele nas permissões da pasta.
+function Criar-AtalhoRedefinirSenha([string]$Pasta) {
+  try {
+    $menu = Pasta-MenuIniciar
+    New-Item -ItemType Directory -Force -Path $menu | Out-Null
+    $codificado = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes((Comando-AtalhoRedefinirSenha $Pasta)))
+    $atalho = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $menu 'Redefinir senha do BC Fichas.lnk'))
+    $atalho.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $atalho.Arguments = "-NoProfile -WindowStyle Hidden -EncodedCommand $codificado"
+    $atalho.WorkingDirectory = Join-Path $env:SystemRoot 'System32'
+    $atalho.Description = 'Cria o administrador ou redefine a senha de um usuário do BC Fichas Control'
+    $atalho.Save()
+    Write-Host 'Atalho no Menu Iniciar: BC Fichas Control > Redefinir senha do BC Fichas'
+  } catch {
+    Write-Warning "Não foi possível criar o atalho no Menu Iniciar ($($_.Exception.Message)). Para criar o administrador ou redefinir uma senha, use o REDEFINIR-SENHA.bat do pacote do sistema."
+  }
+}
+
+function Remover-AtalhoRedefinirSenha {
+  Remove-Item -LiteralPath (Pasta-MenuIniciar) -Recurse -Force -ErrorAction SilentlyContinue
+}

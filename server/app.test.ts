@@ -12,7 +12,7 @@ let app: Awaited<ReturnType<typeof criarApp>>['app']
 
 beforeEach(async () => {
   pasta = mkdtempSync(join(tmpdir(), 'bcf-'))
-  ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: ':memory:', pastaEstatica: null }))
+  ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: ':memory:', pastaEstatica: null, acessoLivreParaTestes: true }))
 })
 
 afterEach(async () => {
@@ -335,7 +335,7 @@ describe('encerramento', () => {
     await app.close()
     expect(Date.now() - inicio).toBeLessThan(2000)
     // reabre para o afterEach poder fechar novamente sem erro
-    ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: ':memory:', pastaEstatica: null }))
+    ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: ':memory:', pastaEstatica: null, acessoLivreParaTestes: true }))
   })
 })
 

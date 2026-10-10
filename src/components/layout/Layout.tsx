@@ -1,16 +1,18 @@
 import { Menu, Plus, Search } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import { useSessao } from '../../store/sessao'
+import { MenuUsuario } from '../sessao/MenuUsuario'
 import { Button } from '../ui/Button'
 import { Drawer } from '../ui/Modal'
 import { SeletorTema, Sidebar } from './Sidebar'
 import { CommandPalette, usePaleta } from './CommandPalette'
-import { TODAS_PAGINAS } from './nav'
+import { paginasDoNivel, type ItemNav } from './nav'
 import { AvisoConexao } from './AvisoConexao'
 
-function tituloSecao(pathname: string) {
-  const p = [...TODAS_PAGINAS]
+function tituloSecao(paginas: ItemNav[], pathname: string) {
+  const p = [...paginas]
     .sort((a, b) => b.to.length - a.to.length)
     .find((x) => (x.to === '/' ? pathname === '/' : pathname.startsWith(x.to)))
   return p?.label ?? ''
@@ -22,6 +24,9 @@ export function Layout({ children }: { children: ReactNode }) {
   const navegar = useNavigate()
   const location = useLocation()
   const mac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
+  const nivel = useSessao((s) => s.usuario?.nivel)
+  const paginas = useMemo(() => paginasDoNivel(nivel), [nivel])
+  const titulo = tituloSecao(paginas, location.pathname)
 
   useEffect(() => {
     document.getElementById('conteudo')?.scrollTo({ top: 0 })
@@ -49,14 +54,14 @@ export function Layout({ children }: { children: ReactNode }) {
           </button>
           <AnimatePresence mode="wait">
             <motion.p
-              key={tituloSecao(location.pathname)}
+              key={titulo}
               initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
               exit={{ opacity: 0, y: -4 }}
               transition={{ duration: 0.15 }}
               className="text-sm font-medium text-ink-2 lg:hidden"
             >
-              {tituloSecao(location.pathname)}
+              {titulo}
             </motion.p>
           </AnimatePresence>
 
@@ -85,6 +90,10 @@ export function Layout({ children }: { children: ReactNode }) {
           >
             <span className="max-sm:hidden">Novo evento</span>
           </Button>
+          {/* No celular e no tablet o menu lateral fica escondido: quem está usando aparece aqui */}
+          <div className="-mr-1 lg:hidden">
+            <MenuUsuario compacto />
+          </div>
         </header>
 
         <main id="conteudo" className="scroll-fino relative flex-1 overflow-y-auto">

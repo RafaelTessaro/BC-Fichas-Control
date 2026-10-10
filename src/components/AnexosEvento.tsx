@@ -29,6 +29,7 @@ import { anexosDoEvento, classeAnexo, tamanhoLegivel, type ClasseAnexo } from '.
 import { api, LIMITE_ANEXO } from '../lib/api'
 import { cn } from '../lib/cn'
 import { useDados } from '../store/dados'
+import { usePode } from '../store/sessao'
 import { avisarErro, toast } from '../store/ui'
 import { Button } from './ui/Button'
 import { Card, CardHeader } from './ui/Card'
@@ -109,6 +110,7 @@ export function AnexosEvento({ eventoId, pendentes = [], aoMudarPendentes, id }:
   const todos = useDados((s) => s.anexos)
   const enviarAnexo = useDados((s) => s.enviarAnexo)
   const excluirAnexo = useDados((s) => s.excluirAnexo)
+  const podeApagar = usePode('excluirAnexo')
   const anexos = useMemo(() => (eventoId ? anexosDoEvento(todos, eventoId) : []), [todos, eventoId])
   // Os que abrem na tela (imagem, PDF, texto), para passar de um para o outro no visualizador
   const visiveis = useMemo(() => anexos.filter((a) => classeAnexo(a) !== 'outro'), [anexos])
@@ -299,7 +301,7 @@ export function AnexosEvento({ eventoId, pendentes = [], aoMudarPendentes, id }:
             <AnimatePresence initial={false}>
               {anexos.map((a) => (
                 <ItemLista key={a.id}>
-                  <LinhaAnexo anexo={a} aoAbrir={() => abrir(a)} aoApagar={() => void apagar(a)} />
+                  <LinhaAnexo anexo={a} aoAbrir={() => abrir(a)} aoApagar={podeApagar ? () => void apagar(a) : undefined} />
                 </ItemLista>
               ))}
               {pendentes.map((f, i) => (
@@ -413,7 +415,7 @@ export function AnexosEvento({ eventoId, pendentes = [], aoMudarPendentes, id }:
         idAberto={vendo}
         aoTrocar={setVendo}
         aoFechar={() => setVendo(null)}
-        aoApagar={(a) => void apagar(a)}
+        aoApagar={podeApagar ? (a) => void apagar(a) : undefined}
       />
     </Card>
   )
@@ -526,7 +528,8 @@ function ImagemLocal({ arquivo, ...props }: { arquivo: File } & ImgHTMLAttribute
   return <img ref={img} {...props} />
 }
 
-function LinhaAnexo({ anexo, aoAbrir, aoApagar }: { anexo: Anexo; aoAbrir: () => void; aoApagar: () => void }) {
+/** Sem `aoApagar` (quem não tem permissão), a lixeira não aparece. */
+function LinhaAnexo({ anexo, aoAbrir, aoApagar }: { anexo: Anexo; aoAbrir: () => void; aoApagar?: () => void }) {
   const classe = classeAnexo(anexo)
   const naTela = classe !== 'outro'
   return (
@@ -564,16 +567,18 @@ function LinhaAnexo({ anexo, aoAbrir, aoApagar }: { anexo: Anexo; aoAbrir: () =>
           >
             <Download className="h-4 w-4" />
           </Button>
-          <Button
-            variante="ghost"
-            tamanho="icon-sm"
-            onClick={aoApagar}
-            aria-label={`Apagar ${anexo.nome}`}
-            title="Apagar"
-            className="hover:bg-danger-soft hover:text-danger"
-          >
-            <Trash2 className="h-4 w-4" />
-          </Button>
+          {aoApagar && (
+            <Button
+              variante="ghost"
+              tamanho="icon-sm"
+              onClick={aoApagar}
+              aria-label={`Apagar ${anexo.nome}`}
+              title="Apagar"
+              className="hover:bg-danger-soft hover:text-danger"
+            >
+              <Trash2 className="h-4 w-4" />
+            </Button>
+          )}
         </>
       }
     />
@@ -662,7 +667,8 @@ function VisualizadorAnexo({
   idAberto: string | null
   aoTrocar: (id: string) => void
   aoFechar: () => void
-  aoApagar: (a: Anexo) => void
+  /** Sem ele (quem não tem permissão), o botão de apagar não aparece. */
+  aoApagar?: (a: Anexo) => void
 }) {
   const i = anexos.findIndex((a) => a.id === idAberto)
   const anexo = i >= 0 ? anexos[i] : undefined
@@ -728,16 +734,18 @@ function VisualizadorAnexo({
                 </Button>
               </div>
             )}
-            <Button
-              tamanho="icon"
-              variante="ghost"
-              onClick={() => aoApagar(atual)}
-              aria-label="Apagar arquivo"
-              title="Apagar"
-              className="hover:bg-danger-soft hover:text-danger"
-            >
-              <Trash2 className="h-4 w-4" />
-            </Button>
+            {aoApagar && (
+              <Button
+                tamanho="icon"
+                variante="ghost"
+                onClick={() => aoApagar(atual)}
+                aria-label="Apagar arquivo"
+                title="Apagar"
+                className="hover:bg-danger-soft hover:text-danger"
+              >
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            )}
             <Button
               icone={<ExternalLink className="h-4 w-4" />}
               onClick={() => window.open(api.urlAnexo(atual.id), '_blank', 'noopener')}

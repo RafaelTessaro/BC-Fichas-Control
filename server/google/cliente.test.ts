@@ -119,7 +119,7 @@ describe('chamadas à agenda', () => {
     const inexistente = await cliente.obterAgenda('nao-existe').catch((e) => e)
     expect(inexistente).toMatchObject({
       motivo: 'agendaNaoEncontrada',
-      message: 'Agenda não encontrada: confira o ID da agenda.',
+      message: 'Agenda não encontrada: confira o ID da agenda e se ela foi compartilhada com o e-mail da conta de serviço.',
     })
 
     sim.falharCom = 503

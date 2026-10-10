@@ -91,6 +91,46 @@ const MIGRACOES: string[] = [
   );
   CREATE INDEX contratos_evento ON contratos(evento_id);
   `,
+  // 5: usuários, sessões e registro de atividades (fora do backup JSON e do Repositorio)
+  `
+  CREATE TABLE usuarios (
+    id                TEXT PRIMARY KEY,
+    login             TEXT NOT NULL,              -- já normalizado (minúsculo)
+    nome              TEXT NOT NULL,
+    nivel             TEXT NOT NULL CHECK (nivel IN ('ADMIN','COMUM')),
+    senha_hash        TEXT NOT NULL,              -- '$scrypt$ln=15,r=8,p=3$<sal>$<hash>'
+    ativo             INTEGER NOT NULL DEFAULT 1,
+    trocar_senha      INTEGER NOT NULL DEFAULT 0,
+    versao            INTEGER NOT NULL,
+    criado_em         TEXT NOT NULL,
+    atualizado_em     TEXT NOT NULL,
+    senha_alterada_em TEXT NOT NULL,
+    ultimo_acesso_em  TEXT NOT NULL DEFAULT '',
+    ultimo_acesso_ip  TEXT NOT NULL DEFAULT ''
+  );
+  CREATE UNIQUE INDEX usuarios_login ON usuarios(login);
+  CREATE TABLE sessoes (
+    id          TEXT PRIMARY KEY,                 -- SHA-256 (hex) do token; o token só existe no cookie
+    usuario_id  TEXT NOT NULL REFERENCES usuarios(id) ON DELETE CASCADE,
+    criada_em   INTEGER NOT NULL,                 -- epoch ms
+    usada_em    INTEGER NOT NULL,                 -- última atividade (gravada no máx. a cada 5 min)
+    expira_em   INTEGER NOT NULL,                 -- limite absoluto
+    persistente INTEGER NOT NULL DEFAULT 0,       -- "manter conectado"
+    ip          TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX sessoes_usuario ON sessoes(usuario_id);
+  CREATE TABLE auditoria (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    em         TEXT NOT NULL,
+    usuario_id TEXT NOT NULL DEFAULT '',
+    login      TEXT NOT NULL DEFAULT '',
+    ip         TEXT NOT NULL DEFAULT '',
+    acao       TEXT NOT NULL,
+    alvo       TEXT NOT NULL DEFAULT '',
+    detalhe    TEXT NOT NULL DEFAULT ''
+  );
+  CREATE INDEX auditoria_em ON auditoria(em);
+  `,
 ]
 
 export function abrirBanco(arquivo: string): Banco {
@@ -107,9 +147,12 @@ export function abrirBanco(arquivo: string): Banco {
 }
 
 function migrar(db: Banco) {
-  const atual = Number((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version)
-  for (let i = atual; i < MIGRACOES.length; i++) {
+  const versao = () => Number((db.prepare('PRAGMA user_version').get() as { user_version: number }).user_version)
+  for (let i = versao(); i < MIGRACOES.length; i++) {
     transacao(db, () => {
+      // Relida já com a trava de escrita (BEGIN IMMEDIATE): o servidor e a ferramenta de senha podem abrir
+      // o mesmo banco ao mesmo tempo, e só um deles aplica cada migração
+      if (versao() > i) return
       db.exec(MIGRACOES[i])
       db.exec(`PRAGMA user_version = ${i + 1}`)
     })

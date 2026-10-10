@@ -433,7 +433,12 @@ describe('rotas de consulta', () => {
 
   it('estão registradas no app principal (validação sem rede)', async () => {
     const pasta = mkdtempSync(join(tmpdir(), 'bcf-consultas-'))
-    const { app } = await criarApp({ pastaDados: pasta, arquivoBanco: ':memory:', pastaEstatica: null })
+    const { app } = await criarApp({
+      pastaDados: pasta,
+      arquivoBanco: ':memory:',
+      pastaEstatica: null,
+      acessoLivreParaTestes: true,
+    })
     try {
       const r = await app.inject({ url: '/api/consultas/cnpj/00000000000000' })
       expect(r.statusCode).toBe(400)

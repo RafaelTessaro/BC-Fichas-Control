@@ -25,6 +25,7 @@ import { api } from '../../lib/api'
 import { aguardandoSemEfeito, contratoVigente } from '../../lib/contratos'
 import { useHoje } from '../../lib/hoje'
 import { useDados } from '../../store/dados'
+import { usePode } from '../../store/sessao'
 import { avisarErro, toast } from '../../store/ui'
 import { EnviarDocumentoModal, type CanalEnvio } from '../EnviarDocumentoModal'
 import { confirmar } from '../ui/Feedback'
@@ -55,6 +56,9 @@ export function useAcoesContrato() {
   const alterarContrato = useDados((s) => s.alterarContrato)
   const removerContratoAssinado = useDados((s) => s.removerContratoAssinado)
   const excluirContrato = useDados((s) => s.excluirContrato)
+  // Trocar a cópia assinada é livre (a anterior fica guardada no servidor); apagar e excluir, não
+  const podeApagarCopia = usePode('apagarCopiaAssinada')
+  const podeExcluir = usePode('excluirContrato')
   const navegar = useNavigate()
   const hoje = useHoje()
   const [estado, setEstado] = useState<EstadoJanela | null>(null)
@@ -232,7 +236,7 @@ export function useAcoesContrato() {
       add('reabrir', { label: 'Reabrir', icone: <RotateCcw className="h-4 w-4" />, aoClicar: () => void reabrir(c) })
     }
     sep()
-    if (c.arquivo) {
+    if (c.arquivo && podeApagarCopia) {
       add('remover', {
         label: 'Apagar a cópia assinada',
         icone: <Trash2 className="h-4 w-4" />,
@@ -249,7 +253,7 @@ export function useAcoesContrato() {
         perigo: true,
       })
     }
-    if (podeExcluirContrato(c, hoje)) {
+    if (podeExcluir && podeExcluirContrato(c, hoje)) {
       add('excluir', {
         label: 'Excluir contrato',
         icone: <X className="h-4 w-4" />,

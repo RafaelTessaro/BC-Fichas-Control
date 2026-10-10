@@ -16,7 +16,7 @@ import {
   Wrench,
 } from 'lucide-react'
 import { motion } from 'motion/react'
-import { useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import {
   codigoOS,
@@ -54,6 +54,7 @@ import {
   usoDaReserva,
 } from '../lib/manutencao'
 import { useDados } from '../store/dados'
+import { usePode } from '../store/sessao'
 import { useHoje } from '../lib/hoje'
 
 type FiltroSituacao = 'todas' | EstadoMaquina
@@ -72,6 +73,10 @@ export function Manutencao() {
   const navegar = useNavigate()
   const [params, setParams] = useSearchParams()
   const frotaAntiga = useDados((s) => s.config.frotaMaquinas)
+  // Cadastrar máquinas e mexer na lista de serviços é do administrador; registrar manutenção é de todos
+  const podeFrota = usePode('gerenciarFrota')
+  const podeServicos = usePode('gerenciarServicos')
+  const podeConfigurar = usePode('configuracoes')
 
   const [busca, setBusca] = useState('')
   const [tipo, setTipo] = useState<'todas' | TipoMaquina>('todas')
@@ -82,11 +87,16 @@ export function Manutencao() {
 
   // `?nova=maquina` e `?nova=os` (vindos da busca global) abrem o cadastro da máquina ou da manutenção
   const pedido = params.get('nova')
-  const modalMaquina = maquinaLocal || pedido === 'maquina'
+  // Sem permissão para cadastrar máquinas, `?nova=maquina` (endereço guardado, por exemplo) é ignorado
+  const pedidoIgnorado = pedido === 'maquina' && !podeFrota
+  const modalMaquina = podeFrota && (maquinaLocal || pedido === 'maquina')
   const modalOS: ModalOS | null = osLocal ?? (pedido === 'os' && maquinas.length ? {} : null)
   const limparPedido = () => {
     if (params.has('nova')) setParams({}, { replace: true })
   }
+  useEffect(() => {
+    if (pedidoIgnorado) setParams({}, { replace: true })
+  }, [pedidoIgnorado, setParams])
   const fecharMaquina = () => {
     setMaquinaLocal(false)
     limparPedido()
@@ -144,28 +154,38 @@ export function Manutencao() {
         descricao="Suas máquinas, onde cada uma está hoje e as manutenções feitas nelas."
         acoes={
           <>
-            <Button icone={<Plus className="h-4 w-4" />} onClick={() => setMaquinaLocal(true)}>
-              Nova máquina
-            </Button>
-            <Button
-              icone={<ListChecks className="h-4 w-4" />}
-              onClick={() => setServicosAberto(true)}
-              title="Os serviços que aparecem para marcar nas manutenções"
-            >
-              <span className="max-sm:hidden">Serviços cadastrados</span>
-              <span className="sm:hidden">Serviços</span>
-              {servicosCadastrados > 0 && (
-                <span className="tnum rounded-md bg-surface-3 px-1.5 text-[11px] leading-5 text-muted">
-                  {servicosCadastrados}
-                </span>
-              )}
-            </Button>
+            {podeFrota && (
+              <Button icone={<Plus className="h-4 w-4" />} onClick={() => setMaquinaLocal(true)}>
+                Nova máquina
+              </Button>
+            )}
+            {podeServicos && (
+              <Button
+                icone={<ListChecks className="h-4 w-4" />}
+                onClick={() => setServicosAberto(true)}
+                title="Os serviços que aparecem para marcar nas manutenções"
+              >
+                <span className="max-sm:hidden">Serviços cadastrados</span>
+                <span className="sm:hidden">Serviços</span>
+                {servicosCadastrados > 0 && (
+                  <span className="tnum rounded-md bg-surface-3 px-1.5 text-[11px] leading-5 text-muted">
+                    {servicosCadastrados}
+                  </span>
+                )}
+              </Button>
+            )}
             <Button
               variante="primary"
               icone={<ClipboardPlus className="h-4 w-4" />}
               onClick={() => setOsLocal({})}
               disabled={!maquinas.length}
-              title={maquinas.length ? undefined : 'Cadastre uma máquina primeiro'}
+              title={
+                maquinas.length
+                  ? undefined
+                  : podeFrota
+                    ? 'Cadastre uma máquina primeiro'
+                    : 'Peça ao administrador para cadastrar as máquinas.'
+              }
             >
               Nova manutenção
             </Button>
@@ -178,16 +198,30 @@ export function Manutencao() {
           <EmptyState
             icone={<IconeMaquinaFichas className="h-6 w-6" />}
             titulo="Nenhuma máquina cadastrada"
-            descricao={`Cadastre suas máquinas uma a uma aqui, com a identificação de cada uma (ex.: P-01), ou informe quantas Máquinas P e G você tem em Configurações › Disponibilidade de máquinas: elas são criadas já numeradas. Hoje a agenda considera ${numero(frotaAntiga)} máquinas; a partir da primeira máquina cadastrada, passa a contar só as cadastradas.`}
+            descricao={
+              !podeFrota
+                ? `As máquinas aparecem aqui depois de cadastradas, com onde cada uma está e as manutenções feitas nelas. Hoje a agenda considera ${numero(frotaAntiga)} máquinas.`
+                : podeConfigurar
+                  ? `Cadastre suas máquinas uma a uma aqui, com a identificação de cada uma (ex.: P-01), ou informe quantas Máquinas P e G você tem em Configurações › Disponibilidade de máquinas: elas são criadas já numeradas. Hoje a agenda considera ${numero(frotaAntiga)} máquinas; a partir da primeira máquina cadastrada, passa a contar só as cadastradas.`
+                  : `Cadastre suas máquinas uma a uma aqui, com a identificação de cada uma (ex.: P-01). Hoje a agenda considera ${numero(frotaAntiga)} máquinas; a partir da primeira máquina cadastrada, passa a contar só as cadastradas.`
+            }
             acao={
-              <div className="flex flex-wrap justify-center gap-2">
-                <Button icone={<Settings className="h-4 w-4" />} onClick={() => navegar('/configuracoes')}>
-                  Ir para Configurações
-                </Button>
-                <Button variante="primary" icone={<Plus className="h-4 w-4" />} onClick={() => setMaquinaLocal(true)}>
-                  Cadastrar máquina
-                </Button>
-              </div>
+              podeFrota || podeConfigurar ? (
+                <div className="flex flex-wrap justify-center gap-2">
+                  {podeConfigurar && (
+                    <Button icone={<Settings className="h-4 w-4" />} onClick={() => navegar('/configuracoes')}>
+                      Ir para Configurações
+                    </Button>
+                  )}
+                  {podeFrota && (
+                    <Button variante="primary" icone={<Plus className="h-4 w-4" />} onClick={() => setMaquinaLocal(true)}>
+                      Cadastrar máquina
+                    </Button>
+                  )}
+                </div>
+              ) : (
+                <p className="text-sm font-medium text-ink-2">Peça ao administrador para cadastrar as máquinas.</p>
+              )
             }
           />
         </Card>
@@ -352,12 +386,14 @@ export function Manutencao() {
         </>
       )}
 
-      <MaquinaFormModal
-        aberto={modalMaquina}
-        aoFechar={fecharMaquina}
-        tipoInicial={tipo === 'todas' ? undefined : tipo}
-        aoSalvar={(m) => navegar(`/manutencao/${m.id}`)}
-      />
+      {podeFrota && (
+        <MaquinaFormModal
+          aberto={modalMaquina}
+          aoFechar={fecharMaquina}
+          tipoInicial={tipo === 'todas' ? undefined : tipo}
+          aoSalvar={(m) => navegar(`/manutencao/${m.id}`)}
+        />
+      )}
       <OrdemServicoModal
         aberto={!!modalOS}
         aoFechar={fecharOS}
@@ -366,7 +402,7 @@ export function Manutencao() {
         fixarMaquina={!!modalOS?.ordem}
         concluir={modalOS?.concluir}
       />
-      <ServicosManutencaoModal aberto={servicosAberto} aoFechar={() => setServicosAberto(false)} />
+      {podeServicos && <ServicosManutencaoModal aberto={servicosAberto} aoFechar={() => setServicosAberto(false)} />}
     </>
   )
 }

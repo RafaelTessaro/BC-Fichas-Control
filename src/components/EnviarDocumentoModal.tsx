@@ -43,6 +43,7 @@ import {
 import { dataCurta, mascaraTelefone, moeda } from '../lib/format'
 import { podeGerarRecibo } from '../lib/recibo'
 import { useDados } from '../store/dados'
+import { usePode } from '../store/sessao'
 import { avisarErro, toast } from '../store/ui'
 import { Button } from './ui/Button'
 import { Field, Input, Textarea } from './ui/Form'
@@ -97,6 +98,7 @@ export function EnviarDocumentoModal({
 }: EnviarDocumentoModalProps) {
   const config = useDados((s) => s.config)
   const maquinas = useDados((s) => s.maquinas)
+  const podeConfigurar = usePode('configuracoes')
   const navegar = useNavigate()
   const ids = useId()
   const r = calcularEvento(evento)
@@ -326,7 +328,7 @@ export function EnviarDocumentoModal({
           <AvisoEmail
             documento={nomeDocumento}
             estado={email}
-            aoConfigurar={irParaConfiguracoes}
+            aoConfigurar={podeConfigurar ? irParaConfiguracoes : undefined}
             aoTentarDeNovo={() => {
               setEmail({ tipo: 'carregando' })
               setRecarga((n) => n + 1)
@@ -651,7 +653,10 @@ function Aviso({ tom, icone, children }: { tom: 'warning' | 'danger' | 'info'; i
   )
 }
 
-/** E-mail ainda não configurado (ou servidor fora do ar): explica e leva para as Configurações. */
+/**
+ * E-mail ainda não configurado (ou servidor fora do ar): explica e leva para as Configurações. Sem
+ * `aoConfigurar` (quem não abre as Configurações), só explica; o WhatsApp continua.
+ */
 function AvisoEmail({
   documento,
   estado,
@@ -662,7 +667,7 @@ function AvisoEmail({
   /** "recibo", "resumo" ou "contrato". */
   documento: string
   estado: EstadoEmail
-  aoConfigurar: () => void
+  aoConfigurar?: () => void
   aoTentarDeNovo: () => void
   aoUsarWhatsApp: () => void
 }) {
@@ -697,16 +702,29 @@ function AvisoEmail({
         <MailX className="h-6 w-6" />
       </span>
       <p className="text-[15px] font-semibold text-ink">O envio por e-mail ainda não foi configurado</p>
-      <p className="mt-1.5 max-w-md text-[13px] leading-relaxed text-muted">
-        Para o sistema enviar o {documento} pelo e-mail da empresa, informe uma vez em{' '}
-        <b className="font-medium text-ink-2">Configurações → E-mail para envio de recibos</b> o e-mail (Gmail, Outlook…) e a
-        senha de app. Depois é só voltar aqui.
-      </p>
+      {aoConfigurar ? (
+        <p className="mt-1.5 max-w-md text-[13px] leading-relaxed text-muted">
+          Para o sistema enviar o {documento} pelo e-mail da empresa, informe uma vez em{' '}
+          <b className="font-medium text-ink-2">Configurações → E-mail para envio de recibos</b> o e-mail (Gmail, Outlook…) e a
+          senha de app. Depois é só voltar aqui.
+        </p>
+      ) : (
+        <p className="mt-1.5 max-w-md text-[13px] leading-relaxed text-muted">
+          O administrador precisa configurar o e-mail nas Configurações. Enquanto isso, dá para mandar o {documento} pelo
+          WhatsApp.
+        </p>
+      )}
       <div className="mt-5 flex flex-wrap justify-center gap-2">
-        <Button variante="primary" icone={<Settings className="h-4 w-4" />} onClick={aoConfigurar}>
-          Configurar e-mail
-        </Button>
-        <Button icone={<MessageCircle className="h-4 w-4" />} onClick={aoUsarWhatsApp}>
+        {aoConfigurar && (
+          <Button variante="primary" icone={<Settings className="h-4 w-4" />} onClick={aoConfigurar}>
+            Configurar e-mail
+          </Button>
+        )}
+        <Button
+          variante={aoConfigurar ? undefined : 'primary'}
+          icone={<MessageCircle className="h-4 w-4" />}
+          onClick={aoUsarWhatsApp}
+        >
           Enviar pelo WhatsApp
         </Button>
       </div>

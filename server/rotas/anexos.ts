@@ -2,11 +2,12 @@
 // servidor, em <pasta de dados>/anexos/<evento>/<arquivo>; o banco guarda nome, tipo e tamanho.
 // Os arquivos de eventos excluídos ou que saem numa restauração/limpeza não são apagados: vão para
 // <pasta de dados>/anexos-removidos/<data>/<evento>, e voltam sozinhos se o evento voltar (ex.: ao
-// restaurar uma cópia do banco).
+// restaurar uma cópia do banco). O arquivo apagado pela tela vai para o mesmo lugar
+// (anexos-removidos/<data>/<evento>/<arquivo>) e também volta se o registro voltar.
 
 import { createHash } from 'node:crypto'
-import { createReadStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { createReadStream, existsSync, mkdirSync, readdirSync, renameSync, statSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { Anexo, Evento } from '#shared/tipos.ts'
 import type { Contexto } from '../contexto.ts'
@@ -73,6 +74,17 @@ export async function rotasAnexos(app: FastifyInstance, { repo, pastaDados }: Co
     let destino = join(removidos, carimbo, nome)
     for (let n = 2; existsSync(destino); n++) destino = join(removidos, `${carimbo}-${n}`, nome)
     mkdirSync(join(destino, '..'), { recursive: true })
+    renameSync(origem, destino)
+  }
+
+  /** Um arquivo apagado pela tela: vai para anexos-removidos/<data>/<evento>/<arquivo>. */
+  function guardarArquivo(a: Anexo) {
+    const origem = caminho(a)
+    if (!existsSync(origem)) return
+    const carimbo = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-')
+    let destino = join(removidos, carimbo, nomePasta(a.eventoId), a.id)
+    for (let n = 2; existsSync(destino); n++) destino = join(removidos, `${carimbo}-${n}`, nomePasta(a.eventoId), a.id)
+    mkdirSync(dirname(destino), { recursive: true })
     renameSync(origem, destino)
   }
 
@@ -144,7 +156,7 @@ export async function rotasAnexos(app: FastifyInstance, { repo, pastaDados }: Co
 
   app.delete('/api/anexos/:id', async (req: ComId, reply) => {
     const anexo = repo.excluirAnexo(req.params.id)
-    rmSync(caminho(anexo), { force: true })
+    guardarArquivo(anexo)
     return reply.code(204).send()
   })
 }

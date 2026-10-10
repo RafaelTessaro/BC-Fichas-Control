@@ -2,14 +2,18 @@ import { WifiOff } from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useState } from 'react'
 import { useDados } from '../../store/dados'
+import { useSessao } from '../../store/sessao'
 
 /**
  * Faixa exibida quando a conexão em tempo real com o servidor cai.
  * Aguarda alguns segundos antes de aparecer para não piscar em reconexões rápidas.
+ * Com a sessão terminada não aparece: o servidor está lá, o que falta é entrar de novo.
  */
 export function AvisoConexao() {
   // Sem tempo real OU a tela não conseguiu se atualizar com o servidor
-  const conectado = useDados((s) => s.conectado && !s.falhaRecarga)
+  const conectadoDados = useDados((s) => s.conectado && !s.falhaRecarga)
+  const expirou = useSessao((s) => s.expirou)
+  const conectado = conectadoDados || expirou
   const [mostrar, setMostrar] = useState(false)
 
   useEffect(() => {

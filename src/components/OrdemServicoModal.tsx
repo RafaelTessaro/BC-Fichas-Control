@@ -41,6 +41,7 @@ import {
   sugestaoMarcada,
 } from '../lib/manutencao'
 import { useDados } from '../store/dados'
+import { usePode } from '../store/sessao'
 import { avisarErro, toast } from '../store/ui'
 import { MaquinaChip, SituacaoBadge, TipoMaquinaBadge, useSituacoes } from './Maquinas'
 import { ServicosManutencaoModal } from './ServicosManutencaoModal'
@@ -77,6 +78,8 @@ export function OrdemServicoModal({
   // A lista de serviços abre por cima do formulário, mas fica fora do <form> (os eventos do
   // React sobem pela árvore de componentes, mesmo com a janela num portal)
   const [gerenciando, setGerenciando] = useState(false)
+  // Renomear e remover serviços da lista é do administrador; acrescentar um novo continua livre
+  const podeGerenciarServicos = usePode('gerenciarServicos')
   const fechar = () => {
     setGerenciando(false)
     aoFechar()
@@ -115,11 +118,11 @@ export function OrdemServicoModal({
           inicial={inicial}
           aoSalvar={aoSalvar}
           aoFechar={fechar}
-          aoGerenciarServicos={() => setGerenciando(true)}
+          aoGerenciarServicos={podeGerenciarServicos ? () => setGerenciando(true) : undefined}
           setSalvando={setSalvando}
         />
       </Modal>
-      <ServicosManutencaoModal aberto={gerenciando} aoFechar={() => setGerenciando(false)} />
+      {podeGerenciarServicos && <ServicosManutencaoModal aberto={gerenciando} aoFechar={() => setGerenciando(false)} />}
     </>
   )
 }
@@ -173,7 +176,8 @@ function FormularioOS({
   inicial?: Partial<OrdemServicoInput>
   aoSalvar?: (o: OrdemServico) => void
   aoFechar: () => void
-  aoGerenciarServicos: () => void
+  /** Sem ele (quem não renomeia nem remove serviços), o botão "Serviços cadastrados" não aparece. */
+  aoGerenciarServicos?: () => void
   setSalvando: (v: boolean) => void
 }) {
   const maquinas = useDados((s) => s.maquinas)
@@ -408,14 +412,16 @@ function FormularioOS({
         className="sm:col-span-6"
         erro={tentou ? erroServicos : null}
         extra={
-          <button
-            type="button"
-            onClick={aoGerenciarServicos}
-            className="-my-1 inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-1.5 py-1 text-xs font-medium text-brand-ink transition-colors hover:bg-brand-soft"
-          >
-            <ListChecks className="h-3.5 w-3.5" />
-            Serviços cadastrados
-          </button>
+          aoGerenciarServicos && (
+            <button
+              type="button"
+              onClick={aoGerenciarServicos}
+              className="-my-1 inline-flex cursor-pointer items-center gap-1.5 rounded-lg px-1.5 py-1 text-xs font-medium text-brand-ink transition-colors hover:bg-brand-soft"
+            >
+              <ListChecks className="h-3.5 w-3.5" />
+              Serviços cadastrados
+            </button>
+          )
         }
         hint="Marque o que foi feito ou o que precisa ser feito. Um serviço novo entra na lista para as próximas manutenções."
       >

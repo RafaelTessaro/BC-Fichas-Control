@@ -1,4 +1,14 @@
-import { CalendarPlus, ClipboardPlus, CornerDownLeft, FilePenLine, Search, Ticket, UserPlus } from 'lucide-react'
+import {
+  CalendarPlus,
+  ClipboardPlus,
+  CornerDownLeft,
+  FilePenLine,
+  KeyRound,
+  LogOut,
+  Search,
+  Ticket,
+  UserPlus,
+} from 'lucide-react'
 import { AnimatePresence, motion } from 'motion/react'
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
@@ -13,10 +23,12 @@ import { codigoEvento, normalizar, periodo } from '../../lib/format'
 import { useHoje } from '../../lib/hoje'
 import { maquinaCombina, USO_RESERVA_CURTO, usoDaReserva } from '../../lib/manutencao'
 import { useDados } from '../../store/dados'
+import { usePode, useSessao } from '../../store/sessao'
 import { IconeMaquinaFichas } from '../IconeMaquinaFichas'
 import { TipoMaquinaBadge, useSituacoes } from '../Maquinas'
+import { abrirMinhaSenha } from '../sessao/minhaSenha'
 import { Avatar } from '../ui/Misc'
-import { TODAS_PAGINAS } from './nav'
+import { paginasDoNivel } from './nav'
 
 export const usePaleta = create<{ aberta: boolean; abrir: () => void; fechar: () => void }>((set) => ({
   aberta: false,
@@ -65,6 +77,9 @@ function Paleta({ fechar }: { fechar: () => void }) {
   const situacoes = useSituacoes()
   const hoje = useHoje()
   const lista = useRef<HTMLDivElement>(null)
+  const nivel = useSessao((s) => s.usuario?.nivel)
+  const sair = useSessao((s) => s.sair)
+  const podeFrota = usePode('gerenciarFrota')
 
   const resultados = useMemo<Resultado[]>(() => {
     const termo = normalizar(q)
@@ -99,27 +114,60 @@ function Paleta({ fechar }: { fechar: () => void }) {
         icone: <ClipboardPlus className="h-4 w-4" />,
         ir: ir('/manutencao?nova=os'),
       },
-      {
-        id: 'a-maq',
-        grupo: 'Ações rápidas',
-        titulo: 'Nova máquina',
-        chaves: 'cadastrar maquina p g',
-        icone: <IconeMaquinaFichas className="h-4 w-4" />,
-        ir: ir('/manutencao?nova=maquina'),
-      },
+      ...(podeFrota
+        ? [
+            {
+              id: 'a-maq',
+              grupo: 'Ações rápidas',
+              titulo: 'Nova máquina',
+              chaves: 'cadastrar maquina p g',
+              icone: <IconeMaquinaFichas className="h-4 w-4" />,
+              ir: ir('/manutencao?nova=maquina'),
+            },
+          ]
+        : []),
     ]
     // Sem máquinas cadastradas, não dá para registrar manutenção
     out.push(...acoes.filter((a) => (a.id !== 'a-os' || maquinas.length) && casa(`${a.titulo} ${a.chaves ?? ''}`)))
     out.push(
-      ...TODAS_PAGINAS.filter((p) => casa(`${p.label} ${p.descricao}`)).map((p) => ({
-        id: `p-${p.to}`,
-        grupo: 'Páginas',
-        titulo: p.label,
-        detalhe: p.descricao,
-        icone: <p.icone className="h-4 w-4" />,
-        ir: ir(p.to),
-      })),
+      ...paginasDoNivel(nivel)
+        .filter((p) => casa(`${p.label} ${p.descricao}`))
+        .map((p) => ({
+          id: `p-${p.to}`,
+          grupo: 'Páginas',
+          titulo: p.label,
+          detalhe: p.descricao,
+          icone: <p.icone className="h-4 w-4" />,
+          ir: ir(p.to),
+        })),
     )
+    // Trocar a senha e sair: só ao buscar (ex.: "senha", "sair")
+    const conta: Resultado[] = [
+      {
+        id: 'a-senha',
+        grupo: 'Sua conta',
+        titulo: 'Trocar minha senha',
+        chaves: 'senha usuario conta alterar mudar',
+        icone: <KeyRound className="h-4 w-4" />,
+        ir: () => {
+          fechar()
+          abrirMinhaSenha()
+        },
+      },
+      {
+        id: 'a-sair',
+        grupo: 'Sua conta',
+        titulo: 'Sair',
+        detalhe: 'Encerrar a sessão neste computador',
+        chaves: 'sair logout desconectar encerrar sessao trocar usuario',
+        icone: <LogOut className="h-4 w-4" />,
+        ir: () => {
+          fechar()
+          void sair()
+        },
+      },
+    ]
+    if (termo) out.push(...conta.filter((a) => casa(`${a.titulo} ${a.chaves ?? ''}`)))
     if (termo) {
       const nomeCliente = new Map(clientes.map((c) => [c.id, c.nome]))
       out.push(
@@ -204,7 +252,7 @@ function Paleta({ fechar }: { fechar: () => void }) {
       )
     }
     return out
-  }, [q, clientes, eventos, contratos, maquinas, situacoes, hoje, navegar, fechar])
+  }, [q, clientes, eventos, contratos, maquinas, situacoes, hoje, navegar, fechar, nivel, sair, podeFrota])
 
   useEffect(() => {
     lista.current?.querySelector<HTMLElement>(`[data-idx="${ativo}"]`)?.scrollIntoView({ block: 'nearest' })

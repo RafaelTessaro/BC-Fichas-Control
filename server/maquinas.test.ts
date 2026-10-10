@@ -14,7 +14,7 @@ let app: Awaited<ReturnType<typeof criarApp>>['app']
 
 beforeEach(async () => {
   pasta = mkdtempSync(join(tmpdir(), 'bcf-maq-'))
-  ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: ':memory:', pastaEstatica: null }))
+  ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: ':memory:', pastaEstatica: null, acessoLivreParaTestes: true }))
 })
 
 afterEach(async () => {
@@ -148,7 +148,7 @@ describe('evento com cabeçalho e máquinas enviadas', () => {
   it('eventos da versão 2.2: cabeçalho vai para as observações; programação e período corrido ganham o padrão', async () => {
     await app.close()
     const arquivo = join(pasta, 'v22.db')
-    ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: arquivo, pastaEstatica: null }))
+    ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: arquivo, pastaEstatica: null, acessoLivreParaTestes: true }))
     const cli = await criarCliente()
     const passado = (await req<Evento>('POST', '/api/eventos', { ...eventoCom(cli.id, ['2020-03-01']), cabecalho: '' }, 201)).json
     const futuro = (await req<Evento>('POST', '/api/eventos', { ...eventoCom(cli.id, ['2099-03-01']), cabecalho: '' }, 201)).json
@@ -179,7 +179,7 @@ describe('evento com cabeçalho e máquinas enviadas', () => {
   it('eventos gravados antes desta versão ganham cabeçalho e máquinas vazios (e perdem o "local")', async () => {
     await app.close()
     const arquivo = join(pasta, 'antigo.db')
-    ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: arquivo, pastaEstatica: null }))
+    ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: arquivo, pastaEstatica: null, acessoLivreParaTestes: true }))
     const cli = await criarCliente()
     const e = (await req<Evento>('POST', '/api/eventos', { ...eventoCom(cli.id, ['2026-08-01']), cabecalho: '' }, 201)).json
     const db = new DatabaseSync(arquivo)

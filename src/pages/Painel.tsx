@@ -1,4 +1,4 @@
-import { differenceInCalendarDays, endOfMonth, format, parseISO, startOfMonth, subMonths } from 'date-fns'
+import { addDays, differenceInCalendarDays, endOfMonth, format, parseISO, startOfMonth, subMonths } from 'date-fns'
 import {
   ArrowRight,
   CalendarClock,
@@ -46,6 +46,7 @@ import { codigoEvento, dataExtensa, moeda, numero, periodo } from '../lib/format
 import { useEventosCompletos, type EventoCompleto } from '../lib/hooks'
 import { agruparPorPeriodo, filtrarPeriodo, somar, totaisVazios } from '../lib/relatorio'
 import { useDados } from '../store/dados'
+import { usePode } from '../store/sessao'
 import { avisarErro, toast } from '../store/ui'
 import { MigracaoNavegador } from '../components/MigracaoNavegador'
 import { useHoje } from '../lib/hoje'
@@ -60,6 +61,10 @@ export function Painel() {
   const navegar = useNavigate()
   const hoje = useHoje()
   const cap = useMemo(() => capacidade(maquinas, config), [maquinas, config])
+  // O usuário comum vê o painel operacional: sem as somas em R$, a comparação com o mês anterior e o gráfico
+  const verFat = usePode('verFaturamento')
+  const podeConfigurar = usePode('configuracoes')
+  const podeCarregarExemplo = usePode('dadosEBackup')
 
   const d = useMemo(() => {
     const f = (x: Date) => format(x, 'yyyy-MM-dd')
@@ -98,7 +103,14 @@ export function Painel() {
     const proximos = ativos
       .filter((x) => (x.resumo.dataFim ?? '') >= hoje)
       .sort((a, b) => (a.resumo.dataInicio ?? '').localeCompare(b.resumo.dataInicio ?? ''))
-      .slice(0, 6)
+      .slice(0, MAX_PROXIMOS_COMUM)
+
+    // Eventos que começam de hoje até daqui a 6 dias (o cartão "Próximos 7 dias" do usuário comum)
+    const ate7 = f(addDays(agora, 6))
+    const proximos7 = ativos.filter((x) => {
+      const ini = x.resumo.dataInicio
+      return !!ini && ini >= hoje && ini <= ate7
+    }).length
 
     const encerrados = ativos.filter((x) => (x.resumo.dataFim ?? '9999') < hoje)
     const semPagamento = encerrados
@@ -115,6 +127,8 @@ export function Painel() {
       reservasHoje,
       semNumeroHoje,
       proximos,
+      proximos7,
+      ate7,
       semPagamento,
       semConferencia,
       programacao,
@@ -156,26 +170,29 @@ export function Painel() {
             <div className="relative">
               <h2 className="text-xl font-semibold tracking-[-0.02em] text-ink">Bem-vindo ao BC Fichas Control</h2>
               <p className="mt-1 max-w-xl text-sm text-muted">
-                Controle de locação de máquinas de fichas: clientes, eventos, diárias, bobinas e faturamento em um só lugar.
-                Comece em três passos:
+                {podeConfigurar
+                  ? 'Controle de locação de máquinas de fichas: clientes, eventos, diárias, bobinas e faturamento em um só lugar. Comece em três passos:'
+                  : 'Controle de locação de máquinas de fichas: clientes, eventos, diárias e bobinas em um só lugar. O administrador ajusta as máquinas e os valores. Comece em dois passos:'}
               </p>
-              <div className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-3">
+              <div className={cn('mt-6 grid grid-cols-1 gap-3', podeConfigurar ? 'md:grid-cols-3' : 'md:grid-cols-2')}>
+                {podeConfigurar && (
+                  <Passo
+                    n={1}
+                    icone={<Settings className="h-4 w-4" />}
+                    titulo="Ajuste as configurações"
+                    texto="Quantas máquinas P e G você tem e os valores da diária e da bobina."
+                    to="/configuracoes"
+                  />
+                )}
                 <Passo
-                  n={1}
-                  icone={<Settings className="h-4 w-4" />}
-                  titulo="Ajuste as configurações"
-                  texto="Quantas máquinas P e G você tem e os valores da diária e da bobina."
-                  to="/configuracoes"
-                />
-                <Passo
-                  n={2}
+                  n={podeConfigurar ? 2 : 1}
                   icone={<Users className="h-4 w-4" />}
                   titulo="Cadastre seus clientes"
                   texto="Dados de contato e documento."
                   to="/clientes?novo=1"
                 />
                 <Passo
-                  n={3}
+                  n={podeConfigurar ? 3 : 2}
                   icone={<Ticket className="h-4 w-4" />}
                   titulo="Lance o primeiro evento"
                   texto="Datas, máquinas enviadas e o rodapé das fichas."
@@ -184,7 +201,7 @@ export function Painel() {
               </div>
               <div className="mt-6 flex flex-wrap items-center gap-3">
                 {/* O servidor só carrega o exemplo com o sistema vazio (sem máquinas também) */}
-                {maquinas.length === 0 && (
+                {podeCarregarExemplo && maquinas.length === 0 && (
                   <Button
                     variante="soft"
                     icone={<Database className="h-4 w-4" />}
@@ -210,34 +227,70 @@ export function Painel() {
       )}
 
       <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <StatCard
-          rotulo="Faturamento do mês"
-          valor={d.mes.total}
-          formatar={moeda}
-          destaque
-          icone={<CircleDollarSign className="h-4 w-4" />}
-          detalhe={
-            variacao === null
-              ? `${numero(d.mes.eventos)} ${d.mes.eventos === 1 ? 'evento' : 'eventos'} no mês`
-              : `${variacao >= 0 ? '+' : ''}${(variacao * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% vs. mês anterior`
-          }
-        />
-        <StatCard
-          rotulo="A receber"
-          valor={d.aReceber}
-          formatar={moeda}
-          icone={<Wallet className="h-4 w-4" />}
-          detalhe="Todos os eventos não pagos"
-          delay={0.04}
-        />
-        <StatCard
-          rotulo="Diárias no mês"
-          valor={d.mes.diarias}
-          formatar={(v) => numero(Math.round(v))}
-          icone={<Ticket className="h-4 w-4" />}
-          detalhe={`${numero(d.mes.eventos)} ${d.mes.eventos === 1 ? 'evento' : 'eventos'}`}
-          delay={0.08}
-        />
+        {verFat ? (
+          <>
+            <StatCard
+              rotulo="Faturamento do mês"
+              valor={d.mes.total}
+              formatar={moeda}
+              destaque
+              icone={<CircleDollarSign className="h-4 w-4" />}
+              detalhe={
+                variacao === null
+                  ? `${numero(d.mes.eventos)} ${d.mes.eventos === 1 ? 'evento' : 'eventos'} no mês`
+                  : `${variacao >= 0 ? '+' : ''}${(variacao * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% vs. mês anterior`
+              }
+            />
+            <StatCard
+              rotulo="A receber"
+              valor={d.aReceber}
+              formatar={moeda}
+              icone={<Wallet className="h-4 w-4" />}
+              detalhe="Todos os eventos não pagos"
+              delay={0.04}
+            />
+            <StatCard
+              rotulo="Diárias no mês"
+              valor={d.mes.diarias}
+              formatar={(v) => numero(Math.round(v))}
+              icone={<Ticket className="h-4 w-4" />}
+              detalhe={`${numero(d.mes.eventos)} ${d.mes.eventos === 1 ? 'evento' : 'eventos'}`}
+              delay={0.08}
+            />
+          </>
+        ) : (
+          // Usuário comum: só contagens do dia a dia, sem R$
+          <>
+            <StatCard
+              rotulo="Próximos 7 dias"
+              valor={d.proximos7}
+              formatar={(v) => numero(Math.round(v))}
+              destaque
+              icone={<CalendarClock className="h-4 w-4" />}
+              detalhe={`Eventos que começam de hoje até ${dataExtensa(d.ate7, 'dd/MM')}`}
+            />
+            <StatCard
+              rotulo="Pagamentos pendentes"
+              valor={d.semPagamento.length}
+              formatar={(v) => numero(Math.round(v))}
+              icone={<Clock className="h-4 w-4" />}
+              detalhe={d.semPagamento.length === 1 ? 'Evento encerrado sem pagamento' : 'Eventos encerrados sem pagamento'}
+              delay={0.04}
+            />
+            <StatCard
+              rotulo="Bobinas a conferir"
+              valor={d.semConferencia.length}
+              formatar={(v) => numero(Math.round(v))}
+              icone={<PackageCheck className="h-4 w-4" />}
+              detalhe={
+                d.semConferencia.length === 1
+                  ? 'Evento encerrado sem devolução registrada'
+                  : 'Eventos encerrados sem devolução registrada'
+              }
+              delay={0.08}
+            />
+          </>
+        )}
         <StatCard
           rotulo="Máquinas hoje"
           valor={d.maquinasHoje}
@@ -248,40 +301,45 @@ export function Painel() {
         />
       </div>
 
-      {(cap.cadastradas || !vazio) && <SituacaoMaquinas cap={cap} semNumero={d.semNumeroHoje} paradas={paradasHoje} />}
+      {(cap.cadastradas || !vazio) && (
+        <SituacaoMaquinas cap={cap} semNumero={d.semNumeroHoje} paradas={paradasHoje} podeConfigurar={podeConfigurar} />
+      )}
 
       {!vazio && <ProgramacaoMaquinas itens={d.programacao} hoje={hoje} />}
 
       <div className="mb-6 grid grid-cols-1 gap-6 xl:grid-cols-3">
-        <Card className="xl:col-span-2">
-          <CardHeader
-            titulo="Faturamento — últimos 6 meses"
-            acoes={
-              <Link
-                to="/relatorios"
-                className="inline-flex items-center gap-1 text-[13px] font-medium text-brand-ink hover:underline"
-              >
-                Relatórios <ArrowRight className="h-3.5 w-3.5" />
-              </Link>
-            }
-          />
-          <div className="px-3 pb-4">
-            <div className="mb-2 px-2">
-              <Legenda />
-            </div>
-            <GraficoFaturamento
-              altura={250}
-              dados={d.baldes.map((b) => ({
-                rotulo: b.rotulo,
-                rotuloLongo: b.rotuloLongo,
-                diarias: b.valorDiarias,
-                bobinas: b.valorBobinas,
-              }))}
+        {verFat && (
+          <Card className="xl:col-span-2">
+            <CardHeader
+              titulo="Faturamento — últimos 6 meses"
+              acoes={
+                <Link
+                  to="/relatorios"
+                  className="inline-flex items-center gap-1 text-[13px] font-medium text-brand-ink hover:underline"
+                >
+                  Relatórios <ArrowRight className="h-3.5 w-3.5" />
+                </Link>
+              }
             />
-          </div>
-        </Card>
+            <div className="px-3 pb-4">
+              <div className="mb-2 px-2">
+                <Legenda />
+              </div>
+              <GraficoFaturamento
+                altura={250}
+                dados={d.baldes.map((b) => ({
+                  rotulo: b.rotulo,
+                  rotuloLongo: b.rotuloLongo,
+                  diarias: b.valorDiarias,
+                  bobinas: b.valorBobinas,
+                }))}
+              />
+            </div>
+          </Card>
+        )}
 
-        <Card className="flex flex-col">
+        {/* Sem o gráfico (usuário comum), ocupa a linha toda, com mais eventos em duas colunas */}
+        <Card className={cn('flex flex-col', !verFat && 'xl:col-span-3')}>
           <CardHeader
             icone={<CalendarClock className="h-4 w-4" />}
             titulo="Próximos eventos"
@@ -294,14 +352,20 @@ export function Painel() {
               </Link>
             }
           />
-          <div className="flex flex-1 flex-col gap-1 px-3 pb-3">
-            {d.proximos.length === 0 && (
-              <p className="flex flex-1 items-center justify-center py-10 text-sm text-muted">Nenhum evento agendado.</p>
-            )}
-            {d.proximos.map((x, i) => (
-              <ItemEvento key={x.evento.id} x={x} i={i} hoje={hoje} />
-            ))}
-          </div>
+          {d.proximos.length === 0 ? (
+            <p className="flex flex-1 items-center justify-center px-3 py-10 text-sm text-muted">Nenhum evento agendado.</p>
+          ) : (
+            <div
+              className={cn(
+                'px-3 pb-3',
+                verFat ? 'flex flex-1 flex-col gap-1' : 'grid grid-cols-1 gap-1 lg:grid-cols-2 lg:gap-x-3',
+              )}
+            >
+              {d.proximos.slice(0, verFat ? MAX_PROXIMOS : MAX_PROXIMOS_COMUM).map((x, i) => (
+                <ItemEvento key={x.evento.id} x={x} i={i} hoje={hoje} />
+              ))}
+            </div>
+          )}
         </Card>
       </div>
 
@@ -334,7 +398,18 @@ const COR_ESTADO: Record<Exclude<EstadoMaquina, 'DESATIVADA'>, string> = {
 }
 
 /** Faixa compacta com a situação das máquinas agora: locadas, em manutenção, disponíveis e manutenções em aberto. */
-function SituacaoMaquinas({ cap, semNumero, paradas }: { cap: Capacidade; semNumero: number; paradas: ReservaParada[] }) {
+function SituacaoMaquinas({
+  cap,
+  semNumero,
+  paradas,
+  podeConfigurar,
+}: {
+  cap: Capacidade
+  semNumero: number
+  paradas: ReservaParada[]
+  /** Sem a permissão, o link para Configurações vira um pedido ao administrador. */
+  podeConfigurar: boolean
+}) {
   const maquinas = useDados((s) => s.maquinas)
   const ordens = useDados((s) => s.ordens)
   const situacoes = useSituacoes()
@@ -426,11 +501,21 @@ function SituacaoMaquinas({ cap, semNumero, paradas }: { cap: Capacidade; semNum
             </>
           ) : (
             <>
-              <p className="min-w-0 flex-1 text-[13px] text-ink-2">
-                Informe quantas máquinas P e G a empresa tem para acompanhar aqui quantas estão locadas, em manutenção e
-                disponíveis.
-              </p>
-              {link('/configuracoes', 'Informar máquinas')}
+              {podeConfigurar ? (
+                <>
+                  <p className="min-w-0 flex-1 text-[13px] text-ink-2">
+                    Informe quantas máquinas P e G a empresa tem para acompanhar aqui quantas estão locadas, em manutenção e
+                    disponíveis.
+                  </p>
+                  {link('/configuracoes', 'Informar máquinas')}
+                </>
+              ) : (
+                // Sem acesso às Configurações: no lugar do link, o pedido ao administrador
+                <p className="min-w-0 flex-1 text-[13px] text-ink-2">
+                  Aqui aparece quantas máquinas estão locadas, em manutenção e disponíveis.{' '}
+                  <span className="font-medium text-ink">Peça ao administrador para informar as máquinas.</span>
+                </p>
+              )}
             </>
           )}
         </div>
@@ -541,6 +626,10 @@ function quantoFalta(inicio: string, hoje: string): { texto: string; urgente: bo
   if (n === 1) return { texto: 'Começa amanhã', urgente: true }
   return { texto: `Começa em ${n} dias`, urgente: n <= 3 }
 }
+
+/** Quantos eventos aparecem em "Próximos eventos": ao lado do gráfico e, sem ele (usuário comum), na linha toda. */
+const MAX_PROXIMOS = 6
+const MAX_PROXIMOS_COMUM = 8
 
 /** Quantos eventos aparecem no cartão de programação (o resto, em "Ver todos"). */
 const MAX_PROGRAMACAO = 6

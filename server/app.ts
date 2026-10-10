@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from 'node:fs'
 import { isIP } from 'node:net'
 import { hostname } from 'node:os'
 import { join, resolve } from 'node:path'
+import { instalarAcesso, ipDe, nomeCookieSessao } from './acesso.ts'
 import { BackupsAutomaticos } from './backup.ts'
 import type { Contexto } from './contexto.ts'
 import { abrirBanco } from './db.ts'
@@ -16,7 +17,10 @@ import { rotasAnexos } from './rotas/anexos.ts'
 import { rotasContratos } from './rotas/contratos.ts'
 import { rotasConsultas } from './rotas/consultas.ts'
 import { rotasDados } from './rotas/dados.ts'
+import { rotasUsuarios } from './rotas/usuarios.ts'
+import type { ParametrosSenha } from './senha.ts'
 import { TempoReal } from './tempoReal.ts'
+import { ehLoopback, ServicoUsuarios } from './usuarios.ts'
 
 /** Versão do sistema, lida do package.json (a mesma que vai no nome do pacote para Windows). */
 export const VERSAO_APP: string = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version
@@ -70,9 +74,35 @@ export interface OpcoesApp {
   tarefasEmSegundoPlano?: boolean
   /** Nomes extras aceitos no cabeçalho Host; padrão: HOSTS_PERMITIDOS do ambiente. */
   hostsPermitidos?: string
+  /** Toda requisição sem sessão vale como o administrador fictício; só com process.env.VITEST. */
+  acessoLivreParaTestes?: boolean
+  /** Porta do servidor: dá nome ao cookie da sessão (bcf_sessao_<porta>). */
+  porta?: number
+  /** Parâmetros do scrypt; abaixo de ln=15 só com process.env.VITEST. */
+  parametrosSenha?: ParametrosSenha
+}
+
+/** Varredura das sessões vencidas e do limite de tentativas. */
+const VARREDURA_MS = 60_000
+
+/**
+ * Apaga as sessões vencidas e fecha o tempo real delas e das que deixaram de valer por fora do
+ * servidor (ferramenta local, cópia .db restaurada); esquece as tentativas de entrada vencidas.
+ * Devolve os ids das sessões cujo tempo real foi fechado.
+ */
+export function varrerSessoes(usuarios: ServicoUsuarios, tempoReal: TempoReal): string[] {
+  const vencidas = usuarios.limparVencidas()
+  const invalidas = tempoReal.sessoesConectadas().filter((id) => !usuarios.sessaoValida(id))
+  const fechar = [...new Set([...vencidas, ...invalidas])]
+  tempoReal.encerrarSessoes(fechar)
+  usuarios.limite.limpar()
+  return fechar
 }
 
 export async function criarApp(opcoes: OpcoesApp) {
+  // Travas: o acesso livre e o hash leve nunca valem fora dos testes
+  if ((opcoes.acessoLivreParaTestes || (opcoes.parametrosSenha && opcoes.parametrosSenha.ln < 15)) && !process.env.VITEST)
+    throw new Error('acessoLivreParaTestes e parametrosSenha leves só valem nos testes')
   const pastaDados = resolve(opcoes.pastaDados)
   const app = Fastify({
     logger: opcoes.logger ? { level: 'warn' } : false,
@@ -85,6 +115,13 @@ export async function criarApp(opcoes: OpcoesApp) {
   const repo = new Repositorio(db, (msg) => tempoReal.publicar(msg))
   const backups = new BackupsAutomaticos(db, join(pastaDados, 'backups'))
   const ctx: Contexto = { db, repo, tempoReal, backups, pastaDados, log: app.log }
+
+  // Usuários e sessões ficam fora do Contexto (e do Repositorio): só o acesso e as rotas de usuários usam
+  const usuarios = new ServicoUsuarios(db, {
+    parametrosSenha: opcoes.parametrosSenha,
+    avisar: (mensagem) => app.log.warn(mensagem),
+  })
+  const nomeCookie = nomeCookieSessao(opcoes.porta)
 
   const google = criarModuloGoogle(ctx)
   repo.registrarExtensao(google.extensao)
@@ -121,9 +158,13 @@ export async function criarApp(opcoes: OpcoesApp) {
     if (req.headers[CABECALHO_APP] !== '1') throw new ErroApi(403, 'Requisição bloqueada.')
   })
 
+  // Quem é, e se pode: sessão, troca de senha pendente e permissões (depois do Host e do CSRF)
+  instalarAcesso(app, { usuarios, tempoReal, repo }, { acessoLivreParaTestes: opcoes.acessoLivreParaTestes, nomeCookie })
+
   app.setErrorHandler((erro: FastifyError | ErroApi, req, reply) => {
     if (erro instanceof ErroApi) {
-      const extra = erro.dados && typeof erro.dados === 'object' ? erro.dados : {}
+      const extra = erro.dados && typeof erro.dados === 'object' ? (erro.dados as Record<string, unknown>) : {}
+      if (typeof extra.esperarSegundos === 'number') reply.header('Retry-After', String(extra.esperarSegundos))
       return reply.code(erro.status).send({ erro: erro.message, ...extra })
     }
     const status = (erro as FastifyError).statusCode ?? 500
@@ -135,14 +176,19 @@ export async function criarApp(opcoes: OpcoesApp) {
     return reply.code(status).send({ erro: 'Requisição inválida.' })
   })
 
-  app.get('/api/saude', async () => ({
-    ok: true,
-    versao: VERSAO_APP,
-    revisao: repo.revisao(),
-    build: tempoReal.build,
-    conectados: tempoReal.conectados,
-    horario: new Date().toISOString(),
-  }))
+  // Completa só para o próprio computador (os scripts usam 127.0.0.1); pela rede, só o essencial
+  app.get('/api/saude', async (req) =>
+    ehLoopback(ipDe(req))
+      ? {
+          ok: true,
+          versao: VERSAO_APP,
+          revisao: repo.revisao(),
+          build: tempoReal.build,
+          conectados: tempoReal.conectados,
+          horario: new Date().toISOString(),
+        }
+      : { ok: true, versao: VERSAO_APP },
+  )
 
   await rotasDados(app, ctx)
   await rotasAnexos(app, ctx)
@@ -150,6 +196,7 @@ export async function criarApp(opcoes: OpcoesApp) {
   await criarModuloEmail(ctx, opcoes.transporteEmail).rotas(app)
   await rotasConsultas(app, ctx)
   await google.rotas(app)
+  await rotasUsuarios(app, { usuarios, tempoReal, nomeCookie })
 
   app.all('/api/*', async () => {
     throw new ErroApi(404, 'Rota não encontrada.')
@@ -181,9 +228,23 @@ export async function criarApp(opcoes: OpcoesApp) {
     )
   }
 
+  let varredura: ReturnType<typeof setInterval> | null = null
   if (opcoes.tarefasEmSegundoPlano) {
     backups.iniciar()
     google.iniciar()
+    let ultimaLimpezaAuditoria = 0
+    varredura = setInterval(() => {
+      try {
+        varrerSessoes(usuarios, tempoReal)
+        if (Date.now() - ultimaLimpezaAuditoria >= 24 * 60 * 60 * 1000) {
+          ultimaLimpezaAuditoria = Date.now()
+          usuarios.limparAuditoriaAntiga()
+        }
+      } catch (e) {
+        app.log.error(e, 'falha na varredura das sessões')
+      }
+    }, VARREDURA_MS)
+    varredura.unref()
   }
 
   // As conexões de tempo real (SSE) ficam abertas para sempre: precisam ser encerradas ANTES
@@ -192,6 +253,7 @@ export async function criarApp(opcoes: OpcoesApp) {
     tempoReal.fechar()
   })
   app.addHook('onClose', async () => {
+    if (varredura) clearInterval(varredura)
     google.parar()
     backups.parar()
     try {
@@ -203,5 +265,5 @@ export async function criarApp(opcoes: OpcoesApp) {
     db.close()
   })
 
-  return { app, ctx }
+  return { app, ctx, usuarios }
 }

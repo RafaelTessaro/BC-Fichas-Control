@@ -14,6 +14,7 @@ import { codigoEvento, dataCurta, hojeISO, moeda, normalizar, numero } from '../
 import { useHoje } from '../lib/hoje'
 import { porDataDesc, useEventosCompletos } from '../lib/hooks'
 import { useDados } from '../store/dados'
+import { usePode } from '../store/sessao'
 import type { StatusEvento, StatusProgramacao } from '#shared/tipos.ts'
 
 type FiltroStatus = 'todos' | StatusEvento
@@ -70,6 +71,9 @@ export function Eventos() {
   )
   const navegar = useNavigate()
   const hoje = useHoje()
+  // O usuário comum vê o valor de cada evento (na tabela), mas não a soma da lista
+  const verFat = usePode('verFaturamento')
+  const podeExportar = usePode('exportarPlanilhas')
   const [params, setParams] = useSearchParams()
   // Série de eventos ("Repetir em outras datas"), vinda do detalhe do evento
   const grupo = params.get('grupo') ?? ''
@@ -215,14 +219,16 @@ export function Eventos() {
         descricao="Locações de máquinas com diárias, bobinas e pagamento."
         acoes={
           <>
-            <Button
-              icone={<Download className="h-4 w-4" />}
-              onClick={exportar}
-              disabled={!lista.length}
-              title="Baixa uma planilha (CSV) que abre no Excel"
-            >
-              Exportar planilha
-            </Button>
+            {podeExportar && (
+              <Button
+                icone={<Download className="h-4 w-4" />}
+                onClick={exportar}
+                disabled={!lista.length}
+                title="Baixa uma planilha (CSV) que abre no Excel"
+              >
+                Exportar planilha
+              </Button>
+            )}
             <Button variante="primary" icone={<Plus className="h-4 w-4" />} onClick={() => navegar('/eventos/novo')}>
               Novo evento
             </Button>
@@ -248,12 +254,16 @@ export function Eventos() {
             <span className="text-muted">
               Diárias <b className="tnum font-semibold text-ink">{numero(totais.diarias)}</b>
             </span>
-            <span className="text-muted">
-              A receber <b className="tnum font-semibold text-ink">{moeda(totais.aReceber)}</b>
-            </span>
-            <span className="text-muted">
-              Total <b className="tnum font-semibold text-ink">{moeda(totais.total)}</b>
-            </span>
+            {verFat && (
+              <>
+                <span className="text-muted">
+                  A receber <b className="tnum font-semibold text-ink">{moeda(totais.aReceber)}</b>
+                </span>
+                <span className="text-muted">
+                  Total <b className="tnum font-semibold text-ink">{moeda(totais.total)}</b>
+                </span>
+              </>
+            )}
           </div>
         )}
       </div>

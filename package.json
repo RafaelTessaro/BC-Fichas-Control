@@ -16,6 +16,7 @@
     "dev:servidor": "node --watch server/iniciar.mjs",
     "build": "tsc -b && vite build",
     "start": "node server/iniciar.mjs",
+    "usuarios": "node server/ferramentas/redefinir-senha.mjs",
     "test": "vitest run",
     "lint": "oxlint",
     "format": "prettier --write src server shared"

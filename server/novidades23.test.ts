@@ -35,6 +35,7 @@ beforeEach(async () => {
     pastaDados: pasta,
     arquivoBanco: ':memory:',
     pastaEstatica: null,
+    acessoLivreParaTestes: true,
     transporteEmail: transporteTeste,
   }))
 })
@@ -268,7 +269,13 @@ describe('arquivos anexados ao evento', () => {
   it('restaurar a cópia do banco feita antes de apagar tudo traz os arquivos de volta', async () => {
     await app.close()
     const banco = join(pasta, 'bc-fichas.db')
-    ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: banco, pastaEstatica: null, transporteEmail: transporteTeste }))
+    ;({ app } = await criarApp({
+      pastaDados: pasta,
+      arquivoBanco: banco,
+      pastaEstatica: null,
+      acessoLivreParaTestes: true,
+      transporteEmail: transporteTeste,
+    }))
     const cli = await criarCliente()
     const e = (await req<Evento>('POST', '/api/eventos', eventoCom(cli.id, ['2099-09-01']), 201)).json
     const anexo = (await enviarArquivo(e.id, png, 'logo.png', 'image/png')).json() as Anexo
@@ -281,7 +288,13 @@ describe('arquivos anexados ao evento', () => {
     // Volta a cópia (como o restaurar-copia.ps1): o registro volta e o arquivo vem de anexos-removidos
     for (const extra of ['-wal', '-shm']) rmSync(banco + extra, { force: true })
     copyFileSync(join(pasta, 'backups', backups[0].arquivo), banco)
-    ;({ app } = await criarApp({ pastaDados: pasta, arquivoBanco: banco, pastaEstatica: null, transporteEmail: transporteTeste }))
+    ;({ app } = await criarApp({
+      pastaDados: pasta,
+      arquivoBanco: banco,
+      pastaEstatica: null,
+      acessoLivreParaTestes: true,
+      transporteEmail: transporteTeste,
+    }))
     const ver = await app.inject({ method: 'GET', url: `/api/anexos/${anexo.id}` })
     expect(ver.statusCode).toBe(200)
     expect(ver.rawPayload.equals(png)).toBe(true)
@@ -437,6 +450,7 @@ describe('nome usado para abrir o servidor (DNS rebinding)', () => {
       pastaDados: pasta,
       arquivoBanco: ':memory:',
       pastaEstatica: null,
+      acessoLivreParaTestes: true,
       hostsPermitidos: 'bcfichas',
     })
     try {

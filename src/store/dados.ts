@@ -24,7 +24,8 @@ import type {
   StatusMaquina,
   TipoMaquina,
 } from '#shared/tipos.ts'
-import { api, conectarTempoReal, type ResultadoAjuste } from '../lib/api'
+import { api, conectarTempoReal, ErroApi, type ConexaoTempoReal, type ResultadoAjuste } from '../lib/api'
+import { useSessao } from './sessao'
 
 export { CONFIG_PADRAO }
 export type { ClienteInput, EventoInput, MaquinaInput, OrdemServicoInput, ReclamacaoInput, ResultadoAjuste }
@@ -58,9 +59,14 @@ interface DadosState {
   /** A última tentativa de atualizar a tela falhou (uma nova tentativa já está agendada). */
   falhaRecarga: boolean
 
-  /** Abre a conexão com o servidor e carrega os dados. Retorna a função de encerramento. */
+  /**
+   * Abre a conexão com o servidor e carrega os dados. Retorna a função de encerramento.
+   * Só depois de entrar (com a sessão valendo e sem troca de senha pendente).
+   */
   iniciar: () => () => void
   recarregar: () => Promise<void>
+  /** Depois de entrar de novo (a sessão tinha terminado): volta o tempo real e busca o que mudou. */
+  reconectar: () => void
 
   salvarCliente: (dados: ClienteInput, alvo?: Alvo) => Promise<Cliente>
   excluirCliente: (id: string) => Promise<void>
@@ -151,6 +157,10 @@ let carregamento: Promise<void> | null = null
 let buildInicial: string | null = null
 let tentativasRecarga = 0
 let timerRecarga: ReturnType<typeof setTimeout> | undefined
+let conexao: ConexaoTempoReal | null = null
+/** O tempo real recusou a conexão, mas a sessão continua valendo: tenta de novo com espera crescente. */
+let tentativasReabrir = 0
+let timerReabrir: ReturnType<typeof setTimeout> | undefined
 
 /** Recarrega a página para usar a nova versão (no máximo uma vez a cada 30 s, evitando laço). */
 function recarregarPagina() {
@@ -261,9 +271,12 @@ export const useDados = create<DadosState>()((set, get) => {
 
     iniciar() {
       let primeiraFalha = true
-      const fechar = conectarTempoReal({
+      // A versão da interface vista ao abrir a página (na verificação da sessão)
+      buildInicial ??= useSessao.getState().build || null
+      const c = conectarTempoReal({
         aoConectar(ola) {
           set({ conectado: true })
+          tentativasReabrir = 0
           if (buildInicial === null) buildInicial = ola.build
           else if (ola.build && ola.build !== buildInicial) {
             // O servidor foi atualizado: esta aba ainda roda a interface antiga
@@ -282,8 +295,37 @@ export const useDados = create<DadosState>()((set, get) => {
             void get().recarregar()
           }
         },
+        aoSemSessao(ola) {
+          set({ conectado: false })
+          if (ola.build && buildInicial && ola.build !== buildInicial) {
+            recarregarPagina()
+            return
+          }
+          // A sessão terminou (o login aparece por cima) ou foi só um desencontro: confere
+          void useSessao
+            .getState()
+            .conferir()
+            .then((valendo) => {
+              if (!valendo) return
+              clearTimeout(timerReabrir)
+              const espera = Math.min(60_000, 3000 * 2 ** tentativasReabrir++)
+              timerReabrir = setTimeout(() => conexao?.reabrir(), espera)
+            })
+        },
       })
-      return fechar
+      conexao = c
+      return () => {
+        clearTimeout(timerReabrir)
+        c.fechar()
+        if (conexao === c) conexao = null
+      }
+    },
+
+    reconectar() {
+      clearTimeout(timerReabrir)
+      tentativasReabrir = 0
+      conexao?.reabrir()
+      void get().recarregar()
     },
 
     recarregar() {
@@ -297,6 +339,9 @@ export const useDados = create<DadosState>()((set, get) => {
         })
         .catch((e: Error) => {
           carregamento = null
+          // Sessão terminada ou senha a trocar: a tela da sessão já foi avisada (o login aparece por
+          // cima); a carga volta com `reconectar()` depois de entrar
+          if (e instanceof ErroApi && (e.status === 401 || e.status === 403)) return
           if (get().status !== 'pronto') {
             set({ status: 'erro', erro: e.message })
             return

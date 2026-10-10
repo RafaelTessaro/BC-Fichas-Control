@@ -69,6 +69,7 @@ import { useHoje } from '../lib/hoje'
 import { rotuloCopia } from '../lib/repeticao'
 import type { DiaEvento, Evento, EventoPatch, FormaPagamento, Maquina, Reclamacao, StatusEvento } from '#shared/tipos.ts'
 import { useDados } from '../store/dados'
+import { usePode } from '../store/sessao'
 import { avisarErro, toast } from '../store/ui'
 import { cidadeDoEvento, podeGerarRecibo } from '../lib/recibo'
 
@@ -97,6 +98,8 @@ export function EventoDetalhe() {
   const cliente = useDados((s) => s.clientes.find((c) => c.id === evento?.clienteId))
   const alterarEvento = useDados((s) => s.alterarEvento)
   const acoes = useAcoesEvento()
+  // O comum não exclui: tira o evento da agenda mudando a situação para Cancelado
+  const podeExcluir = usePode('excluirEvento')
   const [modalPagamento, setModalPagamento] = useState(false)
   const [modalDevolucao, setModalDevolucao] = useState(false)
   const [gerando, setGerando] = useState(false)
@@ -316,13 +319,17 @@ export function EventoDetalhe() {
                   icone: <Repeat className="h-4 w-4" />,
                   aoClicar: () => setRepetirPeloMenu(true),
                 },
-                'sep',
-                {
-                  label: 'Excluir evento',
-                  icone: <Trash2 className="h-4 w-4" />,
-                  perigo: true,
-                  aoClicar: () => acoes.excluir(completo, () => navegar('/eventos', { replace: true })),
-                },
+                ...(podeExcluir
+                  ? [
+                      'sep' as const,
+                      {
+                        label: 'Excluir evento',
+                        icone: <Trash2 className="h-4 w-4" />,
+                        perigo: true,
+                        aoClicar: () => acoes.excluir(completo, () => navegar('/eventos', { replace: true })),
+                      },
+                    ]
+                  : []),
               ]}
             />
           </>
@@ -1088,6 +1095,7 @@ function ReclamacoesDoEvento({
   const todas = useDados((s) => s.reclamacoes)
   const maquinas = useDados((s) => s.maquinas)
   const excluirReclamacao = useDados((s) => s.excluirReclamacao)
+  const podeApagar = usePode('excluirReclamacao')
   const situacoes = useSituacoes()
   const hoje = useHoje()
   const lista = useMemo(() => todas.filter((r) => r.eventoId === evento.id), [todas, evento.id])
@@ -1181,16 +1189,18 @@ function ReclamacoesDoEvento({
                       >
                         <Pencil className="h-3.5 w-3.5" />
                       </Button>
-                      <Button
-                        variante="ghost"
-                        tamanho="icon-sm"
-                        onClick={() => void apagar(r, m)}
-                        aria-label="Apagar reclamação"
-                        title="Apagar"
-                        className="hover:bg-danger-soft hover:text-danger"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
+                      {podeApagar && (
+                        <Button
+                          variante="ghost"
+                          tamanho="icon-sm"
+                          onClick={() => void apagar(r, m)}
+                          aria-label="Apagar reclamação"
+                          title="Apagar"
+                          className="hover:bg-danger-soft hover:text-danger"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </motion.li>

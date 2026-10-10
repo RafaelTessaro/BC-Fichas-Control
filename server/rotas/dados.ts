@@ -16,7 +16,11 @@ export async function rotasDados(app: FastifyInstance, { repo, tempoReal, backup
   // Atualizações em tempo real para todos os computadores conectados
   app.get('/api/stream', (req, reply) => {
     reply.hijack()
-    tempoReal.assinar(reply.raw, repo.revisao())
+    tempoReal.assinar(
+      reply.raw,
+      repo.revisao(),
+      req.sessaoId && req.usuario ? { sessaoId: req.sessaoId, usuarioId: req.usuario.id } : null,
+    )
     req.raw.on('close', () => reply.raw.end())
   })
 
