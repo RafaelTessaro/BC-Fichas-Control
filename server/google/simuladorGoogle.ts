@@ -35,7 +35,7 @@ export interface Chamada {
 type EventoSimulado = Record<string, unknown> & { id: string; status: string }
 
 /**
- * Acesso da conta de serviço a uma agenda: `edicao` (Fazer alterações nos eventos),
+ * Acesso da conta de serviço a uma agenda: `edicao` (Fazer alterações e ver detalhes do evento),
  * `leitura` (lê a agenda e os eventos, mas não altera: 403) ou `nenhum` (não
  * compartilhada: o Google responde 404 a tudo, como se ela não existisse).
  */

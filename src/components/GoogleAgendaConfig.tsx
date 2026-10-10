@@ -67,8 +67,9 @@ const PASSOS: ReactNode[] = [
     chave do tipo <b>JSON</b> (o arquivo é baixado no computador).
   </>,
   <>
-    No <b>Google Agenda</b>, abra Configurações da agenda › <b>Compartilhar com pessoas específicas</b> e adicione o e-mail da
-    conta de serviço com a permissão <b>“Fazer alterações nos eventos”</b>.
+    No <b>Google Agenda</b>, em Minhas agendas, abra ⋮ › Configurações e compartilhamento › <b>Compartilhado com</b> ›{' '}
+    <b>Adicionar participantes e grupos</b>, cole o e-mail da conta de serviço e escolha a permissão{' '}
+    <b>“Fazer alterações e ver detalhes do evento”</b> (antes de julho de 2026 o nome era “Fazer alterações nos eventos”).
   </>,
   <>
     Ainda nas configurações da agenda, em <b>Integrar agenda</b>, copie o <b>“ID da agenda”</b>.
@@ -231,7 +232,12 @@ export function GoogleAgendaConfig() {
       setTeste(null)
       try {
         const r = await googleAgenda.testar(calendarId.trim() || undefined)
-        setTeste({ ok: true, mensagem: `Conexão funcionando: agenda “${r.agenda}” encontrada.` })
+        setTeste({
+          ok: true,
+          mensagem:
+            `Conexão funcionando: agenda “${r.agenda}” encontrada. Confira se a permissão dada à conta de serviço é ` +
+            '“Fazer alterações e ver detalhes do evento”: só com “Ver…” o envio dá erro de permissão.',
+        })
       } catch (e) {
         setTeste({ ok: false, mensagem: e instanceof Error ? e.message : 'Falha ao testar a conexão.' })
       }
@@ -333,7 +339,10 @@ export function GoogleAgendaConfig() {
                   </ol>
                   <p className="mx-4 mb-4 rounded-lg bg-surface px-3 py-2 text-xs text-muted ring-1 ring-line">
                     O envio vai só do sistema para o Google: o que for mudado direto no Google Agenda é substituído na próxima
-                    sincronização. Faça as alterações sempre aqui no sistema.
+                    sincronização. Faça as alterações sempre aqui no sistema. Os eventos criados à mão no Google Agenda não são
+                    trazidos para o sistema nem apagados: se a agenda já tem eventos digitados à mão, eles ficam ao lado dos
+                    enviados pelo sistema (apague os repetidos ou use uma agenda nova só para o sistema). Ao ativar, todos os
+                    eventos do sistema são enviados, inclusive os antigos.
                   </p>
                 </motion.div>
               )}

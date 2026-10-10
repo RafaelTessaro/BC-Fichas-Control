@@ -56,7 +56,7 @@ export class ErroGoogle extends Error {
 export const MSG_SEM_INTERNET = 'Sem conexão com a internet no servidor — será enviado automaticamente quando a conexão voltar.'
 
 export const msgSemPermissao = (email: string) =>
-  `Sem permissão na agenda: compartilhe-a com ${email} com a permissão 'Fazer alterações nos eventos'.`
+  `Sem permissão na agenda: compartilhe-a com ${email} com a permissão 'Fazer alterações e ver detalhes do evento'.`
 
 export const MSG_AGENDA_NAO_ENCONTRADA = 'Agenda não encontrada: confira o ID da agenda.'
 

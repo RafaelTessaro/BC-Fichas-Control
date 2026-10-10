@@ -114,7 +114,7 @@ describe('chamadas à agenda', () => {
     const semPermissao = await cliente.salvarEvento('somente-leitura', { id: 'bcfabc0' }).catch((e) => e)
     expect(semPermissao).toMatchObject({ motivo: 'permissao', status: 403 })
     expect(semPermissao.message).toContain(EMAIL_TESTE)
-    expect(semPermissao.message).toContain("'Fazer alterações nos eventos'")
+    expect(semPermissao.message).toContain("'Fazer alterações e ver detalhes do evento'")
 
     const inexistente = await cliente.obterAgenda('nao-existe').catch((e) => e)
     expect(inexistente).toMatchObject({
