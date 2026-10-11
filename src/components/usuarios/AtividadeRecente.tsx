@@ -33,7 +33,7 @@ import { Button } from '../ui/Button'
 import { Card, CardHeader } from '../ui/Card'
 import { Select } from '../ui/Form'
 import { Segmented } from '../ui/Misc'
-import { descreverRegistro, enderecoDoLink, grupoDaAcao, metodoDoRegistro, type TipoLink } from './auditoria'
+import { autorDoRegistro, descreverRegistro, enderecoDoLink, grupoDaAcao, metodoDoRegistro, type TipoLink } from './auditoria'
 
 const POR_PAGINA = 50
 const NENHUM: RegistroAuditoria[] = []
@@ -304,7 +304,7 @@ function ItemRegistro({
   existe: (tipo: TipoLink, id: string) => boolean
 }) {
   const d = descreverRegistro(r, nomes)
-  const quem = nomes.get(r.usuarioId)
+  const autor = autorDoRegistro(r, nomes)
   const link = d.link && existe(d.link.tipo, d.link.id) ? enderecoDoLink(d.link) : null
   return (
     <li className="flex items-start gap-3 border-b border-line px-5 py-3 last:border-b-0">
@@ -324,18 +324,12 @@ function ItemRegistro({
         </p>
         {d.detalhe && <p className="mt-0.5 text-[12.5px] break-words text-ink-2">{d.detalhe}</p>}
         <p className="mt-0.5 text-xs text-muted">
-          {quem ? (
+          {autor.texto}
+          {autor.login && (
             <>
-              {quem} <span className="font-mono text-[11.5px]">({r.login})</span>
+              {autor.texto && ' '}
+              <span className="font-mono text-[11.5px]">{autor.entreParenteses ? `(${autor.login})` : autor.login}</span>
             </>
-          ) : r.login ? (
-            <span className="font-mono text-[11.5px]">{r.login}</span>
-          ) : r.acao === 'LOGIN_FALHOU' || r.acao === 'BLOQUEIO' ? (
-            'Usuário inexistente'
-          ) : r.acao === 'FERRAMENTA_LOCAL' || r.acao === 'COPIA_RESTAURADA' ? (
-            'No computador do servidor'
-          ) : (
-            '—'
           )}
           {r.ip && <> · {r.ip}</>}
         </p>

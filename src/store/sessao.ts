@@ -13,6 +13,11 @@ interface SessaoState {
   build: string
   /** 401 no meio do uso: a tela continua montada e o login aparece por cima. */
   expirou: boolean
+  /**
+   * A sessão foi aberta com "Manter conectado neste computador" (vem do servidor). Continua com o valor
+   * de antes quando a sessão termina: a janela "Sua sessão terminou" repete a escolha.
+   */
+  manterConectado: boolean
   erro: string
   /** Senha temporária digitada em Entrar (só em memória), reaproveitada na troca obrigatória. */
   senhaTemporaria: string
@@ -88,13 +93,14 @@ export const useSessao = create<SessaoState>()((set, get) => {
       if (s.estado === 'logado') set({ expirou: true })
       return false
     }
+    const manterConectado = !!r.persistente
     if (r.usuario.trocarSenha) {
       // Outra aba ainda não trocou a senha, ou o administrador a redefiniu agora
-      set({ usuario: r.usuario, expirou: false })
+      set({ usuario: r.usuario, expirou: false, manterConectado })
       return false
     }
     // Mesma pessoa e mesmo nível: atualiza o nome e fecha o "sessão terminou" (entrou de novo noutra aba)
-    set({ usuario: r.usuario, expirou: false, ...(s.usuario?.trocarSenha ? { senhaTemporaria: '' } : {}) })
+    set({ usuario: r.usuario, expirou: false, manterConectado, ...(s.usuario?.trocarSenha ? { senhaTemporaria: '' } : {}) })
     return true
   }
 
@@ -104,6 +110,7 @@ export const useSessao = create<SessaoState>()((set, get) => {
     semUsuarios: false,
     build: '',
     expirou: false,
+    manterConectado: false,
     erro: '',
     senhaTemporaria: '',
 
@@ -128,6 +135,7 @@ export const useSessao = create<SessaoState>()((set, get) => {
         build: build || r.build,
         estado: r.usuario ? 'logado' : 'anonimo',
         expirou: false,
+        manterConectado: !!r.usuario && !!r.persistente,
         erro: '',
       })
     },
@@ -150,6 +158,7 @@ export const useSessao = create<SessaoState>()((set, get) => {
         usuario: r.usuario,
         estado: 'logado',
         expirou: false,
+        manterConectado: !!e.manterConectado,
         semUsuarios: false,
         build: s.build || r.build,
         erro: '',
@@ -218,14 +227,20 @@ export const useSessao = create<SessaoState>()((set, get) => {
         ultimoFoco = Date.now()
         reagir()
       }
+      // Sair noutra aba encerra esta também (o cookie é o mesmo): recarrega, e o usuário e os dados que
+      // estavam na memória somem (sem isso, a tela de um administrador ficaria aberta por baixo do aviso)
+      const aoAviso = (e: MessageEvent) => {
+        if (e.data === 'saiu' && get().estado === 'logado') recarregarPagina('usuario')
+        else reagir()
+      }
       const ch = canalAbas()
-      ch?.addEventListener('message', reagir)
+      ch?.addEventListener('message', aoAviso)
       window.addEventListener('pointerdown', marcar, { passive: true })
       window.addEventListener('keydown', marcar, { passive: true })
       window.addEventListener('focus', aoFocar)
       return () => {
         clearInterval(batida)
-        ch?.removeEventListener('message', reagir)
+        ch?.removeEventListener('message', aoAviso)
         window.removeEventListener('pointerdown', marcar)
         window.removeEventListener('keydown', marcar)
         window.removeEventListener('focus', aoFocar)

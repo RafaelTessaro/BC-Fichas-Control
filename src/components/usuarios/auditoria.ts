@@ -1,7 +1,7 @@
 // Textos do registro de atividades ("Atividade recente" da página Usuários). Cada gravação chega
 // como a chave da rota ('PATCH /api/eventos/:id | pago,dataPagamento'); aqui ela vira uma frase.
 
-import { GRUPOS_AUDITORIA, ROTULO_ACAO_AUDITORIA } from '#shared/usuarios.ts'
+import { BLOQUEIO_TROCA_SENHA, GRUPOS_AUDITORIA, ROTULO_ACAO_AUDITORIA } from '#shared/usuarios.ts'
 import type { AcaoAuditoria, GrupoAuditoria, RegistroAuditoria } from '#shared/tipos.ts'
 
 type Verbo = readonly [passado: string, infinitivo: string]
@@ -95,7 +95,7 @@ const CAMPOS_EVENTO: Record<string, string> = {
 
 export interface DescricaoRegistro {
   titulo: string
-  /** Segunda linha (ex.: "nível: COMUM → ADMIN"), ou ''. */
+  /** Segunda linha (ex.: "nível: Comum → Administrador"), ou ''. */
   detalhe: string
   /** Ficha do registro afetado (a tela confere se ele ainda existe). */
   link?: { tipo: TipoLink; id: string }
@@ -128,10 +128,46 @@ export function descreverRegistro(r: RegistroAuditoria, nomes?: ReadonlyMap<stri
     const rota = ROTAS[r.detalhe.split(' | ')[0]]
     return { titulo, detalhe: rota ? `Tentou ${rota[0][1]} ${rota[1]}.` : r.detalhe }
   }
-  // Na própria conta (trocar a própria senha, ferramenta do servidor) quem fez já aparece na linha de baixo
-  const afetado = r.alvo && r.alvo !== r.usuarioId && grupoDaAcao(r.acao) === 'usuarios' ? nomes?.get(r.alvo) : undefined
+  // Na própria conta (trocar a própria senha) quem fez já aparece na linha de baixo. Na ferramenta do
+  // servidor, a linha de baixo diz "No computador do servidor": a conta ajustada vem aqui
+  const afetado =
+    r.alvo && (r.alvo !== r.usuarioId || r.acao === 'FERRAMENTA_LOCAL') && grupoDaAcao(r.acao) === 'usuarios'
+      ? nomes?.get(r.alvo)
+      : undefined
   const partes = [afetado, r.detalhe].filter(Boolean)
   return { titulo, detalhe: partes.join(' · ') }
+}
+
+export interface AutorRegistro {
+  texto: string
+  /** Vai em fonte de código depois do texto; entre parênteses quando o texto termina com o nome. */
+  login?: string
+  entreParenteses?: boolean
+}
+
+/**
+ * Linha de baixo de um registro: quem fez. Numa entrada recusada, o usuário é só o que alguém digitou
+ * naquele computador (pode não ter sido a própria pessoa); na ferramenta do servidor, quem fez foi quem
+ * estava nele (a conta ajustada vai no detalhe).
+ */
+export function autorDoRegistro(r: RegistroAuditoria, nomes: ReadonlyMap<string, string>): AutorRegistro {
+  if (r.acao === 'FERRAMENTA_LOCAL' || r.acao === 'COPIA_RESTAURADA') return { texto: 'No computador do servidor' }
+  const nome = nomes.get(r.usuarioId)
+  if (r.acao === 'LOGIN_FALHOU' || (r.acao === 'BLOQUEIO' && r.detalhe !== BLOQUEIO_TROCA_SENHA)) {
+    if (!r.login) return { texto: 'Usuário inexistente' }
+    return nome
+      ? { texto: `Tentativa com o usuário ${nome}`, login: r.login, entreParenteses: true }
+      : { texto: 'Tentativa com o usuário', login: r.login }
+  }
+  if (nome) return { texto: nome, login: r.login, entreParenteses: true }
+  if (r.login) return { texto: '', login: r.login }
+  return { texto: '—' }
+}
+
+/** A linha de baixo como texto corrido (o que a tela mostra, sem o IP). */
+export function textoDoAutor(a: AutorRegistro): string {
+  if (!a.login) return a.texto
+  return [a.texto, a.entreParenteses ? `(${a.login})` : a.login].filter(Boolean).join(' ')
 }
 
 /** Método da gravação ('DELETE', 'POST'…), para o ícone. */

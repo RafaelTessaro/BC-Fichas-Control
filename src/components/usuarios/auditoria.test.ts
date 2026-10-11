@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { RegistroAuditoria } from '#shared/tipos.ts'
-import { descreverRegistro, enderecoDoLink, grupoDaAcao } from './auditoria'
+import { autorDoRegistro, descreverRegistro, enderecoDoLink, grupoDaAcao, textoDoAutor } from './auditoria'
 
 const registro = (r: Partial<RegistroAuditoria>): RegistroAuditoria => ({
   id: 1,
@@ -53,8 +53,11 @@ describe('descreverRegistro', () => {
 
   it('ações sobre usuários mostram quem foi afetado', () => {
     const nomes = new Map([['u2', 'João Lima']])
-    const d = descreverRegistro(registro({ acao: 'USUARIO_ALTERADO', alvo: 'u2', detalhe: 'nível: COMUM → ADMIN' }), nomes)
-    expect(d).toEqual({ titulo: 'Alterou um usuário', detalhe: 'João Lima · nível: COMUM → ADMIN' })
+    const d = descreverRegistro(
+      registro({ acao: 'USUARIO_ALTERADO', alvo: 'u2', detalhe: 'joao: nível: Comum → Administrador' }),
+      nomes,
+    )
+    expect(d).toEqual({ titulo: 'Alterou um usuário', detalhe: 'João Lima · joao: nível: Comum → Administrador' })
     expect(descreverRegistro(registro({ acao: 'LOGIN' }))).toEqual({ titulo: 'Entrou no sistema', detalhe: '' })
   })
 
@@ -67,10 +70,56 @@ describe('descreverRegistro', () => {
     expect(d).toEqual({ titulo: 'Trocou a própria senha', detalhe: 'senha temporária substituída' })
   })
 
+  it('ferramenta do servidor: a conta ajustada vai no detalhe, mesmo sendo a do registro', () => {
+    const nomes = new Map([['u2', 'Maria Souza']])
+    const d = descreverRegistro(
+      registro({
+        acao: 'FERRAMENTA_LOCAL',
+        usuarioId: 'u2',
+        login: 'maria',
+        alvo: 'u2',
+        ip: 'local',
+        detalhe: 'senha redefinida; nível: Comum → Administrador',
+      }),
+      nomes,
+    )
+    expect(d).toEqual({
+      titulo: 'Ajuste de usuário no computador do servidor',
+      detalhe: 'Maria Souza · senha redefinida; nível: Comum → Administrador',
+    })
+  })
+
   it('grupo de cada ação vem de GRUPOS_AUDITORIA', () => {
     expect(grupoDaAcao('LOGIN_FALHOU')).toBe('acessos')
     expect(grupoDaAcao('SENHA_REDEFINIDA')).toBe('usuarios')
     expect(grupoDaAcao('BACKUP_BAIXADO')).toBe('dados')
     expect(grupoDaAcao('ALTERACAO')).toBe('alteracoes')
+  })
+})
+
+describe('autorDoRegistro (linha de baixo: quem fez)', () => {
+  const nomes = new Map([['u1', 'Maria Souza']])
+  const autor = (r: Partial<RegistroAuditoria>) => textoDoAutor(autorDoRegistro(registro(r), nomes))
+
+  it('quem fez, com o login entre parênteses', () => {
+    expect(autor({ acao: 'LOGIN' })).toBe('Maria Souza (maria)')
+    expect(autor({ acao: 'LOGIN', usuarioId: 'excluido', login: 'jose' })).toBe('jose')
+    expect(autor({ acao: 'LOGIN', usuarioId: '', login: '' })).toBe('—')
+  })
+
+  it('entrada recusada ou bloqueada: o usuário foi só o digitado, não quem tentou', () => {
+    expect(autor({ acao: 'LOGIN_FALHOU' })).toBe('Tentativa com o usuário Maria Souza (maria)')
+    expect(autor({ acao: 'BLOQUEIO', detalhe: '5 falhas seguidas do mesmo usuário neste computador' })).toBe(
+      'Tentativa com o usuário Maria Souza (maria)',
+    )
+    expect(autor({ acao: 'LOGIN_FALHOU', usuarioId: 'excluido', login: 'jose' })).toBe('Tentativa com o usuário jose')
+    expect(autor({ acao: 'LOGIN_FALHOU', usuarioId: '', login: '' })).toBe('Usuário inexistente')
+    // A troca da própria senha só acontece com a pessoa logada
+    expect(autor({ acao: 'BLOQUEIO', detalhe: 'senha atual errada várias vezes na troca de senha' })).toBe('Maria Souza (maria)')
+  })
+
+  it('ferramenta do servidor e cópia restaurada: no computador do servidor', () => {
+    expect(autor({ acao: 'FERRAMENTA_LOCAL', alvo: 'u1', ip: 'local' })).toBe('No computador do servidor')
+    expect(autor({ acao: 'COPIA_RESTAURADA', usuarioId: '', login: '', ip: 'local' })).toBe('No computador do servidor')
   })
 })

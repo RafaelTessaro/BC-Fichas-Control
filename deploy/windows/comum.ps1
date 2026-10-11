@@ -188,7 +188,7 @@ function Desbloquear-Scripts([string]$Pasta) {
 
 # ---- Usuários e senhas ----------------------------------------------------------------
 
-$script:AvisoSemAdministrador = 'Ninguém consegue entrar no sistema até criar o administrador: Menu Iniciar > BC Fichas Control > Redefinir senha do BC Fichas.'
+$script:AvisoSemAdministrador = 'Ninguém consegue entrar no sistema até criar o administrador: neste computador, clique em Iniciar, digite BC Fichas e abra "Redefinir senha do BC Fichas" (ou procure em Todos os aplicativos > BC Fichas Control).'
 
 # Roda a ferramenta de usuários (server\ferramentas\redefinir-senha.mjs) e devolve a resposta já
 # convertida; um erro da ferramenta vira exceção com a mensagem dela. Entrada e resposta passam em
@@ -231,7 +231,27 @@ function Perguntar-SimNao([string]$Pergunta) {
     $resposta = Ler-Texto $Pergunta
     if ($resposta -match '^s') { return $true }
     if ($resposta -match '^n') { return $false }
+    Write-Host 'Responda S (sim) ou N (não).' -ForegroundColor Red
   }
+}
+
+# Nome de quem vai usar a conta: obrigatório e com até 60 caracteres, como na tela (assim, se o "definir"
+# recusar algo com a senha digitada, o problema é a senha).
+function Ler-Nome([string]$Pergunta) {
+  while ($true) {
+    $nome = Ler-Texto $Pergunta
+    if ($nome -and $nome.Length -le 60) { return $nome }
+    if ($nome) { Write-Host 'O nome pode ter até 60 caracteres.' -ForegroundColor Red }
+  }
+}
+
+# Confere o usuário digitado com a mesma regra do sistema (shared/usuarios.ts): o erro, ou $null se
+# serve. Na hora, antes de pedir a senha (o servidor continua sendo quem decide).
+function Erro-Usuario([string]$Login) {
+  $l = $Login.Normalize([Text.NormalizationForm]::FormC).ToLowerInvariant()
+  # -cmatch: com o -match comum, o [a-z] aceitaria também maiúsculas e outras letras
+  if ($l -cmatch '^[a-z0-9][a-z0-9._-]{2,31}$') { return $null }
+  return 'Usuário inválido: use de 3 a 32 letras sem acento, números, ponto, hífen ou sublinhado, sem espaços (ex.: fabio ou maria.souza).'
 }
 
 # Texto de uma senha lida com Read-Host -AsSecureString; a cópia em memória não gerenciada é zerada.
@@ -258,6 +278,27 @@ function Perguntar-Senha {
   }
 }
 
+# Pede a senha e roda o "definir" com $Entrada (login, nome, tornarAdmin). Senha recusada (comum demais,
+# com o nome...): diz o motivo e pede só a senha de novo; Enter gera uma temporária, que sempre passa.
+# Outro erro: mostra e devolve $null (quem chamou recomeça). Deu certo: a resposta da ferramenta.
+function Definir-ComSenha([string]$Banco, [hashtable]$Entrada) {
+  while ($true) {
+    $senha = Perguntar-Senha
+    $Entrada.senha = $senha.Senha
+    $Entrada.trocarSenha = $senha.TrocarSenha
+    try {
+      return Ferramenta-Usuarios 'definir' @($Banco) ($Entrada | ConvertTo-Json -Compress)
+    } catch {
+      if (-not $senha.Senha) {
+        Write-Host "Não deu certo: $($_.Exception.Message)" -ForegroundColor Red
+        return $null
+      }
+      Write-Host "Senha recusada: $($_.Exception.Message)" -ForegroundColor Red
+      Write-Host 'Digite outra senha (ou Enter para o sistema gerar uma temporária).'
+    }
+  }
+}
+
 # Lista de usuários da ferramenta (situacao), administradores primeiro.
 function Mostrar-Usuarios($Lista) {
   foreach ($u in @($Lista)) {
@@ -276,7 +317,8 @@ function Mostrar-ContaDefinida($Resultado) {
   Write-Host "  Usuário: $($Resultado.login)" -ForegroundColor Green
   if ($Resultado.senhaTemporaria) {
     Write-Host "  Senha temporária: $($Resultado.senhaTemporaria)" -ForegroundColor Green
-    Write-Host '  Anote. No primeiro acesso o sistema pede para trocar.' -ForegroundColor Yellow
+    $quando = if ($Resultado.criado) { 'No primeiro acesso' } else { 'Na próxima entrada' }
+    Write-Host "  Anote. $quando o sistema pede para trocar a senha." -ForegroundColor Yellow
   } elseif ($Resultado.trocarSenha) {
     Write-Host '  Na próxima entrada o sistema pede para trocar a senha.' -ForegroundColor Yellow
   }
@@ -300,31 +342,37 @@ function Garantir-Administrador([switch]$SemPerguntas) {
     }
     Write-Host ''
     Write-Host 'O sistema agora pede usuário e senha. Vamos criar o ADMINISTRADOR (acesso a tudo). Ninguém entra no sistema antes disso.' -ForegroundColor Yellow
+    $lista = @($situacao.lista)
     if ($situacao.usuarios -gt 0) {
-      Write-Host 'Há usuários cadastrados, mas nenhum administrador ativo. Para tornar um deles administrador, digite o usuário dele:' -ForegroundColor Yellow
-      Mostrar-Usuarios $situacao.lista
+      Write-Host 'Há usuários cadastrados, mas nenhum administrador ativo. Para tornar um deles administrador, digite o usuário dele (a primeira coluna) quando a janela pedir o usuário:' -ForegroundColor Yellow
+      Mostrar-Usuarios $lista
     }
+    # O usuário primeiro (como no Redefinir senha): uma conta que já existe vira administrador sem mudar o nome
     for ($tentativa = 1; $tentativa -le 20; $tentativa++) {
       Write-Host ''
-      $nome = Ler-Texto 'Nome de quem vai administrar (ex.: Fabio Souza; PULAR para deixar para depois)'
-      if ($nome -eq 'PULAR') { break }
-      if (-not $nome) {
-        Write-Host 'Digite o nome.' -ForegroundColor Red
+      $login = Ler-Texto 'Usuário para entrar no sistema (sem acentos nem espaços, ex.: fabio; Enter = admin; PULAR para deixar para depois)'
+      if ($login -eq 'PULAR') { break }
+      if (-not $login) { $login = 'admin' }
+      $erroLogin = Erro-Usuario $login
+      if ($erroLogin) {
+        Write-Host $erroLogin -ForegroundColor Red
         continue
       }
-      $login = Ler-Texto 'Usuário para entrar no sistema (Enter = admin)'
-      if (-not $login) { $login = 'admin' }
-      $senha = Perguntar-Senha
-      $entrada = @{ login = $login; nome = $nome; senha = $senha.Senha; tornarAdmin = $true; trocarSenha = $senha.TrocarSenha } |
-        ConvertTo-Json -Compress
-      try {
-        Mostrar-ContaDefinida (Ferramenta-Usuarios 'definir' @($banco) $entrada)
+      $entrada = @{ login = $login; tornarAdmin = $true }
+      $conta = $lista | Where-Object { $_.login -eq $login } | Select-Object -First 1
+      if ($conta) {
+        Write-Host "Vamos tornar $($conta.nome) administrador." -ForegroundColor Yellow
+        if (-not $conta.ativo) { Write-Host 'Esta conta está desativada: com a senha nova, ela volta a ficar ativa.' -ForegroundColor Yellow }
+      } else {
+        $entrada.nome = Ler-Nome 'Nome de quem vai administrar (ex.: Fabio Souza)'
+      }
+      $resultado = Definir-ComSenha $banco $entrada
+      if ($resultado) {
+        Mostrar-ContaDefinida $resultado
         Write-Host '  Entre no sistema com este usuário e cadastre os funcionários em Administração > Usuários.' -ForegroundColor Green
         return
-      } catch {
-        Write-Host "Não foi possível criar o administrador: $($_.Exception.Message)" -ForegroundColor Red
-        Write-Host 'Vamos tentar de novo.'
       }
+      Write-Host 'Vamos tentar de novo.'
     }
     Write-Host $script:AvisoSemAdministrador -ForegroundColor Red
   } catch {
@@ -357,7 +405,7 @@ function Criar-AtalhoRedefinirSenha([string]$Pasta) {
     $atalho.WorkingDirectory = Join-Path $env:SystemRoot 'System32'
     $atalho.Description = 'Cria o administrador ou redefine a senha de um usuário do BC Fichas Control'
     $atalho.Save()
-    Write-Host 'Atalho no Menu Iniciar: BC Fichas Control > Redefinir senha do BC Fichas'
+    Write-Host 'Atalho criado: no Iniciar, digite BC Fichas e abra "Redefinir senha do BC Fichas" (ou procure em Todos os aplicativos > BC Fichas Control).'
   } catch {
     Write-Warning "Não foi possível criar o atalho no Menu Iniciar ($($_.Exception.Message)). Para criar o administrador ou redefinir uma senha, use o REDEFINIR-SENHA.bat do pacote do sistema."
   }

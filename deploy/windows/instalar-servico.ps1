@@ -95,6 +95,6 @@ Write-Host ''
 Write-Host 'Acesse de qualquer computador da rede:' -ForegroundColor Green
 foreach ($ip in $ips) { Write-Host "  http://$($ip):$Porta" -ForegroundColor Green }
 Write-Host 'Entre com o usuário do administrador e cadastre os funcionários em Administração > Usuários.'
-Write-Host 'Esqueceu a senha? Menu Iniciar > BC Fichas Control > Redefinir senha do BC Fichas (neste computador).'
+Write-Host 'Esqueceu a senha? Neste computador, clique em Iniciar, digite BC Fichas e abra "Redefinir senha do BC Fichas".'
 Write-Host ''
 Write-Host "Registro do servidor: $($script:Raiz)\dados\servidor.log"

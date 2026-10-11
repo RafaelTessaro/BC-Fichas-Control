@@ -458,6 +458,8 @@ export interface EstadoSessao {
   semUsuarios: boolean
   /** Versão da interface servida agora (a mesma do `ola` do tempo real). */
   build: string
+  /** Só com alguém logado: a sessão do cookie foi aberta com "Manter conectado neste computador". */
+  persistente?: boolean
 }
 
 export interface EntradaLogin {
@@ -542,6 +544,6 @@ export interface RegistroAuditoria {
   acao: AcaoAuditoria
   /** Id do registro afetado (`:id` da rota), ou ''. */
   alvo: string
-  /** Ex.: 'PATCH /api/eventos/:id | pago,dataPagamento' ou 'nível: COMUM → ADMIN'. */
+  /** Ex.: 'PATCH /api/eventos/:id | pago,dataPagamento' ou 'nível: Comum → Administrador'. */
   detalhe: string
 }

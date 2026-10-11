@@ -73,7 +73,7 @@ function FormRedefinir({
   const [senha, setSenha] = useState('')
   const [tentou, setTentou] = useState(false)
   const [enviando, setEnviando] = useState(false)
-  const erroSenha = modo === 'digitar' ? validarSenhaNova(senha, usuario) : null
+  const erroSenha = modo === 'digitar' ? validarSenhaNova(senha, usuario, { deOutraPessoa: true }) : null
 
   const enviar = async (e: FormEvent) => {
     e.preventDefault()

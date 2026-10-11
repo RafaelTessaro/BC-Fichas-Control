@@ -1,5 +1,5 @@
 import { Check, Minus, ShieldCheck, UserRound } from 'lucide-react'
-import { LISTA_PERMISSOES, NOME_NIVEL, PERMISSOES, RESUMO_NIVEL, ROTULO_PERMISSAO } from '#shared/permissoes.ts'
+import { LISTA_PERMISSOES, NOME_NIVEL, PERMISSOES, RESUMO_NIVEL, ROTULO_PERMISSAO, SO_NA_TELA } from '#shared/permissoes.ts'
 import type { NivelUsuario } from '#shared/tipos.ts'
 import { cn } from '../../lib/cn'
 import { Card, CardHeader } from '../ui/Card'
@@ -22,9 +22,12 @@ function Marca({ pode, nivel }: { pode: boolean; nivel: NivelUsuario }) {
   )
 }
 
-/** "O que cada nível pode": a tabela de shared/permissoes.ts, a mesma que o servidor usa para barrar. */
+/**
+ * "O que cada nível pode": a tabela de shared/permissoes.ts. O servidor barra as ações; faturamento e
+ * planilhas só são escondidos na tela (SO_NA_TELA).
+ */
 export function PermissoesNiveis() {
-  const linhas: Array<{ rotulo: string; pode: Record<NivelUsuario, boolean>; base?: boolean }> = [
+  const linhas: Array<{ rotulo: string; pode: Record<NivelUsuario, boolean>; base?: boolean; soTela?: boolean }> = [
     {
       rotulo: 'Agenda, clientes, eventos (com valores), contratos, pagamentos e manutenção',
       pode: { ADMIN: true, COMUM: true },
@@ -33,6 +36,7 @@ export function PermissoesNiveis() {
     ...LISTA_PERMISSOES.map((p) => ({
       rotulo: ROTULO_PERMISSAO[p],
       pode: { ADMIN: PERMISSOES[p].includes('ADMIN'), COMUM: PERMISSOES[p].includes('COMUM') },
+      soTela: SO_NA_TELA.has(p),
     })),
   ]
   return (
@@ -40,7 +44,7 @@ export function PermissoesNiveis() {
       <CardHeader
         icone={<ShieldCheck className="h-4 w-4" />}
         titulo="O que cada nível pode"
-        descricao="A mesma regra vale nas telas e no servidor: o que não aparece para o comum também é recusado se ele tentar por outro caminho."
+        descricao="O servidor recusa as ações proibidas ao comum, mesmo que ele tente por outro caminho. O faturamento e as planilhas só ficam escondidos na tela: o comum vê o valor de cada evento e poderia somar à mão."
       />
       <div className="grid gap-3 px-5 pb-4 sm:grid-cols-2">
         {NIVEIS.map((n) => {
@@ -87,6 +91,7 @@ export function PermissoesNiveis() {
                   )}
                 >
                   {l.rotulo}
+                  {l.soTela && <span className="text-muted"> · só escondido na tela</span>}
                 </td>
                 {NIVEIS.map((n) => (
                   <td

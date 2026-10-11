@@ -5,7 +5,7 @@ import { KeyRound, LogIn, LogOut, RefreshCw, ShieldCheck, User, UserCog } from '
 import { motion } from 'motion/react'
 import { useState, type FormEvent, type ReactNode } from 'react'
 import logo from '../assets/logo-mark.png'
-import { erroAoEntrar, formatarEspera, problemasSenhaNova, useEspera } from '../components/sessao/auxiliares'
+import { erroAoEntrar, problemasSenhaNova, useEspera } from '../components/sessao/auxiliares'
 import { CampoSenha } from '../components/sessao/CampoSenha'
 import { SenhaNova } from '../components/sessao/SenhaNova'
 import { SeletorTema } from '../components/layout/Sidebar'
@@ -85,7 +85,7 @@ export function Entrar() {
   const [manter, setManter] = useState(false)
   const [enviando, setEnviando] = useState(false)
   const [erro, setErro] = useState('')
-  const [faltam, esperar] = useEspera()
+  const [faltam, esperar, aviso] = useEspera()
 
   const enviar = async (e: FormEvent) => {
     e.preventDefault()
@@ -99,7 +99,7 @@ export function Entrar() {
     } catch (err) {
       const r = erroAoEntrar(err)
       setErro(r.mensagem)
-      esperar(r.esperarSegundos)
+      esperar(r.esperarSegundos, r.porComputador)
       setSenha('')
       setEnviando(false)
     }
@@ -114,8 +114,8 @@ export function Entrar() {
             Para segurança, o sistema registra data, hora e computador de cada acesso e alteração.
           </p>
           <p>
-            Esqueceu a senha? Peça ao administrador. Se você é o administrador, use “Redefinir senha do BC Fichas” no menu Iniciar
-            do computador do servidor.
+            Esqueceu a senha? Peça ao administrador. Se você é o administrador, use “Redefinir senha do BC Fichas” no computador
+            do servidor: clique em Iniciar e digite BC Fichas.
           </p>
         </>
       }
@@ -163,9 +163,7 @@ export function Entrar() {
             <span className="mt-0.5 block text-xs text-muted">Não marque em computador usado por outras pessoas.</span>
           </span>
         </label>
-        {(erro || faltam > 0) && (
-          <Alerta>{faltam > 0 ? `Muitas tentativas. Aguarde ${formatarEspera(faltam)} para tentar de novo.` : erro}</Alerta>
-        )}
+        {(erro || faltam > 0) && <Alerta>{aviso || erro}</Alerta>}
         <Button
           variante="primary"
           type="submit"
@@ -206,9 +204,10 @@ export function SemAdministrador() {
       <ol className="flex flex-col gap-3">
         {[
           <>
-            No <b className="font-semibold text-ink">computador do servidor</b>, abra o menu Iniciar ›{' '}
-            <b className="font-semibold text-ink">BC Fichas Control</b> ›{' '}
-            <b className="font-semibold text-ink">Redefinir senha do BC Fichas</b>.
+            No <b className="font-semibold text-ink">computador do servidor</b>, clique em Iniciar, digite{' '}
+            <b className="font-semibold text-ink">BC Fichas</b> e abra{' '}
+            <b className="font-semibold text-ink">Redefinir senha do BC Fichas</b> (ou procure em Todos os aplicativos › BC Fichas
+            Control). Responda Sim ao pedido de permissão.
           </>,
           'Siga as instruções da janela para criar o administrador e anote a senha.',
           'Volte aqui e clique em “Tentar de novo”.',
@@ -256,7 +255,7 @@ export function TrocarSenhaObrigatoria() {
   const [erroAtual, setErroAtual] = useState('')
   const [erroNova, setErroNova] = useState('')
   const [erro, setErro] = useState('')
-  const [faltam, esperar] = useEspera()
+  const [faltam, esperar, aviso] = useEspera()
 
   if (!usuario) return null
   const dono = { login: usuario.login, nome: usuario.nome }
@@ -286,7 +285,7 @@ export function TrocarSenhaObrigatoria() {
       else {
         const r = erroAoEntrar(err)
         setErro(r.mensagem)
-        esperar(r.esperarSegundos)
+        esperar(r.esperarSegundos, r.porComputador)
       }
     }
   }
@@ -343,9 +342,7 @@ export function TrocarSenhaObrigatoria() {
           erroNova={erroNova}
           focarNova={!pedirAtual}
         />
-        {(erro || faltam > 0) && (
-          <Alerta>{faltam > 0 ? `Muitas tentativas. Aguarde ${formatarEspera(faltam)} para tentar de novo.` : erro}</Alerta>
-        )}
+        {(erro || faltam > 0) && <Alerta>{aviso || erro}</Alerta>}
         <Button variante="primary" type="submit" className="mt-1 w-full" disabled={salvando || faltam > 0}>
           {salvando ? 'Salvando…' : 'Salvar e continuar'}
         </Button>

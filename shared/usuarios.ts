@@ -57,21 +57,30 @@ const SEQUENCIAS_TODAS = [...SEQUENCIAS, ...SEQUENCIAS.map((s) => [...s].reverse
 /**
  * Política de senha (sem regras de composição: o que conta é o tamanho e não ser fácil de adivinhar).
  * Devolve o primeiro problema encontrado, explicando o motivo, ou `null` quando a senha é aceita.
+ * `deOutraPessoa`: quem digita não é o dono (o administrador, ou o console do servidor); as mensagens
+ * falam "da pessoa" em vez de "o seu".
  */
-export function validarSenhaNova(senha: string, dono: { login: string; nome: string }): string | null {
+export function validarSenhaNova(
+  senha: string,
+  dono: { login: string; nome: string },
+  opcoes: { deOutraPessoa?: boolean } = {},
+): string | null {
+  const outra = !!opcoes.deOutraPessoa
   const s = String(senha ?? '').normalize('NFC')
   const n = tamanho(s)
   if (n < SENHA_MIN || n > SENHA_MAX) return `A senha precisa ter de ${SENHA_MIN} a ${SENHA_MAX} caracteres.`
   const minuscula = s.toLowerCase()
   if (SENHAS_COMUNS.has(minuscula)) return 'Essa senha é muito comum. Use uma frase de 3 ou 4 palavras.'
   const login = normalizarLogin(dono.login)
-  if (tamanho(login) >= 3 && minuscula.includes(login)) return 'A senha não pode conter o seu nome de usuário.'
+  if (tamanho(login) >= 3 && minuscula.includes(login))
+    return outra ? 'A senha não pode conter o usuário (login) da pessoa.' : 'A senha não pode conter o seu nome de usuário.'
   const simples = semAcento(s)
   if (simples.includes('fichas')) return 'A senha não pode conter o nome do sistema.'
   const palavrasDoNome = semAcento(String(dono.nome ?? ''))
     .split(/[^\p{L}\p{N}]+/u)
     .filter((p) => tamanho(p) >= 4)
-  if (palavrasDoNome.some((p) => simples.includes(p))) return 'A senha não pode conter o seu nome.'
+  if (palavrasDoNome.some((p) => simples.includes(p)))
+    return outra ? 'A senha não pode conter o nome da pessoa.' : 'A senha não pode conter o seu nome.'
   if (new Set(s).size === 1) return 'A senha não pode ser um caractere repetido.'
   if (SEQUENCIAS_TODAS.some((seq) => seq.includes(minuscula))) return 'A senha não pode ser uma sequência (como 1234567890).'
   return null
@@ -92,7 +101,7 @@ function lerNome(v: unknown, erros: string[]): string {
   return nome
 }
 
-/** POST /api/usuarios. Senha vazia: o servidor gera uma temporária. */
+/** POST /api/usuarios (só o administrador: a senha é de outra pessoa). Senha vazia: o servidor gera uma temporária. */
 export function normalizarNovoUsuario(e: unknown): Resultado<NovoUsuario> {
   const r = obj(e)
   const erros: string[] = []
@@ -103,7 +112,7 @@ export function normalizarNovoUsuario(e: unknown): Resultado<NovoUsuario> {
   const nivel = umDe(r.nivel, NIVEIS, 'COMUM')
   const senha = typeof r.senha === 'string' ? r.senha : ''
   if (senha) {
-    const erroSenha = validarSenhaNova(senha, { login, nome })
+    const erroSenha = validarSenhaNova(senha, { login, nome }, { deOutraPessoa: true })
     if (erroSenha) erros.push(erroSenha)
   }
   return { valor: { nome, login, nivel, senha }, erros }
@@ -131,6 +140,9 @@ export function normalizarAlteracaoUsuario(e: unknown): Resultado<AlteracaoUsuar
 }
 
 // ---- Registro de atividades --------------------------------------------------------
+
+/** Detalhe do BLOQUEIO da troca da própria senha (o único bloqueio que não é de uma entrada). */
+export const BLOQUEIO_TROCA_SENHA = 'senha atual errada várias vezes na troca de senha'
 
 export const GRUPOS_AUDITORIA: Record<GrupoAuditoria, readonly AcaoAuditoria[]> = {
   acessos: ['LOGIN', 'LOGIN_FALHOU', 'BLOQUEIO', 'LOGOUT', 'ACESSO_NEGADO'],

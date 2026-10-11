@@ -172,7 +172,7 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
         (db.prepare("SELECT detalhe FROM auditoria WHERE acao = 'FERRAMENTA_LOCAL' ORDER BY id DESC LIMIT 1").get() as Linha)
           .detalhe,
     )
-    expect(detalhe).toContain('COMUM → ADMIN')
+    expect(detalhe).toContain('nível: Comum → Administrador')
 
     // Sem tornarAdmin, o nível fica como está
     await cadastrarComum(banco, 'joao', 'João Lima')
@@ -201,7 +201,7 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
     expect(curta.status).toBe(1)
     expect(curta.json.erro).toBe('A senha precisa ter de 8 a 128 caracteres.')
     expect(rodar(['definir', banco], { login: 'admin', senha: 'fabio-123-aqui' }).json.erro).toBe(
-      'A senha não pode conter o seu nome.',
+      'A senha não pode conter o nome da pessoa.',
     )
     expect(rodar(['definir', banco], { login: 'a b', senha: SENHA_FORTE }).status).toBe(1)
 
@@ -284,7 +284,13 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
       const r = rodar(['transplantar', banco, restaurado])
       expect(r.status).toBe(0)
       expect(r.stderr).toBe('')
-      expect(r.json).toEqual({ transplantado: true, usuarios: 2, auditoria: auditoriaAtual })
+      expect(r.json).toEqual({
+        transplantado: true,
+        usuarios: 2,
+        auditoria: auditoriaAtual,
+        loginsCopia: ['antigo'],
+        loginsAtuais: ['admin', 'maria'],
+      })
       // Tudo gravado no próprio .db: o script move só ele
       expect(existsSync(`${restaurado}-wal`)).toBe(false)
       expect(existsSync(`${banco}-wal`)).toBe(false)
@@ -307,6 +313,45 @@ describe('redefinir-senha.mjs', { timeout: 60_000 }, () => {
       expect(r.json).toMatchObject({ transplantado: true, usuarios: 2 })
       expect(await contar(restaurado, 'SELECT COUNT(*) AS n FROM usuarios')).toBe(2)
       expect(await contar(restaurado, 'SELECT COUNT(*) AS n FROM clientes')).toBe(1)
+    })
+
+    it('banco atual sem nenhuma conta (computador novo): as contas da cópia voltam, sem sessões', async () => {
+      const novo = join(pasta, 'novo.db')
+      abrirBanco(novo).close()
+      const r = rodar(['transplantar', novo, restaurado])
+      expect(r.status).toBe(0)
+      expect(r.json).toEqual({
+        transplantado: false,
+        aviso: 'O banco atual não tinha contas; as contas voltaram como estavam na cópia.',
+        loginsCopia: ['antigo'],
+        loginsAtuais: [],
+      })
+      await comBanco(restaurado, (db) => {
+        expect((db.prepare('SELECT login FROM usuarios').all() as Linha[]).map((l) => l.login)).toEqual(['antigo'])
+        expect((db.prepare('SELECT COUNT(*) AS n FROM sessoes').get() as Linha).n).toBe(0)
+        expect(db.prepare('SELECT acao, detalhe FROM auditoria ORDER BY id DESC LIMIT 1').get()).toEqual({
+          acao: 'COPIA_RESTAURADA',
+          detalhe: 'o banco atual não tinha contas; as contas voltaram como estavam na cópia',
+        })
+      })
+    })
+
+    it('--contas-da-copia (trocar o servidor de computador): as contas da cópia voltam, sem sessões', async () => {
+      const r = rodar(['transplantar', banco, restaurado, '--contas-da-copia'], undefined, true)
+      expect(r.status).toBe(0)
+      expect(r.json).toEqual({
+        transplantado: false,
+        aviso: 'As contas voltaram como estavam na cópia, como pedido.',
+        loginsCopia: ['antigo'],
+        loginsAtuais: ['admin', 'maria'],
+      })
+      expect(await contar(restaurado, 'SELECT COUNT(*) AS n FROM sessoes')).toBe(0)
+      expect(await contar(restaurado, 'SELECT COUNT(*) AS n FROM usuarios')).toBe(1)
+      expect(await contar(restaurado, "SELECT COUNT(*) AS n FROM usuarios WHERE login = 'antigo'")).toBe(1)
+      // O banco atual não muda
+      expect(await contar(banco, 'SELECT COUNT(*) AS n FROM usuarios')).toBe(2)
+      // Só o transplantar aceita a opção
+      expect(rodar(['situacao', banco, '--contas-da-copia']).status).toBe(2)
     })
 
     it('banco atual ausente ou estragado: as contas da cópia voltam, sem sessões, com aviso', async () => {

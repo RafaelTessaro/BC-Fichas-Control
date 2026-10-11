@@ -33,7 +33,12 @@ export async function rotasUsuarios(app: FastifyInstance, { usuarios, tempoReal,
   // `?uso=1` (abrir a página, batimento com interação) conta como atividade; sem ele, só confere
   app.get('/api/sessao', opcoes, async (req, reply): Promise<EstadoSessao> => {
     if (lerCookie(req.headers.cookie, nomeCookie) && !req.sessaoId) reply.header('Set-Cookie', cookieApagar(nomeCookie))
-    return { usuario: req.usuario, semUsuarios: usuarios.quantos() === 0, build: tempoReal.build }
+    return {
+      usuario: req.usuario,
+      semUsuarios: usuarios.quantos() === 0,
+      build: tempoReal.build,
+      ...(req.sessaoId ? { persistente: req.sessaoPersistente } : {}),
+    }
   })
 
   app.post('/api/sessao', opcoes, async (req, reply): Promise<RespostaLogin> => {

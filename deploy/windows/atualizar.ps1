@@ -7,9 +7,10 @@
   a instalação atual, troca os arquivos do sistema pelos desta pasta e reinicia o servidor. Não precisa
   de internet. Depois, a pasta extraída pode ser apagada.
 
-  Também funciona na própria pasta instalada, depois de copiar os arquivos novos por cima. Com o
-  código-fonte, roda npm ci e npm run build (precisa de internet); se a instalação veio do pacote
-  completo, apague antes o arquivo pacote.json. PowerShell como Administrador:
+  Uso técnico: também funciona na própria pasta instalada, depois de copiar os arquivos novos por cima
+  com o robocopy num PowerShell como Administrador (nunca pelo Explorer: o "Continuar" gravaria a sua
+  conta nas permissões da pasta). Com o código-fonte, roda npm ci e npm run build (precisa de internet);
+  se a instalação veio do pacote completo, apague antes o arquivo pacote.json. PowerShell como Administrador:
     powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\atualizar.ps1
 
   No fim, cria o atalho "Redefinir senha do BC Fichas" no Menu Iniciar e, se ainda não houver

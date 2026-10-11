@@ -211,6 +211,9 @@ export function Eventos() {
     )
 
   const algumFiltro = grupo || busca || periodoSel !== 'todos' || pagamento !== 'todos' || programacao !== 'todos'
+  // O comum vê as diárias da lista, mas não as de um cliente: buscar pelo nome dele (ou abrir uma série)
+  // mostraria as "N diárias no total" que a tela do cliente não mostra para ele
+  const mostrarTotais = verFat || (!normalizar(busca) && !grupo)
 
   return (
     <>
@@ -249,7 +252,7 @@ export function Eventos() {
             })),
           ]}
         />
-        {lista.length > 0 && (
+        {lista.length > 0 && mostrarTotais && (
           <div className="flex flex-wrap gap-x-5 gap-y-1 text-[13px]">
             <span className="text-muted">
               Diárias <b className="tnum font-semibold text-ink">{numero(totais.diarias)}</b>

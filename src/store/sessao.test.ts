@@ -201,6 +201,24 @@ describe('ações da sessão', () => {
     expect(reload).toHaveBeenCalledOnce()
   })
 
+  it('"manter conectado" vem do servidor, fica quando a sessão termina e muda ao entrar de novo', async () => {
+    servidor(
+      { corpo: { usuario: maria, semUsuarios: false, build: 'b1', persistente: true } },
+      { corpo: { usuario: null, semUsuarios: false, build: 'b1' } },
+      { corpo: { usuario: maria, build: 'b1' } },
+      { corpo: { usuario: maria, semUsuarios: false, build: 'b1', persistente: true } },
+    )
+    await useSessao.getState().verificar()
+    expect(useSessao.getState().manterConectado).toBe(true)
+    // A sessão terminou: a janela "Sua sessão terminou" usa a escolha de antes
+    expect(await useSessao.getState().conferir()).toBe(false)
+    expect(useSessao.getState()).toMatchObject({ expirou: true, manterConectado: true })
+    await useSessao.getState().entrar({ login: 'maria', senha: 's', manterConectado: false })
+    expect(useSessao.getState()).toMatchObject({ expirou: false, manterConectado: false })
+    expect(await useSessao.getState().conferir()).toBe(true)
+    expect(useSessao.getState().manterConectado).toBe(true)
+  })
+
   it('sessaoEncerrada só com alguém logado; exigirTrocaSenha marca a troca', () => {
     useSessao.getState().sessaoEncerrada()
     expect(useSessao.getState().expirou).toBe(false)
@@ -208,5 +226,70 @@ describe('ações da sessão', () => {
     useSessao.getState().sessaoEncerrada()
     useSessao.getState().exigirTrocaSenha()
     expect(useSessao.getState()).toMatchObject({ expirou: true, usuario: { trocarSenha: true } })
+  })
+})
+
+// ---- Aviso entre abas ---------------------------------------------------------------------
+
+describe('aviso entre abas', () => {
+  /** Canal falso: guarda os ouvintes para o teste mandar a mensagem de "outra aba". */
+  class CanalFalso {
+    static ouvintes: Array<(e: MessageEvent) => void> = []
+    addEventListener(_tipo: string, f: (e: MessageEvent) => void) {
+      CanalFalso.ouvintes.push(f)
+    }
+    removeEventListener(_tipo: string, f: (e: MessageEvent) => void) {
+      CanalFalso.ouvintes = CanalFalso.ouvintes.filter((o) => o !== f)
+    }
+    postMessage() {}
+  }
+  const reload = vi.fn()
+
+  beforeEach(() => {
+    // O canal é criado uma vez por módulo: um módulo novo, já com o canal falso
+    vi.resetModules()
+    CanalFalso.ouvintes = []
+    vi.stubGlobal('BroadcastChannel', CanalFalso)
+    vi.stubGlobal('location', { reload })
+    vi.stubGlobal('window', { addEventListener: () => {}, removeEventListener: () => {} })
+    vi.stubGlobal('document', { visibilityState: 'visible' })
+  })
+  afterEach(() => {
+    reload.mockReset()
+    vi.unstubAllGlobals()
+  })
+
+  it('"saiu" noutra aba recarrega esta (o cookie é o mesmo): o usuário e os dados saem da memória', async () => {
+    const { useSessao: sessao } = await import('./sessao')
+    sessao.setState({ estado: 'logado', usuario: joao, build: 'b1' })
+    const parar = sessao.getState().iniciarBatimento()
+    try {
+      expect(CanalFalso.ouvintes).toHaveLength(1)
+      CanalFalso.ouvintes[0](new MessageEvent('message', { data: 'saiu' }))
+      expect(reload).toHaveBeenCalledOnce()
+    } finally {
+      parar()
+    }
+    expect(CanalFalso.ouvintes).toHaveLength(0)
+  })
+
+  it('os outros avisos só conferem a sessão; na tela de entrada, "saiu" também só confere', async () => {
+    const { useSessao: sessao } = await import('./sessao')
+    const fetch = servidor(
+      { corpo: { usuario: maria, semUsuarios: false, build: 'b1' } },
+      { corpo: { usuario: null, semUsuarios: false, build: 'b1' } },
+    )
+    sessao.setState({ estado: 'logado', usuario: maria, build: 'b1' })
+    const parar = sessao.getState().iniciarBatimento()
+    try {
+      CanalFalso.ouvintes[0](new MessageEvent('message', { data: 'senha' }))
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(1))
+      sessao.setState({ estado: 'anonimo', usuario: null })
+      CanalFalso.ouvintes[0](new MessageEvent('message', { data: 'saiu' }))
+      await vi.waitFor(() => expect(fetch).toHaveBeenCalledTimes(2))
+      expect(reload).not.toHaveBeenCalled()
+    } finally {
+      parar()
+    }
   })
 })

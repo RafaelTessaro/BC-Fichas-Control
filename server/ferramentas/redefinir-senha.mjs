@@ -1,5 +1,5 @@
 // Usuários pelo computador do servidor, sem passar pela tela: cria o administrador, redefine senhas,
-// encerra sessões e mantém as contas atuais ao voltar uma cópia .db. Usada pelos scripts do Windows
+// encerra sessões e cuida das contas ao voltar uma cópia .db. Usada pelos scripts do Windows
 // (INSTALAR, ATUALIZAR, REDEFINIR-SENHA e restaurar-copia) e, no Linux, direto ou por `npm run usuarios`.
 //
 //   node server/ferramentas/redefinir-senha.mjs situacao <banco.db> [--base64]
@@ -7,7 +7,9 @@
 //        entrada padrão: {"login":"admin","nome":"Fabio","senha":"","tornarAdmin":true,"trocarSenha":false}
 //        (senha vazia: gera uma temporária, com troca obrigatória no primeiro acesso)
 //   node server/ferramentas/redefinir-senha.mjs encerrar-sessoes <banco.db> [--base64]
-//   node server/ferramentas/redefinir-senha.mjs transplantar <banco-atual.db> <banco-restaurado.db> [--base64]
+//   node server/ferramentas/redefinir-senha.mjs transplantar <banco-atual.db> <banco-restaurado.db> [--contas-da-copia] [--base64]
+//        mantém na cópia as contas atuais; com --contas-da-copia (ou se o banco atual não tiver nenhuma
+//        conta, como num computador novo), as contas voltam como estavam na cópia
 //
 // A resposta é um JSON numa linha no stdout. Com --base64, a entrada e a resposta (inclusive a de erro)
 // vão em base64 do UTF-8: o PowerShell estragaria os acentos na página de código do console.
@@ -29,6 +31,7 @@ const USO = [
   '  definir <banco.db>                        cria o administrador ou redefine a senha (JSON na entrada padrão)',
   '  encerrar-sessoes <banco.db>               encerra todas as sessões abertas',
   '  transplantar <atual.db> <restaurado.db>   mantém os usuários atuais na cópia que vai voltar',
+  '      [--contas-da-copia]                   (ou deixa os da cópia: trocar o servidor de computador)',
 ].join('\n')
 
 /** Quantos bancos cada comando recebe. */
@@ -36,7 +39,8 @@ const COMANDOS = { situacao: 1, definir: 1, 'encerrar-sessoes': 1, transplantar:
 
 const argumentos = process.argv.slice(2)
 const base64 = argumentos.includes('--base64')
-const [comando, ...bancos] = argumentos.filter((a) => a !== '--base64')
+const contasDaCopia = argumentos.includes('--contas-da-copia')
+const [comando, ...bancos] = argumentos.filter((a) => a !== '--base64' && a !== '--contas-da-copia')
 
 /** Escreve a resposta (JSON numa linha, ou o base64 dele) e define o código de saída. */
 function responder(resposta, codigo = 0) {
@@ -75,7 +79,12 @@ function fecharSemErro(db) {
 
 /** Faz o comando e devolve a resposta; a resposta só sai depois de os bancos estarem fechados. */
 async function principal() {
-  if (!Object.hasOwn(COMANDOS, comando) || bancos.length !== COMANDOS[comando] || bancos.some((b) => !b)) {
+  if (
+    !Object.hasOwn(COMANDOS, comando) ||
+    bancos.length !== COMANDOS[comando] ||
+    bancos.some((b) => !b) ||
+    (contasDaCopia && comando !== 'transplantar')
+  ) {
     return [{ erro: USO }, 2]
   }
 
@@ -104,7 +113,8 @@ async function principal() {
   const { abrirBanco } = await import('../db.ts')
   const { ServicoUsuarios, transplantarUsuarios } = await import('../usuarios.ts')
 
-  if (comando === 'transplantar') return [transplantar(abrirBanco, ServicoUsuarios, transplantarUsuarios, bancos[0], banco), 0]
+  if (comando === 'transplantar')
+    return [transplantar(abrirBanco, ServicoUsuarios, transplantarUsuarios, bancos[0], banco, contasDaCopia), 0]
 
   const db = abrirBanco(banco)
   try {
@@ -119,16 +129,27 @@ async function principal() {
   }
 }
 
+/** Logins de um banco aberto, em ordem alfabética (sem hash nem nada da conta além do login). */
+const loginsDe = (db) =>
+  db
+    .prepare('SELECT login FROM usuarios ORDER BY login')
+    .all()
+    .map((l) => l.login)
+
 /**
  * Restauração de uma cópia .db: a cópia (`arquivoRestaurado`, que ainda não foi posta no lugar) recebe
- * os usuários e o registro de atividades do banco atual, e perde todas as sessões. Se o banco atual
- * não puder ser lido, as contas voltam como estavam na cópia (só as sessões são apagadas).
+ * os usuários e o registro de atividades do banco atual, e perde todas as sessões. As contas voltam como
+ * estavam na cópia (só as sessões são apagadas) quando o banco atual não pode ser lido, quando ele não
+ * tem nenhuma conta (computador novo) ou com `contasDaCopia` (trocar o servidor de computador).
+ * A resposta traz os logins dos dois bancos, para o script dizer o que ficou de fora.
  */
-function transplantar(abrirBanco, ServicoUsuarios, transplantarUsuarios, arquivoAtual, arquivoRestaurado) {
+function transplantar(abrirBanco, ServicoUsuarios, transplantarUsuarios, arquivoAtual, arquivoRestaurado, contasDaCopia) {
   const restaurado = abrirBanco(arquivoRestaurado)
   let atual = null
   try {
+    const loginsCopia = loginsDe(restaurado)
     let problema = ''
+    let loginsAtuais = []
     try {
       if (!existsSync(arquivoAtual)) throw new Error('o arquivo não existe')
       atual = abrirBanco(arquivoAtual)
@@ -136,24 +157,31 @@ function transplantar(abrirBanco, ServicoUsuarios, transplantarUsuarios, arquivo
       // falha aqui, sem impedir a restauração
       atual.prepare('SELECT * FROM usuarios').all()
       atual.prepare('SELECT * FROM auditoria').all()
+      loginsAtuais = loginsDe(atual)
     } catch (e) {
       problema = mensagem(e)
       fecharSemErro(atual)
       atual = null
     }
-    if (!atual) {
+    const motivo = !atual
+      ? `O banco atual não pôde ser lido: ${problema}; as contas voltaram como estavam na cópia.`
+      : contasDaCopia
+        ? 'As contas voltaram como estavam na cópia, como pedido.'
+        : loginsAtuais.length === 0
+          ? 'O banco atual não tinha contas; as contas voltaram como estavam na cópia.'
+          : ''
+    if (motivo) {
       restaurado.exec('DELETE FROM sessoes')
-      new ServicoUsuarios(restaurado).registrar('COPIA_RESTAURADA', {
-        ip: 'local',
-        detalhe: 'cópia .db restaurada; o banco atual não pôde ser lido e as contas voltaram como estavam na cópia',
-      })
-      return {
-        transplantado: false,
-        aviso: `O banco atual não pôde ser lido: ${problema}; as contas voltaram como estavam na cópia.`,
-      }
+      const detalhe = !atual
+        ? 'o banco atual não pôde ser lido; as contas voltaram como estavam na cópia'
+        : contasDaCopia
+          ? 'as contas voltaram como estavam na cópia (pedido ao restaurar)'
+          : 'o banco atual não tinha contas; as contas voltaram como estavam na cópia'
+      new ServicoUsuarios(restaurado).registrar('COPIA_RESTAURADA', { ip: 'local', detalhe })
+      return { transplantado: false, aviso: motivo, loginsCopia, loginsAtuais }
     }
     const r = transplantarUsuarios(atual, restaurado)
-    return { transplantado: true, usuarios: r.usuarios, auditoria: r.auditoria }
+    return { transplantado: true, usuarios: r.usuarios, auditoria: r.auditoria, loginsCopia, loginsAtuais }
   } finally {
     fecharSemErro(atual)
     fecharGravado(restaurado)

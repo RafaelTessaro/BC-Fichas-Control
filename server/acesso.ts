@@ -21,6 +21,8 @@ declare module 'fastify' {
     usuario: UsuarioSessao | null
     /** Id (hash do token) da sessão do cookie, quando vigente. */
     sessaoId: string | null
+    /** A sessão do cookie foi aberta com "Manter conectado neste computador". */
+    sessaoPersistente: boolean
   }
   interface FastifyContextConfig {
     acesso?: RegraAcesso
@@ -213,6 +215,7 @@ export function instalarAcesso(app: FastifyInstance, { usuarios, tempoReal, repo
 
   app.decorateRequest('usuario', null)
   app.decorateRequest('sessaoId', null)
+  app.decorateRequest('sessaoPersistente', false)
 
   app.addHook('onRoute', (rota) => {
     const url = rota.url ?? ''
@@ -263,6 +266,7 @@ export function instalarAcesso(app: FastifyInstance, { usuarios, tempoReal, repo
     if (sessao) {
       req.usuario = sessao.usuario
       req.sessaoId = sessao.sessaoId
+      req.sessaoPersistente = sessao.persistente
     } else if (livre) {
       req.usuario = USUARIO_TESTE
     }

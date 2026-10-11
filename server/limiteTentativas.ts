@@ -69,8 +69,17 @@ export class LimiteTentativas {
    * falhas anteriores a isso (nas chaves do par, do login e da troca de senha) são esquecidos.
    */
   espera(chaves: ChavesTentativa, desbloqueadoEm?: number): number | null {
+    return this.bloqueio(chaves, desbloqueadoEm)?.segundos ?? null
+  }
+
+  /**
+   * Como `espera`, dizendo também de qual regra é a espera mais longa (`ip`: o computador errou muitas
+   * vezes, com qualquer usuário; esse bloqueio não acaba com a senha redefinida).
+   */
+  bloqueio(chaves: ChavesTentativa, desbloqueadoEm?: number): { segundos: number; tipo: Tipo } | null {
     const agora = this.agora()
     let maior = 0
+    let tipoMaior: Tipo = 'par'
     for (const [chave, tipo] of this.chaves(chaves)) {
       const r = this.vigente(chave, agora)
       if (!r) continue
@@ -78,9 +87,12 @@ export class LimiteTentativas {
         this.registros.delete(chave)
         continue
       }
-      if (r.bloqueadoAte > agora) maior = Math.max(maior, r.bloqueadoAte - agora)
+      if (r.bloqueadoAte - agora > maior) {
+        maior = r.bloqueadoAte - agora
+        tipoMaior = tipo
+      }
     }
-    return maior > 0 ? Math.ceil(maior / SEGUNDO) : null
+    return maior > 0 ? { segundos: Math.ceil(maior / SEGUNDO), tipo: tipoMaior } : null
   }
 
   /** Registra uma falha. `bloqueouAgora`: um bloqueio começou com esta falha (para registrar uma vez só). */

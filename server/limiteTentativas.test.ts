@@ -73,6 +73,19 @@ describe('limite de tentativas', () => {
     expect(l.espera(c)).toBeNull() // contagem recomeçou
   })
 
+  it('bloqueio diz de qual regra é a espera mais longa', () => {
+    const r = relogio()
+    const l = new LimiteTentativas(r.agora)
+    const c = { login: 'maria', ip: '10.0.0.8', loopback: false }
+    for (let i = 0; i < 5; i++) l.falhou(c)
+    expect(l.bloqueio(c)).toEqual({ segundos: 30, tipo: 'par' })
+    for (let i = 0; i < 15; i++) l.falhou({ login: `outro${i % 3}`, ip: '10.0.0.8', loopback: false })
+    expect(l.bloqueio(c)).toEqual({ segundos: 15 * 60, tipo: 'ip' })
+    // Senha redefinida: o par sai, o computador continua
+    expect(l.bloqueio(c, r.agora() + 1)).toEqual({ segundos: 15 * 60, tipo: 'ip' })
+    expect(l.bloqueio({ ...c, ip: '10.0.0.9' })).toBeNull()
+  })
+
   it('troca da própria senha: mesma regra do par, por usuário', () => {
     const l = new LimiteTentativas(relogio().agora)
     for (let i = 0; i < 4; i++) l.falhou({ trocaSenhaDe: 'u1' })

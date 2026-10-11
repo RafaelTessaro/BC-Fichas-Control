@@ -26,6 +26,11 @@ const MSG = {
   sequencia: 'A senha não pode ser uma sequência (como 1234567890).',
 }
 const maria = { login: 'maria.souza', nome: 'Maria Souza' }
+/** Quando quem digita é o administrador (a senha é de outra pessoa). */
+const MSG_OUTRA = {
+  login: 'A senha não pode conter o usuário (login) da pessoa.',
+  nome: 'A senha não pode conter o nome da pessoa.',
+}
 
 describe('login', () => {
   it('normaliza: minúsculo, sem espaços nas pontas, só texto', () => {
@@ -143,6 +148,19 @@ describe('política de senha', () => {
     expect(validarSenhaNova('13572468', maria)).toBeNull()
   })
 
+  it('senha de outra pessoa (o administrador digita): "da pessoa" em vez de "o seu"', () => {
+    const outra = { deOutraPessoa: true }
+    expect(validarSenhaNova('eu sou maria.souza', maria, outra)).toBe(MSG_OUTRA.login)
+    expect(validarSenhaNova('souzamaria99', maria, outra)).toBe(MSG_OUTRA.nome)
+    // As outras mensagens não mudam
+    expect(validarSenhaNova('12345678', maria, outra)).toBe(MSG.comum)
+    expect(validarSenhaNova('bcfichas2026', maria, outra)).toBe(MSG.sistema)
+    expect(validarSenhaNova('tomate azul na janela', maria, outra)).toBeNull()
+    expect(normalizarNovoUsuario({ nome: 'Maria Souza', login: 'msz', nivel: 'COMUM', senha: 'souzamaria99' }).erros).toEqual([
+      MSG_OUTRA.nome,
+    ])
+  })
+
   it('devolve o primeiro problema, na ordem da política', () => {
     // comum antes de conter o login
     expect(validarSenhaNova('password123', { login: 'pass', nome: '' })).toBe(MSG.comum)
@@ -173,8 +191,9 @@ describe('normalização das entradas', () => {
     expect(normalizarNovoUsuario({ nome: 'á'.repeat(60), login: 'ana' }).erros).toEqual([])
     expect(normalizarNovoUsuario({ nome: 'João Lima', login: 'joão' }).erros).toEqual([MSG_LOGIN])
     expect(normalizarNovoUsuario({ nome: 'João Lima', login: 'joao', senha: 'curta' }).erros).toEqual([MSG.tamanho])
-    expect(normalizarNovoUsuario({ nome: 'João Lima', login: 'joao', senha: 'o joao chegou' }).erros).toEqual([MSG.login])
-    expect(normalizarNovoUsuario({ nome: 'João Lima', login: 'jlm', senha: 'lima da pérsia' }).erros).toEqual([MSG.nome])
+    // Quem cadastra é o administrador: as mensagens falam da pessoa
+    expect(normalizarNovoUsuario({ nome: 'João Lima', login: 'joao', senha: 'o joao chegou' }).erros).toEqual([MSG_OUTRA.login])
+    expect(normalizarNovoUsuario({ nome: 'João Lima', login: 'jlm', senha: 'lima da pérsia' }).erros).toEqual([MSG_OUTRA.nome])
     const ok = normalizarNovoUsuario({ nome: 'João Lima', login: 'joao', senha: 'tomate azul na janela' })
     expect(ok.erros).toEqual([])
     expect(ok.valor.senha).toBe('tomate azul na janela')

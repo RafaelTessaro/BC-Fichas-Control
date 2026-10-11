@@ -45,8 +45,8 @@ ${enderecos.map((e) => `  Na rede da empresa: ${e}`).join('\n')}
 
 if (usuarios.administradoresAtivos() === 0)
   console.log(
-    '  Nenhum administrador cadastrado: ninguém consegue entrar. No computador do servidor, use Menu Iniciar › ' +
-      'BC Fichas Control › Redefinir senha do BC Fichas (no Linux: npm run usuarios -- definir <banco>).\n',
+    '  Nenhum administrador cadastrado: ninguém consegue entrar. No computador do servidor, clique em Iniciar, ' +
+      'digite BC Fichas e abra "Redefinir senha do BC Fichas" (no Linux: npm run usuarios -- definir <banco>).\n',
   )
 
 let encerrando = false

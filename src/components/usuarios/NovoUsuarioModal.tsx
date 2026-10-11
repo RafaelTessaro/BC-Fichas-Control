@@ -72,7 +72,7 @@ function FormNovoUsuario({
   const erroLogin = !loginFinal
     ? 'Informe o usuário (o login para entrar).'
     : (validarLogin(loginFinal) ?? (repetido || loginRecusado === loginFinal ? 'Já existe um usuário com este login.' : null))
-  const erroSenha = modo === 'digitar' ? validarSenhaNova(senha, { login: loginFinal, nome }) : null
+  const erroSenha = modo === 'digitar' ? validarSenhaNova(senha, { login: loginFinal, nome }, { deOutraPessoa: true }) : null
   // O login repetido aparece na hora (mesmo o sugerido); os outros problemas, depois de digitar ou tentar
   const mostrarErroLogin = tentou || (loginEditado && !!login) || (!!loginFinal && (repetido || loginRecusado === loginFinal))
 

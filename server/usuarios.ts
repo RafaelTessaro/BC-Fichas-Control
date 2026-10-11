@@ -5,6 +5,7 @@
 // classe direto no banco, com o servidor ligado ou não.
 
 import {
+  BLOQUEIO_TROCA_SENHA,
   GRUPOS_AUDITORIA,
   normalizarAlteracaoUsuario,
   normalizarLogin,
@@ -14,6 +15,7 @@ import {
   validarSenhaNova,
 } from '#shared/usuarios.ts'
 import { novoId } from '#shared/id.ts'
+import { NOME_NIVEL } from '#shared/permissoes.ts'
 import type {
   AcaoAuditoria,
   GrupoAuditoria,
@@ -134,13 +136,24 @@ const MENSAGENS = {
 
 const naoEncontrado = () => new ErroApi(404, 'Usuário não encontrado.')
 
-/** 429 com a espera em minutos (o `Retry-After` sai do `esperarSegundos`). */
-export function erroMuitasTentativas(segundos: number) {
+/**
+ * 429 com a espera em minutos (o `Retry-After` sai do `esperarSegundos`). `porComputador`: o bloqueio é
+ * do computador (muitas falhas, com qualquer usuário), que não acaba com a senha redefinida; vai
+ * `motivo: 'computador'` para a tela dizer isso.
+ */
+export function erroMuitasTentativas(segundos: number, porComputador = false) {
   const minutos = Math.max(1, Math.ceil(segundos / 60))
-  return new ErroApi(429, `Muitas tentativas. Tente de novo em ${minutos} minuto${minutos > 1 ? 's' : ''}.`, {
-    codigo: 'MUITAS_TENTATIVAS',
-    esperarSegundos: segundos,
-  })
+  const prazo = `${minutos} minuto${minutos > 1 ? 's' : ''}`
+  return porComputador
+    ? new ErroApi(429, `Muitas tentativas erradas neste computador. Tente de novo em ${prazo} ou entre por outro computador.`, {
+        codigo: 'MUITAS_TENTATIVAS',
+        esperarSegundos: segundos,
+        motivo: 'computador',
+      })
+    : new ErroApi(429, `Muitas tentativas. Tente de novo em ${prazo}.`, {
+        codigo: 'MUITAS_TENTATIVAS',
+        esperarSegundos: segundos,
+      })
 }
 
 /** Resultado de validação com erros: 400 com a primeira mensagem e a lista. */
@@ -160,7 +173,7 @@ const DESCRICAO_BLOQUEIO = {
   par: `${(REGRAS_TENTATIVAS.par as { livres: number }).livres} falhas seguidas do mesmo usuário neste computador`,
   ip: `${(REGRAS_TENTATIVAS.ip as { falhas: number }).falhas} falhas deste computador em 15 minutos`,
   login: `${(REGRAS_TENTATIVAS.login as { falhas: number }).falhas} falhas deste usuário em 1 hora`,
-  senha: 'senha atual errada várias vezes na troca de senha',
+  senha: BLOQUEIO_TROCA_SENHA,
 }
 
 interface DadosRegistro {
@@ -195,6 +208,8 @@ export interface OpcoesServicoUsuarios {
 export interface SessaoValidada {
   sessaoId: string
   usuario: UsuarioSessao
+  /** Aberta com "Manter conectado neste computador". */
+  persistente: boolean
 }
 
 export interface ResultadoEntrada {
@@ -276,10 +291,11 @@ export class ServicoUsuarios {
     const [cond, params] = this.sessaoVigente(agora)
     const l = this.db
       .prepare(
-        `SELECT u.*, s.usada_em AS sessao_usada_em FROM sessoes s JOIN usuarios u ON u.id = s.usuario_id
+        `SELECT u.*, s.usada_em AS sessao_usada_em, s.persistente AS sessao_persistente
+         FROM sessoes s JOIN usuarios u ON u.id = s.usuario_id
          WHERE s.id = ? AND u.ativo = 1 AND ${cond}`,
       )
-      .get(sessaoId, ...params) as (LinhaUsuario & { sessao_usada_em: number }) | undefined
+      .get(sessaoId, ...params) as (LinhaUsuario & { sessao_usada_em: number; sessao_persistente: number }) | undefined
     if (!l) return null
     if (contarAtividade && agora - l.sessao_usada_em >= PRAZOS_SESSAO.gravarUsoACadaMs) {
       transacao(this.db, () => {
@@ -289,7 +305,7 @@ export class ServicoUsuarios {
           .run(new Date(agora).toISOString(), corta(ip, TETOS_AUDITORIA.ip), l.id)
       })
     }
-    return { sessaoId, usuario: paraSessao(l) }
+    return { sessaoId, usuario: paraSessao(l), persistente: !!l.sessao_persistente }
   }
 
   /** Mesmo critério de `validarSessao`, pelo id (hash) da sessão. */
@@ -315,8 +331,8 @@ export class ServicoUsuarios {
     const chaves: ChavesTentativa = { login: login.slice(0, 64), ip, loopback: ehLoopback(ip) }
 
     const linha = login.length <= 64 ? this.linhaPorLogin(login) : undefined
-    const espera = this.limite.espera(chaves, linha ? Date.parse(linha.senha_alterada_em) : undefined)
-    if (espera !== null) throw erroMuitasTentativas(espera)
+    const bloqueio = this.limite.bloqueio(chaves, linha ? Date.parse(linha.senha_alterada_em) : undefined)
+    if (bloqueio) throw erroMuitasTentativas(bloqueio.segundos, bloqueio.tipo === 'ip')
 
     const confere = await conferirSenha(senha, linha ? linha.senha_hash : await this.obterHashFalso())
     // A conta pode ter mudado enquanto o scrypt rodava (senha redefinida, conta excluída)
@@ -428,7 +444,7 @@ export class ServicoUsuarios {
           usuario: autor,
           ip,
           alvo: id,
-          detalhe: `${dados.login} (${dados.nivel}); senha ${senhaTemporaria ? 'gerada pelo sistema' : 'digitada pelo administrador'}`,
+          detalhe: `${dados.login} (${NOME_NIVEL[dados.nivel]}); senha ${senhaTemporaria ? 'gerada pelo sistema' : 'digitada pelo administrador'}`,
         })
       })
     } catch (erro) {
@@ -462,7 +478,7 @@ export class ServicoUsuarios {
       const encerradas = mudouNivel || (mudouAtivo && !ativo) ? this.apagarSessoes(id) : []
       const detalhe = [
         mudouNome ? `nome: ${atual.nome} → ${nome}` : '',
-        mudouNivel ? `nível: ${atual.nivel} → ${nivel}` : '',
+        mudouNivel ? `nível: ${NOME_NIVEL[atual.nivel]} → ${NOME_NIVEL[nivel]}` : '',
         mudouAtivo ? (ativo ? 'reativado' : 'desativado') : '',
       ]
         .filter(Boolean)
@@ -488,7 +504,7 @@ export class ServicoUsuarios {
     const r = obj(e)
     if ('senha' in r && r.senha !== undefined && typeof r.senha !== 'string') throw new ErroApi(400, 'Senha inválida.')
     const digitada = typeof r.senha === 'string' ? r.senha : ''
-    if (digitada) erroSenha(validarSenhaNova(digitada, atual))
+    if (digitada) erroSenha(validarSenhaNova(digitada, atual, { deOutraPessoa: true }))
     const senhaTemporaria = digitada ? undefined : gerarSenhaTemporaria()
     const hash = await gerarHashSenha(digitada || senhaTemporaria!, this.params)
     const sessoesEncerradas = transacao(this.db, () => {
@@ -679,7 +695,8 @@ export class ServicoUsuarios {
     if (nomeInformado) nome = validar(normalizarAlteracaoUsuario({ nome: r.nome })).nome!
     if (r.senha !== undefined && r.senha !== null && typeof r.senha !== 'string') throw new ErroApi(400, 'Senha inválida.')
     const digitada = typeof r.senha === 'string' ? r.senha : ''
-    if (digitada) erroSenha(validarSenhaNova(digitada, { login, nome }))
+    // No console, a conta pode ser a de quem digita ou a de outra pessoa: o texto neutro serve aos dois
+    if (digitada) erroSenha(validarSenhaNova(digitada, { login, nome }, { deOutraPessoa: true }))
     const senhaTemporaria = digitada ? undefined : gerarSenhaTemporaria()
     const trocarSenha = digitada ? r.trocarSenha === true : true
     const hash = await gerarHashSenha(digitada || senhaTemporaria!, this.params)
@@ -700,7 +717,7 @@ export class ServicoUsuarios {
           .run(nome, nivel, hash, trocarSenha ? 1 : 0, em, em, id)
         this.apagarSessoes(id)
         partes.push('senha redefinida')
-        if (nivel !== atual.nivel) partes.push(`nível: ${atual.nivel} → ${nivel}`)
+        if (nivel !== atual.nivel) partes.push(`nível: ${NOME_NIVEL[atual.nivel]} → ${NOME_NIVEL[nivel]}`)
         if (!atual.ativo) partes.push('reativado')
         if (nome !== atual.nome) partes.push(`nome: ${atual.nome} → ${nome}`)
       } else {
@@ -711,7 +728,7 @@ export class ServicoUsuarios {
              VALUES (?, ?, ?, 'ADMIN', ?, 1, ?, 1, ?, ?, ?)`,
           )
           .run(id, login, nome, hash, trocarSenha ? 1 : 0, em, em, em)
-        partes.push('criado (ADMIN)')
+        partes.push('criado como Administrador')
       }
       if (senhaTemporaria) partes.push('senha temporária')
       this.registrar('FERRAMENTA_LOCAL', { usuario: { id, login }, ip: 'local', alvo: id, detalhe: partes.join('; ') })
@@ -828,7 +845,7 @@ export function transplantarUsuarios(origem: Banco, destino: Banco): { usuarios:
       'INSERT INTO auditoria (id, em, usuario_id, login, ip, acao, alvo, detalhe) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
     )
     for (const a of auditoria) inserirRegistro.run(a.id, a.em, a.usuario_id, a.login, a.ip, a.acao, a.alvo, a.detalhe)
-    gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe: 'cópia .db restaurada' })
+    gravarAuditoria(destino, Date.now(), 'COPIA_RESTAURADA', { ip: 'local', detalhe: 'as contas e senhas atuais foram mantidas' })
   })
   return { usuarios: usuarios.length, auditoria: auditoria.length }
 }

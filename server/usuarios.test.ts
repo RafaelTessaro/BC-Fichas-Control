@@ -1,11 +1,12 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Cliente, Evento, RegistroAuditoria, ResultadoSenha, Usuario, UsuarioSessao } from '#shared/tipos.ts'
 import { criarAppComLogin, SENHA_ADMIN, SENHA_COMUM, type AppComLogin } from './auxiliaresTeste.ts'
 import { abrirBanco } from './db.ts'
 import { ErroApi } from './erros.ts'
+import * as senha from './senha.ts'
 import { hashToken, PARAMETROS_LEVES } from './senha.ts'
 import { ehLoopback, ServicoUsuarios, transplantarUsuarios } from './usuarios.ts'
 
@@ -19,6 +20,7 @@ beforeEach(async () => {
   t = await criarAppComLogin()
 })
 afterEach(async () => {
+  vi.restoreAllMocks()
   await t.fechar()
 })
 
@@ -59,8 +61,12 @@ describe('entrar', () => {
   it('a 6ª falha seguida do mesmo par dá 429 com Retry-After (sem conferir a senha), exista o login ou não', async () => {
     for (const login of ['comum', 'nao-existe']) {
       for (let i = 0; i < 5; i++) expect((await t.entrar(login, 'senha-errada-aqui')).status).toBe(401)
+      const espiao = vi.spyOn(senha, 'conferirSenha')
       const bloqueado = await t.entrar(login, login === 'comum' ? SENHA_COMUM : 'qualquer-coisa')
       expect(bloqueado.status).toBe(429)
+      // Com o bloqueio ativo, o scrypt nem roda (não gasta o processador de quem tenta em série)
+      expect(espiao).not.toHaveBeenCalled()
+      espiao.mockRestore()
       expect(bloqueado.resposta.headers['retry-after']).toBe('30')
       expect(bloqueado.resposta.json()).toEqual({
         erro: 'Muitas tentativas. Tente de novo em 1 minuto.',
@@ -79,12 +85,24 @@ describe('entrar', () => {
     expect((await t.entrar('comum', SENHA_COMUM)).status).toBe(200)
   })
 
-  it('20 falhas de um IP em logins diferentes bloqueiam esse IP', async () => {
+  it('20 falhas de um IP em logins diferentes bloqueiam esse IP, e a resposta diz que é o computador', async () => {
     const ip = '192.168.0.30'
     for (let i = 0; i < 20; i++)
       expect((await t.entrar(`login${i % 5}`, 'senha-errada-aqui', { remoteAddress: ip })).status).toBe(401)
-    expect((await t.entrar('admin', SENHA_ADMIN, { remoteAddress: ip })).status).toBe(429)
-    expect((await t.entrar('admin', SENHA_ADMIN, { remoteAddress: '192.168.0.31' })).status).toBe(200)
+    const bloqueado = await t.entrar('admin', SENHA_ADMIN, { remoteAddress: ip })
+    expect(bloqueado.status).toBe(429)
+    expect(bloqueado.resposta.json()).toEqual({
+      erro: 'Muitas tentativas erradas neste computador. Tente de novo em 15 minutos ou entre por outro computador.',
+      codigo: 'MUITAS_TENTATIVAS',
+      esperarSegundos: 900,
+      motivo: 'computador',
+    })
+    // Redefinir a senha destrava a conta, mas não o computador (o teto por IP continua de propósito)
+    await t.usuarios.definirSenhaLocal({ login: 'admin', senha: 'outra-frase-boa' })
+    expect((await t.entrar('admin', 'outra-frase-boa', { remoteAddress: ip })).resposta.json()).toMatchObject({
+      motivo: 'computador',
+    })
+    expect((await t.entrar('admin', 'outra-frase-boa', { remoteAddress: '192.168.0.31' })).status).toBe(200)
   })
 
   it('50 falhas do mesmo login de vários IPs bloqueiam o login, mas não pelo próprio servidor', async () => {
@@ -115,6 +133,11 @@ describe('entrar', () => {
     const admin = await t.entrar('admin', SENHA_ADMIN, { manterConectado: true })
     expect(admin.resposta.headers['set-cookie']).toMatch(/; Max-Age=604800$/)
     expect(String(admin.resposta.headers['set-cookie'])).not.toMatch(/Secure|Domain/i)
+    // GET /api/sessao diz se a sessão é "manter conectado" (a janela "Sua sessão terminou" repete a escolha)
+    const sessao = async (cookie: string | null) => (await t.chamar('GET', '/api/sessao', { cookie })).json()
+    expect(await sessao(comum.cookie)).toMatchObject({ usuario: { login: 'comum' }, persistente: true })
+    expect(await sessao(normal.cookie)).toMatchObject({ usuario: { login: 'comum' }, persistente: false })
+    expect(await sessao(null)).not.toHaveProperty('persistente')
   })
 
   it('com a porta, o cookie se chama bcf_sessao_<porta>', async () => {
@@ -427,12 +450,15 @@ describe('regras dos usuários', () => {
       erros: ['A senha precisa ter de 8 a 128 caracteres.'],
     })
     expect((await criar('12345678')).json().erro).toBe('Essa senha é muito comum. Use uma frase de 3 ou 4 palavras.')
-    expect((await criar('o-pedro-chegou')).json().erro).toBe('A senha não pode conter o seu nome de usuário.')
-    expect((await criar('meu-alves-favorito')).json().erro).toBe('A senha não pode conter o seu nome.')
+    // O administrador digita a senha de outra pessoa: "da pessoa", não "o seu"
+    expect((await criar('o-pedro-chegou')).json().erro).toBe('A senha não pode conter o usuário (login) da pessoa.')
+    expect((await criar('meu-alves-favorito')).json().erro).toBe('A senha não pode conter o nome da pessoa.')
     expect((await criar('bcfichas2026')).json().erro).toBe('A senha não pode conter o nome do sistema.')
     // Redefinir com senha fraca
     const fraca = await comoAdmin('POST', `/api/usuarios/${t.comumId}/senha`, { senha: '1234' })
     expect(fraca.statusCode).toBe(400)
+    const comNome = await comoAdmin('POST', `/api/usuarios/${t.comumId}/senha`, { senha: 'teste-de-verao-bom' })
+    expect(comNome.json().erro).toBe('A senha não pode conter o nome da pessoa.')
     // Troca da própria senha
     const trocar = (senhaAtual: string, senhaNova: string) =>
       t.chamar('PUT', '/api/minha-senha', { cookie: t.cookieComum, payload: { senhaAtual, senhaNova } })
@@ -562,7 +588,7 @@ describe('backup e banco', () => {
       expect(destino.prepare('SELECT COUNT(*) AS n FROM sessoes').get()).toEqual({ n: 0 })
       const registros = antigo.listarAuditoria({ limite: 200 })
       expect(registros).toHaveLength(registrosOrigem + 1)
-      expect(registros[0]).toMatchObject({ acao: 'COPIA_RESTAURADA', detalhe: 'cópia .db restaurada' })
+      expect(registros[0]).toMatchObject({ acao: 'COPIA_RESTAURADA', detalhe: 'as contas e senhas atuais foram mantidas' })
       // As senhas atuais valem no banco restaurado
       const comoNoServidor = new ServicoUsuarios(destino, { parametrosSenha: PARAMETROS_LEVES })
       expect((await comoNoServidor.entrar({ login: 'comum', senha: SENHA_COMUM }, '127.0.0.1')).usuario.login).toBe('comum')
@@ -697,7 +723,9 @@ describe('ferramenta local (API usada pelo redefinir-senha.mjs)', () => {
     expect(semNome.usuario).toMatchObject({ nome: 'Administrador', nivel: 'ADMIN', trocarSenha: false })
     const registro = auditoria('FERRAMENTA_LOCAL').at(-2)!
     expect(registro).toMatchObject({ login: 'fabio', ip: 'local', alvo: r.usuario.id })
-    expect(registro.detalhe).toMatch(/criado/)
+    // Os nomes dos níveis, como no resto da tela (não os códigos COMUM e ADMIN)
+    expect(registro.detalhe).toBe('criado como Administrador; senha temporária')
+    expect(auditoria('USUARIO_CRIADO')[0].detalhe).toBe('comum (Comum); senha gerada pelo sistema')
   })
 
   it('redefine a senha (digitada: sem troca, ou com trocarSenha), promove, reativa e derruba as sessões da conta', async () => {
@@ -707,7 +735,7 @@ describe('ferramenta local (API usada pelo redefinir-senha.mjs)', () => {
     expect(r.senhaTemporaria).toBeUndefined()
     expect(r.usuario).toMatchObject({ nivel: 'ADMIN', ativo: true, trocarSenha: false, nome: 'Comum Teste' })
     expect(await statusDados(t.cookieComum)).toBe(401)
-    expect(auditoria('FERRAMENTA_LOCAL').at(-1)!.detalhe).toBe('senha redefinida; nível: COMUM → ADMIN; reativado')
+    expect(auditoria('FERRAMENTA_LOCAL').at(-1)!.detalhe).toBe('senha redefinida; nível: Comum → Administrador; reativado')
     const temporaria = await t.usuarios.definirSenhaLocal({ login: 'comum', senha: 'outra-frase-local', trocarSenha: true })
     expect(temporaria.usuario.trocarSenha).toBe(true)
     const gerada = await t.usuarios.definirSenhaLocal({ login: 'comum', nome: 'Novo Nome' })
@@ -720,7 +748,7 @@ describe('ferramenta local (API usada pelo redefinir-senha.mjs)', () => {
       'A senha precisa ter de 8 a 128 caracteres.',
     )
     expect((await erroDe(t.usuarios.definirSenhaLocal({ login: 'admin', senha: 'admin-123456' }))).message).toBe(
-      'A senha não pode conter o seu nome de usuário.',
+      'A senha não pode conter o usuário (login) da pessoa.',
     )
     expect((await erroDe(t.usuarios.definirSenhaLocal({ login: 'a b' }))).message).toMatch(/Use de 3 a 32 letras/)
     expect((await erroDe(t.usuarios.definirSenhaLocal({ login: 'novo', nome: 'x'.repeat(61) }))).message).toMatch(/até 60/)

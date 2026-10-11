@@ -136,14 +136,34 @@ const MIGRACOES: string[] = [
 export function abrirBanco(arquivo: string): Banco {
   if (arquivo !== ':memory:') mkdirSync(dirname(arquivo), { recursive: true })
   const db = new DatabaseSync(arquivo)
+  // busy_timeout primeiro: o servidor e a ferramenta de senha podem abrir ao mesmo tempo um banco ainda
+  // sem -wal (o serviço subindo), e passar para WAL também precisa da trava
+  db.exec('PRAGMA busy_timeout = 5000')
+  ativarWal(db)
   db.exec(`
-    PRAGMA journal_mode = WAL;
     PRAGMA synchronous = NORMAL;
     PRAGMA foreign_keys = ON;
-    PRAGMA busy_timeout = 5000;
   `)
   migrar(db)
   return db
+}
+
+/**
+ * Passa o banco para WAL. Num banco novo (ou numa cópia feita com VACUUM INTO), dois processos convertendo
+ * ao mesmo tempo travariam um ao outro: o SQLite recusa um deles na hora, sem esperar, e ele tenta de novo
+ * (até 10 s); quando conseguir, o outro já converteu.
+ */
+function ativarWal(db: Banco) {
+  const limite = Date.now() + 10_000
+  for (;;) {
+    try {
+      db.exec('PRAGMA journal_mode = WAL')
+      return
+    } catch (e) {
+      if (Date.now() >= limite || !/database is locked/.test(String((e as Error)?.message))) throw e
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50)
+    }
+  }
 }
 
 function migrar(db: Banco) {

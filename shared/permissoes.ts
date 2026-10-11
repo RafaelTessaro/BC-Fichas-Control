@@ -41,6 +41,12 @@ export const PERMISSOES: Record<Permissao, readonly NivelUsuario[]> = {
 /** Lista de todas as permissões, na ordem da tabela acima. */
 export const LISTA_PERMISSOES = Object.keys(PERMISSOES) as Permissao[]
 
+/**
+ * Permissões que só escondem na tela ("escondido, não secreto"): /api/dados é igual para os dois níveis
+ * e os totais e as planilhas saem no navegador. As outras o servidor recusa (server/acesso.ts).
+ */
+export const SO_NA_TELA: ReadonlySet<Permissao> = new Set<Permissao>(['verFaturamento', 'exportarPlanilhas'])
+
 export const SEM_PERMISSAO: Record<Permissao, string> = {
   verFaturamento: 'Só o administrador vê o faturamento.',
   exportarPlanilhas: 'Só o administrador exporta planilhas.',

@@ -194,7 +194,8 @@ substitui o arquivo da versão.
    - libera a porta no Firewall para a rede da empresa;
    - deixa a pasta do sistema e a pasta de dados acessíveis só para Administradores (o banco e a
      chave do Google ficam protegidos, e ninguém sem permissão consegue alterar o que roda no servidor);
-   - cria o atalho **Menu Iniciar → BC Fichas Control → Redefinir senha do BC Fichas**;
+   - cria o atalho **Redefinir senha do BC Fichas** (para abrir: clique em **Iniciar** e digite
+     `BC Fichas`, ou procure em **Todos os aplicativos → BC Fichas Control**);
    - pede para criar o **administrador** do sistema (veja [Usuários e senhas](#usuários-e-senhas));
    - mostra o endereço de acesso, por exemplo `http://192.168.0.10:3000`.
 
@@ -230,20 +231,30 @@ Para **gerar o pacote** a partir do código (Linux, macOS ou WSL, com Node.js, g
 
 Para testar antes de instalar como serviço: `npm start` (Ctrl+C encerra).
 
+Para **atualizar** uma instalação feita assim, ponha a versão nova numa pasta **fora** da instalação
+(ex.: `C:\BC-Fichas-Control-novo`) e rode o `ATUALIZAR.bat` dela, como no pacote completo (sem o
+`pacote.json`, ele roda `npm ci` e `npm run build`, que precisam de internet). Nunca copie os arquivos
+por cima da pasta instalada pelo Explorer.
+
 ### Outros comandos
 
 Executados no **PowerShell como Administrador**:
 
 | Para… | Comando |
 | --- | --- |
-| Atualizar na própria pasta (depois de copiar os arquivos novos por cima; a pasta `dados` é preservada; com o código-fonte numa instalação feita pelo pacote, apague antes o `pacote.json`) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\atualizar.ps1` |
+| Atualizar a partir do código-fonte (técnicos): ponha a versão nova numa pasta FORA da instalação e rode o `ATUALIZAR.bat` dela (sem o `pacote.json`, ele roda `npm ci` e `npm run build`, que precisam de internet); nunca copie por cima pelo Explorer | `C:\BC-Fichas-Control-novo\ATUALIZAR.bat` |
 | Mudar a porta (padrão 3000) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\instalar-servico.ps1 -Porta 8080` |
 | Liberar o acesso também com a rede classificada como Pública | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\instalar-servico.ps1 -IncluirRedePublica` |
 | Criar o administrador ou redefinir a senha de qualquer usuário (o mesmo que o atalho **Redefinir senha do BC Fichas** do Menu Iniciar ou o `REDEFINIR-SENHA.bat` de um pacote; veja [Esqueceu a senha](#esqueceu-a-senha)) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\redefinir-senha.ps1` |
-| Voltar uma cópia do banco (mantém os usuários e as senhas atuais; o servidor volta a funcionar no fim, mesmo se der errado) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\restaurar-copia.ps1 -Arquivo C:\BC-Fichas-Control\dados\backups\<arquivo>.db` |
+| Ver as cópias do banco (a mais recente no fim) | `Get-ChildItem C:\BC-Fichas-Control\dados\backups\*.db \| Sort-Object LastWriteTime \| Format-Table Name, LastWriteTime` |
+| Voltar uma cópia do banco: a janela lista as cópias mais recentes e pede o número (ou informe `-Arquivo` com o nome visto no comando acima). Mantém os usuários e as senhas de hoje; veja [Dados e backups](#dados-e-backups). O servidor volta a funcionar no fim, mesmo se der errado | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\restaurar-copia.ps1` |
+| Voltar uma cópia num servidor novo, com as contas e as senhas da cópia (veja [Trocar o servidor de computador](#trocar-o-servidor-de-computador)) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\restaurar-copia.ps1 -ContasDaCopia` |
 | Remover o serviço e o atalho do Menu Iniciar (os dados não são apagados) | `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\desinstalar-servico.ps1` |
 | Ler o fim do registro (log) do servidor | `Get-Content C:\BC-Fichas-Control\dados\servidor.log -Tail 50` |
-| Copiar os dados e as cópias para um pendrive (aqui, a unidade `E:`) | `robocopy C:\BC-Fichas-Control\dados E:\BC-Fichas-dados /E` |
+| Copiar os dados e as cópias para um pendrive (aqui, a unidade `E:`). Antes, faça uma cópia na hora em **Configurações → Dados e backup**, para o pendrive levar os dados de agora. O banco em uso não vai: com o servidor ligado, a cópia dele pode sair estragada; para voltar, use os arquivos de `E:\BC-Fichas-dados\backups` com o `restaurar-copia.ps1` | `robocopy C:\BC-Fichas-Control\dados E:\BC-Fichas-dados /E /XF bc-fichas.db bc-fichas.db-wal bc-fichas.db-shm /R:2 /W:5` |
+| Editar as configurações do servidor (`.env`: `PORTA`, `HOST`, `PASTA_DADOS`, `HOSTS_PERMITIDOS`) sem abrir a pasta (o Bloco de Notas aberto pelo PowerShell como Administrador não mexe nas permissões); depois de salvar, reinicie o servidor com o comando seguinte | `if (-not (Test-Path C:\BC-Fichas-Control\.env)) { Copy-Item C:\BC-Fichas-Control\.env.exemplo C:\BC-Fichas-Control\.env }; notepad C:\BC-Fichas-Control\.env` |
+| Reiniciar o servidor (ou reinicie o computador do servidor) | `Stop-ScheduledTask 'BC Fichas Control'; Start-ScheduledTask 'BC Fichas Control'` |
+| Apagar os arquivos guardados de eventos excluídos (`dados\anexos-removidos`; veja [Dados e backups](#dados-e-backups)) | `Remove-Item C:\BC-Fichas-Control\dados\anexos-removidos -Recurse -Force` |
 | Usuários pelo terminal, numa instalação feita com o código-fonte (na pasta do sistema; veja [Desenvolvimento](#desenvolvimento)) | `npm run usuarios -- situacao dados\bc-fichas.db` |
 
 O `instalar-servico.ps1`, o `atualizar.ps1` e o `restaurar-copia.ps1` aceitam `-SemPerguntas`: sem
@@ -272,14 +283,16 @@ A ferramenta `server/ferramentas/redefinir-senha.mjs` também tem `situacao` (li
 
 ### Configurações do servidor
 
-Copie `.env.exemplo` para `.env` para mudar a porta (`PORTA`), a interface de rede (`HOST`)
-ou a pasta dos dados (`PASTA_DADOS`) e reinicie o servidor. No Windows, para mudar a porta
-use `instalar-servico.ps1 -Porta N`, que também ajusta o Firewall.
+O arquivo `.env` (criado a partir do `.env.exemplo`) muda a porta (`PORTA`), a interface de rede
+(`HOST`) ou a pasta dos dados (`PASTA_DADOS`); depois de salvar, reinicie o servidor. No Windows,
+abra o `.env` com o comando **Editar as configurações do servidor** da tabela
+[Outros comandos](#outros-comandos) (sem abrir a pasta pelo Explorer); para mudar a porta, use
+`instalar-servico.ps1 -Porta N`, que também ajusta o Firewall.
 
 Por segurança, o servidor só responde quando é aberto pelo **endereço IP**, por `localhost` ou
 pelo **nome do computador** (ex.: `http://SERVIDOR:3000`). Se a empresa criou outro nome no
 roteador ou no DNS (ex.: `http://bcfichas:3000`), coloque-o em `HOSTS_PERMITIDOS` no `.env`
-(vários separados por vírgula) e reinicie o servidor. Isso impede que um site malicioso aberto
+(vários separados por vírgula; veja acima como editar) e reinicie o servidor. Isso impede que um site malicioso aberto
 num computador da rede consiga ler os dados do sistema.
 
 ## Dados e backups
@@ -296,26 +309,31 @@ num computador da rede consiga ler os dados do sistema.
   `.json`: copie a pasta `dados` inteira.
 - Os arquivos de eventos excluídos (ou que saíram numa restauração/limpeza) não são apagados:
   vão para `dados/anexos-removidos` e voltam sozinhos se o evento voltar (ex.: ao restaurar uma
-  cópia). Essa pasta pode ser apagada à mão quando não precisar mais deles.
+  cópia). Essa pasta pode ser apagada com o comando da tabela [Outros comandos](#outros-comandos)
+  quando não precisar mais deles.
 - **Apagar todos os dados** fica separado, no fim de Configurações, na **Zona de perigo**: pede para
   digitar `APAGAR` e o servidor guarda uma cópia automática antes. As configurações e os usuários continuam.
 - **Usuários, senhas e o registro de atividades não vão no backup `.json`**: restaurar um `.json` ou
   apagar todos os dados não mexe nas contas.
 - As **cópias `.db`** levam o banco inteiro, inclusive os resumos (hash) das senhas: guarde o pendrive
   ou o HD com as cópias como um documento sigiloso.
-- Para voltar uma cópia `.db`, use o `restaurar-copia.ps1` (tabela acima). **Não** copie o arquivo
+- Para voltar uma cópia `.db`, use o `restaurar-copia.ps1` ([Outros comandos](#outros-comandos)). **Não** copie o arquivo
   `.db` por cima com o Explorer: o banco trabalha junto com os arquivos `bc-fichas.db-wal` e
   `bc-fichas.db-shm`, e misturar arquivos de momentos diferentes corrompe os dados.
 - Voltar uma cópia `.db` **mantém os usuários, as senhas e o registro de atividades de hoje** (uma
   cópia antiga não traz de volta senhas antigas nem contas excluídas) e encerra todas as sessões:
-  quem estava no sistema entra de novo. Só se o banco atual estiver estragado as contas voltam como
-  estavam na cópia; o script avisa e, se não houver administrador, pede para criar um.
+  quem estava no sistema entra de novo. As contas voltam como estavam na cópia quando o banco atual
+  está estragado, quando ele não tem nenhuma conta (computador novo) ou com `-ContasDaCopia`. Se a
+  cópia tiver usuários que hoje não existem, a janela pergunta quais manter: **H** (os de hoje, o
+  padrão) ou **C** (os da cópia, ao trocar o servidor de computador). No fim, o script diz o que ficou
+  de fora e, se não houver administrador, pede para criar um.
 - No Linux, para voltar uma cópia:
 
   ```bash
   sudo systemctl stop bc-fichas
   cd /opt/bc-fichas
   sudo -u bcfichas node server/ferramentas/copiar-banco.mjs dados/backups/<arquivo>.db dados/restaurando.db
+  # (com --contas-da-copia no fim, as contas voltam como estavam na cópia)
   sudo -u bcfichas node server/ferramentas/redefinir-senha.mjs transplantar dados/bc-fichas.db dados/restaurando.db
   sudo -u bcfichas rm -f dados/bc-fichas.db-wal dados/bc-fichas.db-shm
   sudo -u bcfichas mv dados/restaurando.db dados/bc-fichas.db
@@ -327,6 +345,20 @@ que usava a versão anterior, no mesmo navegador: o Painel mostra o aviso *"Enco
 versão anterior"* com o botão **Enviar para o servidor**. Os dados de cada computador são
 **acrescentados** aos que já estão no servidor (nada é apagado; clientes com o mesmo CNPJ/CPF
 são unificados e códigos de evento repetidos ganham um número novo).
+
+### Trocar o servidor de computador
+
+Num computador novo (ou depois de uma pane), os dados vêm das cópias guardadas no pendrive:
+
+1. Instale o sistema no computador novo ([Instalação no servidor](#instalação-no-servidor-windows)).
+   O INSTALAR pede para criar um administrador: crie um ou digite `PULAR`.
+2. Volte a cópia mais recente do pendrive com as contas e as senhas dela (PowerShell como
+   Administrador), por exemplo:
+   `powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\restaurar-copia.ps1 -ContasDaCopia -Arquivo E:\BC-Fichas-dados\backups\<arquivo>.db`
+   (sem `-ContasDaCopia`, a janela pergunta: responda **C**).
+3. Copie de volta os arquivos anexados e as cópias assinadas dos contratos:
+   `robocopy E:\BC-Fichas-dados\anexos C:\BC-Fichas-Control\dados\anexos /E` e
+   `robocopy E:\BC-Fichas-dados\contratos C:\BC-Fichas-Control\dados\contratos /E`.
 
 ## Vários usuários ao mesmo tempo
 
@@ -369,8 +401,9 @@ continuam levando o valor do evento.
 
 ### Permissões padrão
 
-Quem barra é o **servidor**: uma ação proibida é recusada mesmo que alguém chame o sistema direto,
-sem passar pela tela.
+Quem barra as ações é o **servidor**: excluir, mexer na frota, nas configurações, nas cópias de
+segurança ou nos usuários é recusado mesmo que alguém chame o sistema direto, sem passar pela tela.
+Ver o faturamento e exportar planilhas são só escondidos na tela (veja acima: escondido, não secreto).
 
 | Ação | Administrador | Comum |
 | --- | --- | --- |
@@ -379,8 +412,8 @@ sem passar pela tela.
 | Apagar reclamações e arquivos anexados ao evento (o arquivo fica guardado no servidor) | sim | sim |
 | Trocar a cópia assinada do contrato (a anterior fica guardada) | sim | sim |
 | Mudar a máquina entre Disponível e Manutenção; acrescentar serviço à lista da manutenção | sim | sim |
-| Ver faturamento e indicadores (totais em R$, Relatórios, quanto cada cliente alugou) | sim | não |
-| Exportar planilhas de eventos e clientes | sim | não |
+| Ver faturamento e indicadores (totais em R$, Relatórios, quanto cada cliente alugou) | sim | não (só na tela) |
+| Exportar planilhas de eventos e clientes | sim | não (só na tela) |
 | Excluir clientes e eventos (o comum usa a situação **Cancelado**) | sim | não |
 | Excluir contratos e apagar a cópia assinada | sim | não |
 | Excluir manutenções | sim | não |
@@ -399,17 +432,19 @@ versão seguinte. A página **Usuários** mostra a tabela "O que cada nível pod
 O primeiro administrador só é criado **no computador do servidor**, nunca pela tela:
 
 - **Na instalação e na atualização para a 2.6**, a janela do INSTALAR ou do ATUALIZAR pergunta no
-  fim o nome de quem vai administrar, o usuário para entrar (Enter = `admin`) e a senha, duas vezes
-  (Enter em branco = o sistema gera uma senha temporária e a mostra na tela; no primeiro acesso ele
-  pede para trocar). Se a senha for recusada (fraca demais, por exemplo), a janela diz o motivo e
-  pergunta de novo.
-- Digitar `PULAR` no nome deixa para depois, mas **ninguém entra no sistema** até o administrador
+  fim o usuário para entrar no sistema (sem acentos nem espaços; Enter = `admin`), o nome de quem
+  vai administrar e a senha, duas vezes (Enter em branco = o sistema gera uma senha temporária e a
+  mostra na tela; no primeiro acesso ele pede para trocar). Se a senha foi digitada, a janela
+  pergunta se a conta é sua: responda **N** se for de outra pessoa (ela troca a senha ao entrar). Se
+  a senha for recusada (fraca demais, por exemplo), a janela diz o motivo e pede só a senha de novo.
+  Se já houver usuários sem nenhum administrador, digite o usuário de um deles para torná-lo administrador.
+- Digitar `PULAR` no usuário deixa para depois, mas **ninguém entra no sistema** até o administrador
   ser criado pelo atalho **Redefinir senha do BC Fichas** ([abaixo](#esqueceu-a-senha)). Enquanto
   isso, a tela de todos os computadores mostra só essa instrução.
 - Depois de entrar, cadastre os funcionários em **Administração → Usuários → Novo usuário**. O
   sistema gera uma senha temporária para entregar à pessoa; no primeiro acesso ela cria a própria senha.
 - Tenha **dois administradores** (por exemplo, o dono e quem cuida do escritório): se um esquecer a
-  senha, o outro redefine pela tela.
+  senha, o outro redefine pela tela (veja [Esqueceu a senha](#esqueceu-a-senha)).
 
 ### Senhas
 
@@ -418,7 +453,11 @@ O primeiro administrador só é criado **no computador do servidor**, nunca pela
 - O sistema recusa senhas muito comuns (`12345678`, `senha123`…), sequências, um caractere repetido
   e senhas com o nome da pessoa, o usuário dela ou o nome do sistema, sempre dizendo o motivo.
 - Depois de 5 tentativas erradas seguidas, a entrada espera 30 segundos, e a espera dobra a cada
-  nova tentativa errada (até 15 minutos). Redefinir a senha destrava na hora.
+  nova tentativa errada (até 15 minutos). Redefinir a senha destrava a conta na hora.
+- Com 20 tentativas erradas no mesmo computador em 15 minutos, somando todos os usuários, aquele
+  computador fica 15 minutos sem conseguir entrar (o do servidor também), e a tela avisa que o
+  bloqueio é do computador. Esse bloqueio não acaba com a redefinição da senha: espere o tempo que a
+  tela mostra ou entre por outro computador.
 - A senha não é gravada: o servidor guarda só um resumo (hash scrypt) que não permite recuperá-la.
 
 ### Sessão
@@ -430,18 +469,26 @@ O primeiro administrador só é criado **no computador do servidor**, nunca pela
 - Em computador compartilhado, deixe a opção desmarcada e use **Sair** (no menu do usuário, no pé
   do menu lateral) no fim do dia.
 - Desativar um usuário, mudar o nível dele ou redefinir a senha encerra na hora as sessões dele.
+- Quando a sessão termina com o sistema aberto, a tela fica coberta pelo aviso **Sua sessão
+  terminou** até a pessoa entrar de novo (o que estava sendo digitado volta). **Sair** numa aba
+  encerra a sessão em todas as abas daquele navegador, que voltam para a tela de entrada.
 
 ### Esqueceu a senha
 
-- **Funcionário:** o administrador abre **Usuários**, escolhe a pessoa e usa **Redefinir senha**; o
-  sistema gera uma senha temporária para entregar.
-- **Administrador** (ou nenhum administrador consegue entrar): no **computador do servidor**, abra
-  **Menu Iniciar → BC Fichas Control → Redefinir senha do BC Fichas** e responda **Sim** ao pedido
-  de permissão do Windows. A janela lista os usuários; digite o usuário, a senha nova (ou Enter para
-  uma temporária) e, se a conta for comum, se ela deve virar administrador. Um usuário que não existe
-  vira um administrador novo.
-- Não precisa parar o servidor: a senha nova vale na hora, o bloqueio por tentativas acaba e as
-  sessões abertas daquela conta caem em até 1 minuto.
+- **Funcionário:** o administrador abre **Administração → Usuários**, clica no botão **⋯** (três
+  pontinhos) no fim da linha da pessoa e escolhe **Redefinir senha**; o sistema gera uma senha
+  temporária para entregar.
+- **Administrador** (ou nenhum administrador consegue entrar): no **computador do servidor**, clique
+  em **Iniciar**, digite `BC Fichas` e abra **Redefinir senha do BC Fichas** (ou procure em **Todos os
+  aplicativos → BC Fichas Control**); responda **Sim** ao pedido de permissão do Windows. A janela
+  lista os usuários; digite o usuário, a senha nova (ou Enter para uma temporária) e, se a conta for
+  comum, se ela deve virar administrador. Se a senha foi digitada, a janela pergunta se a conta é sua:
+  responda **N** se for de outra pessoa (ela troca a senha ao entrar). Um usuário que não existe vira
+  um administrador novo.
+- Não precisa parar o servidor: a senha nova vale na hora, o bloqueio por tentativas daquela conta
+  acaba e as sessões abertas dela caem em até 1 minuto. Se a tela ainda pedir para aguardar, é o
+  bloqueio do computador (20 erros em 15 minutos, com qualquer usuário): espere o tempo indicado ou
+  entre por outro computador.
 - Sem o atalho, dê dois cliques no `REDEFINIR-SENHA.bat` de um pacote do sistema extraído em outra
   pasta: ele sempre usa a instalação (a ferramenta e o banco de lá).
 - **Nunca abra a pasta `C:\BC-Fichas-Control` pelo Explorer.** O Windows avisa que você não tem

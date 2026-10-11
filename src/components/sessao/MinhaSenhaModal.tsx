@@ -6,7 +6,7 @@ import { toast } from '../../store/ui'
 import { Button } from '../ui/Button'
 import { Field } from '../ui/Form'
 import { Modal } from '../ui/Modal'
-import { erroAoEntrar, formatarEspera, problemasSenhaNova, useEspera } from './auxiliares'
+import { erroAoEntrar, problemasSenhaNova, useEspera } from './auxiliares'
 import { CampoSenha } from './CampoSenha'
 import { fecharMinhaSenha, useMinhaSenha } from './minhaSenha'
 import { SenhaNova } from './SenhaNova'
@@ -48,7 +48,7 @@ function FormMinhaSenha({ setSalvando }: { setSalvando: (v: boolean) => void }) 
   const [erroAtual, setErroAtual] = useState('')
   const [erroNova, setErroNova] = useState('')
   const [erro, setErro] = useState('')
-  const [faltam, esperar] = useEspera()
+  const [faltam, esperar, aviso] = useEspera()
 
   if (!usuario) return null
   const dono = { login: usuario.login, nome: usuario.nome }
@@ -73,7 +73,7 @@ function FormMinhaSenha({ setSalvando }: { setSalvando: (v: boolean) => void }) 
       else {
         const r = erroAoEntrar(err)
         setErro(r.mensagem)
-        esperar(r.esperarSegundos)
+        esperar(r.esperarSegundos, r.porComputador)
       }
     } finally {
       setSalvando(false)
@@ -111,7 +111,7 @@ function FormMinhaSenha({ setSalvando }: { setSalvando: (v: boolean) => void }) 
       />
       {(erro || faltam > 0) && (
         <p role="alert" className="rounded-xl bg-danger-soft px-3.5 py-2.5 text-[13px] font-medium text-danger">
-          {faltam > 0 ? `Muitas tentativas. Aguarde ${formatarEspera(faltam)} para tentar de novo.` : erro}
+          {aviso || erro}
         </p>
       )}
     </form>

@@ -105,13 +105,15 @@ PRIMEIRO ACESSO (usuários e senhas)
   usuários nem as cópias de segurança.
 
   1. No fim do INSTALAR ou do ATUALIZAR, a janela pergunta:
+     - o usuário para entrar no sistema (sem acentos nem espaços; Enter = admin);
      - o nome de quem vai administrar;
-     - o usuário para entrar no sistema (Enter = admin);
      - a senha, duas vezes (ela não aparece ao digitar). Use 8 caracteres ou mais; uma
        frase de 3 ou 4 palavras é fácil de lembrar. Enter em branco = o sistema gera uma
        senha temporária: anote, porque no primeiro acesso ele pede para trocar.
-     Se a senha for recusada, a janela diz o motivo e pergunta de novo.
-     Digitar PULAR no nome deixa para depois, mas NINGUÉM entra no sistema até o
+     - se você digitou a senha, se a conta é sua (S). Responda N se for de outra
+       pessoa: ela terá de trocar a senha ao entrar.
+     Se a senha for recusada, a janela diz o motivo e pede só a senha de novo.
+     Digitar PULAR no usuário deixa para depois, mas NINGUÉM entra no sistema até o
      administrador ser criado pelo atalho "Redefinir senha do BC Fichas" (abaixo).
   2. Entre no sistema com esse usuário e cadastre os funcionários em
      Administração > Usuários > Novo usuário. O sistema gera uma senha temporária para
@@ -119,31 +121,68 @@ PRIMEIRO ACESSO (usuários e senhas)
   3. Tenha dois administradores, e cada pessoa com o seu próprio usuário.
 
 ESQUECEU A SENHA DO ADMINISTRADOR
-  Funcionário que esqueceu a senha: o administrador redefine em
-  Administração > Usuários.
+  Funcionário que esqueceu a senha: o administrador abre Administração > Usuários,
+  clica nos três pontinhos (...) no fim da linha da pessoa e escolhe Redefinir senha.
   Administrador que esqueceu a senha (ou ninguém consegue entrar):
-  1. No computador do servidor, abra o Menu Iniciar > BC Fichas Control >
-     Redefinir senha do BC Fichas e responda "Sim" ao pedido de permissão.
+  1. No computador do servidor, clique em Iniciar, digite BC Fichas e abra
+     "Redefinir senha do BC Fichas" (ou procure em Todos os aplicativos >
+     BC Fichas Control). Responda "Sim" ao pedido de permissão.
   2. A janela mostra os usuários. Digite o usuário e a senha nova (ou Enter para uma
-     senha temporária). Um usuário que não existe vira um administrador novo.
-  3. Pronto: não precisa reiniciar nada. O bloqueio por tentativas erradas também acaba.
+     senha temporária). Se você digitou a senha, a janela pergunta se a conta é sua:
+     responda N se for de outra pessoa (ela troca a senha ao entrar). Um usuário que
+     não existe vira um administrador novo.
+  3. Pronto: não precisa reiniciar nada. O bloqueio daquele usuário também acaba.
+     Se ainda aparecer "Muitas tentativas erradas neste computador", foram muitos
+     erros no mesmo computador (com qualquer usuário): espere o tempo mostrado na tela
+     (até 15 minutos) ou entre de outro computador.
   Sem o atalho: dê dois cliques em REDEFINIR-SENHA.bat dentro de um pacote do sistema
   extraído em outra pasta (ele sempre usa a instalação).
 
   IMPORTANTE: nunca abra a pasta C:\BC-Fichas-Control pelo Explorer. O Windows diz
   que você não tem permissão e oferece "Continuar": isso dá à sua conta acesso
   permanente à pasta e desfaz parte da proteção do banco de dados e do sistema.
-  Para as senhas, use sempre o atalho do Menu Iniciar.
+  Para as senhas, use sempre o atalho "Redefinir senha do BC Fichas"; para o resto,
+  os comandos abaixo e os do README.md.
 
 DADOS E CÓPIAS
   - Banco de dados: C:\BC-Fichas-Control\dados\bc-fichas.db
   - Cópias automáticas diárias: C:\BC-Fichas-Control\dados\backups
   - Registro do servidor: C:\BC-Fichas-Control\dados\servidor.log
-  - Para copiar os dados para um pendrive (letra E:, por exemplo) sem abrir a pasta,
-    abra o PowerShell como Administrador e use:
-      robocopy C:\BC-Fichas-Control\dados E:\BC-Fichas-dados /E
+  - Para copiar os dados para um pendrive (letra E:, por exemplo) sem abrir a pasta:
+    antes, faça uma cópia na hora em Configurações > Dados e backup, para o pendrive
+    levar os dados de agora. Depois abra o PowerShell como Administrador e use:
+      robocopy C:\BC-Fichas-Control\dados E:\BC-Fichas-dados /E /XF bc-fichas.db bc-fichas.db-wal bc-fichas.db-shm /R:2 /W:5
+    O banco em uso não vai para o pendrive porque, com o servidor ligado, a cópia dele
+    pode sair estragada. Para voltar, use os arquivos de E:\BC-Fichas-dados\backups
+    (veja VOLTAR UMA CÓPIA DO BANCO).
   - As cópias levam também os usuários e as senhas (guardadas de forma protegida):
     guarde o pendrive ou HD com as cópias como um documento sigiloso.
+
+VOLTAR UMA CÓPIA DO BANCO
+  1. Abra o PowerShell como Administrador: no Iniciar, digite PowerShell, clique com o
+     botão direito em Windows PowerShell e escolha "Executar como administrador".
+  2. Rode:
+       powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\restaurar-copia.ps1
+     A janela lista as cópias mais recentes (data e nome); digite o número da que vai
+     voltar. Para ver todas as cópias, a mais recente no fim:
+       Get-ChildItem C:\BC-Fichas-Control\dados\backups\*.db | Sort-Object LastWriteTime | Format-Table Name, LastWriteTime
+     e informe o nome copiado da lista:
+       powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\restaurar-copia.ps1 -Arquivo C:\BC-Fichas-Control\dados\backups\<nome copiado da lista>
+  3. O banco de agora é guardado antes, e o servidor volta a funcionar no fim. Os
+     usuários e as senhas de hoje continuam (se a cópia tiver usuários que hoje não
+     existem, a janela pergunta: H = os de hoje, C = os da cópia). Quem estava no
+     sistema entra de novo. Não abra a pasta pelo Explorer para isso.
+
+TROCAR O SERVIDOR DE COMPUTADOR (ou computador novo depois de uma pane)
+  1. Instale o sistema no computador novo (INSTALAR, acima). Crie um administrador
+     ou digite PULAR.
+  2. Volte a cópia mais recente do pendrive com as contas e as senhas dela:
+       powershell -ExecutionPolicy Bypass -File C:\BC-Fichas-Control\deploy\windows\restaurar-copia.ps1 -ContasDaCopia -Arquivo E:\BC-Fichas-dados\backups\<arquivo>.db
+     (sem -ContasDaCopia, a janela pergunta: responda C).
+  3. Copie de volta os arquivos anexados e as cópias assinadas dos contratos:
+       robocopy E:\BC-Fichas-dados\anexos C:\BC-Fichas-Control\dados\anexos /E
+       robocopy E:\BC-Fichas-dados\contratos C:\BC-Fichas-Control\dados\contratos /E
+
   Mais detalhes no arquivo README.md.
 EOF
 

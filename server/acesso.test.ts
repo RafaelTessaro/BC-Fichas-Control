@@ -4,8 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Fastify from 'fastify'
 import nodemailer from 'nodemailer'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { pode } from '#shared/permissoes.ts'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { LISTA_PERMISSOES, pode, SO_NA_TELA } from '#shared/permissoes.ts'
 import type {
   Anexo,
   Cliente,
@@ -47,6 +47,7 @@ beforeEach(async () => {
   t = await criarAppComLogin({ transporteEmail: transporteTeste })
 })
 afterEach(async () => {
+  vi.restoreAllMocks()
   await t.fechar()
 })
 
@@ -73,6 +74,13 @@ describe('tabela de acesso', () => {
       expect(t.app.hasRoute({ method: metodo, url: chave.split(' ')[1] }), chave).toBe(true)
       expect(t.app.hasRoute({ method: 'HEAD', url: chave.split(' ')[1] }) || metodo !== 'GET', `HEAD ${url}`).toBe(true)
     }
+  })
+
+  it('só o faturamento e as planilhas ficam sem barreira no servidor (o que a tela Usuários diz)', () => {
+    const naTabela = new Set<string>(Object.values(TABELA_ACESSO))
+    // gerenciarServicos barra pela regra fina F3 (PUT /api/config/servicos)
+    expect(LISTA_PERMISSOES.filter((p) => !naTabela.has(p))).toEqual([...SO_NA_TELA, 'gerenciarServicos'])
+    expect([...SO_NA_TELA]).toEqual(['verFaturamento', 'exportarPlanilhas'])
   })
 
   it('rota /api sem classificação (ou com lista de métodos) não registra; entrada sem rota não sobe', async () => {
@@ -396,7 +404,66 @@ describe('o comum faz o dia a dia', () => {
   })
 })
 
+/**
+ * Abre o tempo real (SSE) com o cookie, já conectado (depois do "ola"). `esperarFim` falha se ele não
+ * fechar em `ms`.
+ */
+async function abrirStream(cookie: string) {
+  if (!t.app.server.listening) await t.app.listen({ port: 0, host: '127.0.0.1' })
+  const { port } = t.app.server.address() as { port: number }
+  const resp = await fetch(`http://127.0.0.1:${port}/api/stream`, { headers: { cookie: `${t.nomeCookie}=${cookie}` } })
+  const leitor = resp.body!.getReader()
+  const dec = new TextDecoder()
+  let texto = ''
+  while (!/event: ola/.test(texto)) texto += dec.decode((await leitor.read()).value)
+  expect(texto).not.toContain('semSessao')
+  let fechou = false
+  const fim = (async () => {
+    while (!(await leitor.read()).done);
+    fechou = true
+  })()
+  return {
+    fechou: () => fechou,
+    esperarFim: (ms = 1000) =>
+      Promise.race([fim, new Promise((_, falhar) => setTimeout(() => falhar(new Error('o tempo real não fechou')), ms))]),
+    cancelar: () => leitor.cancel().catch(() => {}),
+  }
+}
+
 describe('tempo real', () => {
+  it('sair fecha o tempo real da sessão', async () => {
+    const s = await abrirStream(t.cookieComum)
+    expect((await t.chamar('DELETE', '/api/sessao', { cookie: t.cookieComum })).statusCode).toBe(204)
+    await s.esperarFim()
+  })
+
+  it('entrar de novo no mesmo navegador fecha o tempo real da sessão anterior', async () => {
+    const s = await abrirStream(t.cookieComum)
+    expect((await t.entrar('admin', SENHA_ADMIN, { cookie: t.cookieComum })).status).toBe(200)
+    await s.esperarFim()
+  })
+
+  it('trocar a própria senha fecha o tempo real das outras sessões e mantém o da atual', async () => {
+    const sOutra = await abrirStream(await t.cookieDe('comum', SENHA_COMUM))
+    const sAtual = await abrirStream(t.cookieComum)
+    const r = await t.chamar('PUT', '/api/minha-senha', {
+      cookie: t.cookieComum,
+      payload: { senhaAtual: SENHA_COMUM, senhaNova: 'tartaruga-roxa-correndo' },
+    })
+    expect(r.statusCode).toBe(200)
+    await sOutra.esperarFim()
+    expect(sAtual.fechou()).toBe(false)
+    expect(t.ctx.tempoReal.sessoesConectadas()).toEqual([hashToken(t.cookieComum)])
+    await sAtual.cancelar()
+  })
+
+  it('o administrador redefinir a senha fecha o tempo real da pessoa', async () => {
+    const s = await abrirStream(t.cookieComum)
+    const r = await t.chamar('POST', `/api/usuarios/${t.comumId}/senha`, { cookie: t.cookieAdmin, payload: {} })
+    expect(r.statusCode).toBe(200)
+    await s.esperarFim()
+  })
+
   it('desativar a conta fecha o tempo real dela em menos de 1 s; a reconexão recebe semSessao', async () => {
     await t.app.listen({ port: 0, host: '127.0.0.1' })
     const { port } = t.app.server.address() as { port: number }
@@ -432,6 +499,30 @@ describe('tempo real', () => {
     let fim = false
     while (!fim) fim = (await leitor.read()).done
     expect(t.ctx.tempoReal.sessoesConectadas()).toEqual([])
+  })
+
+  it('a varredura roda sozinha a cada minuto: fecha o tempo real da sessão vencida e limpa o registro antigo', async () => {
+    await t.fechar()
+    // Guarda as tarefas agendadas em vez de deixá-las rodar (sem relógio falso: o servidor continua respondendo)
+    const agendadas: Array<{ fn: () => void; ms: number }> = []
+    const original = globalThis.setInterval
+    vi.spyOn(globalThis, 'setInterval').mockImplementation(((fn: () => void, ms: number) => {
+      agendadas.push({ fn, ms })
+      return original(() => {}, 1e9)
+    }) as typeof setInterval)
+    t = await criarAppComLogin({ transporteEmail: transporteTeste, tarefasEmSegundoPlano: true })
+    const varredura = agendadas.filter((a) => a.ms === 60_000)
+    expect(varredura).toHaveLength(1)
+
+    const s = await abrirStream(t.cookieComum)
+    const hoje = Date.now()
+    t.usuarios.agora = () => hoje - 400 * 24 * 60 * 60_000
+    t.usuarios.registrar('LOGIN', { usuario: { id: 'x', login: 'antigo' }, ip: '10.0.0.1' })
+    // 13 h depois: a sessão (12 h no máximo) venceu
+    t.usuarios.agora = () => hoje + 13 * 60 * 60_000
+    varredura[0].fn()
+    await s.esperarFim()
+    expect(t.ctx.db.prepare("SELECT COUNT(*) AS n FROM auditoria WHERE login = 'antigo'").get()).toEqual({ n: 0 })
   })
 
   it('encerrarSessoes, encerrarUsuario e sessoesConectadas', () => {

@@ -56,7 +56,7 @@ export function SenhaTemporariaModal({
       largura="max-w-md"
       icone={<KeyRound className="h-5 w-5" />}
       titulo={d?.nova ? 'Usuário cadastrado' : 'Senha redefinida'}
-      descricao="Entregue esta senha à pessoa. No primeiro acesso o sistema pede para ela criar a própria senha."
+      descricao={`Entregue esta senha à pessoa. ${d?.nova ? 'No primeiro acesso' : 'No próximo acesso'} o sistema pede para ela criar a própria senha.`}
       rodape={
         <Button variante="primary" onClick={aoFechar}>
           Pronto
